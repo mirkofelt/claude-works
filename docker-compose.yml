@@ -1,0 +1,15 @@
+services:
+  comms:
+    build: .
+    container_name: comms
+    restart: unless-stopped
+    volumes:
+      - comms-data:/data
+    ports:
+      - "8080:8080"
+    environment:
+      - SETTINGS_FILE=/data/settings.json
+      - LOG_LEVEL=INFO
+
+volumes:
+  comms-data:

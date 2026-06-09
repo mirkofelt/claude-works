@@ -1,0 +1,118 @@
+{
+  "telegram": {
+    "token": "YOUR_BOT_TOKEN",
+    "allowed_updates": ["message", "edited_message", "message_reaction"],
+    "admin_chat_ids": [123456789],
+    "reaction_map": {
+      "👍": "approve",
+      "👎": "reject",
+      "❤️": "save",
+      "🔥": "prioritize",
+      "😂": "dismiss",
+      "🤔": "clarify"
+    }
+  },
+  "llm": {
+    "_comment_provider": "Use 'api' (requires api_key) or 'cli' (requires LLM CLI in PATH, uses subscription). NOTE: provider and api_key are read at startup only — changing them requires a daemon restart, /reload_config has no effect.",
+    "provider": "api",
+    "api_key": "YOUR_API_KEY",
+    "_comment_cli_binary": "Required when provider is 'cli'. Name of the CLI binary in PATH.",
+    "cli_binary": "YOUR_CLI_BINARY",
+    "model": "claude-sonnet-4-6",
+    "max_tokens": 8192,
+    "max_context_tokens": 150000,
+    "context_warn_threshold": 0.8,
+    "context_compact_threshold": 0.9,
+    "_comment_usage_poll": "Seconds between /usage polls (cli provider only). 0 = disabled.",
+    "usage_poll_interval_seconds": 300
+  },
+  "agents": {
+    "_comment_po_timeout": "Seconds the PO waits for child tasks to complete. Actual wall time per PO task = decompose_time + po_timeout_seconds + synthesize_time.",
+    "max_parallel": 4,
+    "task_timeout_seconds": 600,
+    "po_timeout_seconds": 3600,
+    "max_retries": 3,
+    "model_tiers": {
+      "_comment": "Tier aliases → model IDs. To upgrade all 'best'-class agents: change 'best' here. Values in 'models' may reference these tier names or use direct model IDs.",
+      "fast":     "claude-haiku-4-5-20251001",
+      "balanced": "claude-sonnet-4-6",
+      "best":     "claude-opus-4-8"
+    },
+    "models": {
+      "_comment": "Per-agent model overrides. Values can be tier aliases (fast/balanced/best) or direct model IDs. Omit any key to use the hardcoded tier default.",
+      "default":    "balanced",
+      "controller": "fast",
+      "chief":      "balanced",
+      "po":         "balanced",
+      "generalist": "balanced",
+      "researcher": "balanced",
+      "memory":     "fast",
+      "compactor":  "fast",
+      "mechanic": "balanced",
+      "coder": {
+        "_comment": "Per-stage overrides for CodeTeam pipeline. Supports tier aliases.",
+        "default":   "balanced",
+        "architect": "balanced",
+        "developer": "balanced",
+        "tester":    "fast",
+        "qa":        "balanced"
+      }
+    }
+  },
+  "web": {
+    "port": 8080,
+    "host": "0.0.0.0",
+    "auth_token": "YOUR_AUTH_TOKEN_HERE"
+  },
+  "users": {
+    "default_role": "blocked",
+    "admin_ids": [123456789]
+  },
+  "supervisor": {
+    "health_check_interval": 60,
+    "max_restart_attempts": 3,
+    "restart_backoff_seconds": [5, 15, 60]
+  },
+  "security": {
+    "enabled": false,
+    "pending_timeout_seconds": 300,
+    "rules": [
+      {"type": "internet_access", "pattern": "https?://\\S+", "enabled": true},
+      {"type": "data_deletion", "pattern": "\\b(delete|drop|truncate|wipe|purge)\\b", "enabled": true},
+      {"type": "command_execution", "pattern": "\\b(execute|subprocess|shell|eval)\\b", "enabled": true},
+      {"type": "external_api", "pattern": "\\b(webhook|api_call|post_to)\\b", "enabled": false},
+      {"type": "publication", "pattern": "\\b(publish|broadcast|announcement)\\b", "enabled": false}
+    ]
+  },
+  "mcp": {
+    "enabled": false,
+    "servers": [
+      {
+        "type": "url",
+        "url": "https://YOUR_MCP_SERVER/sse",
+        "name": "example-server",
+        "authorization_token": "YOUR_MCP_TOKEN"
+      }
+    ]
+  },
+  "spending": {
+    "_comment": "Set limits to prevent unexpected costs. null = unlimited.",
+    "max_daily_usd": null,
+    "max_monthly_usd": null,
+    "on_limit_exceeded": "reject",
+    "model_pricing": {
+      "_comment": "USD per 1M tokens. Update when prices change. Omit unknown models.",
+      "claude-haiku-4-5-20251001": {"input_per_mtok": 0.80,  "output_per_mtok": 4.00},
+      "claude-sonnet-4-6":         {"input_per_mtok": 3.00,  "output_per_mtok": 15.00},
+      "claude-opus-4-8":           {"input_per_mtok": 15.00, "output_per_mtok": 75.00}
+    }
+  },
+  "logging": {
+    "dir": "/data/logs",
+    "level": "INFO"
+  },
+  "elevenlabs": {
+    "api_key": "YOUR_ELEVENLABS_API_KEY",
+    "voice_id": "YOUR_VOICE_ID"
+  }
+}

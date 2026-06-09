@@ -1,0 +1,862 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Comms</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --border: #30363d;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --accent: #58a6ff;
+      --green: #3fb950;
+      --yellow: #d29922;
+      --red: #f85149;
+      --purple: #c396f7;
+      --teal: #39d0d0;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; min-height: 100vh; }
+
+    /* auth overlay */
+    #authOverlay { position: fixed; inset: 0; background: rgba(0,0,0,.85); display: flex; align-items: center; justify-content: center; z-index: 100; }
+    .auth-box { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 32px; min-width: 320px; }
+    .auth-box h2 { margin-bottom: 6px; font-size: 20px; }
+    .auth-box p { color: var(--muted); font-size: 13px; margin-bottom: 18px; }
+    .auth-box input { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px 12px; border-radius: 4px; font-size: 14px; margin-bottom: 12px; }
+    .auth-box input:focus { outline: none; border-color: var(--accent); }
+    .err { color: var(--red); font-size: 13px; margin-top: 8px; }
+
+    /* setup overlay */
+    #setupOverlay { position: fixed; inset: 0; background: rgba(0,0,0,.92); display: none; align-items: center; justify-content: center; z-index: 200; overflow-y: auto; padding: 24px; }
+    .setup-box { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 32px; width: 100%; max-width: 520px; }
+    .setup-box h2 { font-size: 20px; margin-bottom: 4px; }
+    .setup-box .sub { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+    .setup-section { border-top: 1px solid var(--border); margin-top: 20px; padding-top: 16px; }
+    .setup-section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin-bottom: 14px; }
+    .field { margin-bottom: 14px; }
+    .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+    .field input, .field select { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px 12px; border-radius: 4px; font-size: 13px; }
+    .field input:focus, .field select:focus { outline: none; border-color: var(--accent); }
+    .field .hint { font-size: 11px; color: var(--muted); margin-top: 4px; opacity: .8; }
+    .field .gen-btn { background: none; border: 1px solid var(--border); color: var(--muted); padding: 3px 8px; border-radius: 4px; font-size: 11px; cursor: pointer; margin-left: 6px; }
+    .field .gen-btn:hover { color: var(--text); border-color: var(--accent); }
+    .setup-token-box { background: #1a1f28; border: 1px solid var(--yellow); border-radius: 6px; padding: 14px; margin-bottom: 20px; }
+    .setup-token-box p { font-size: 12px; color: var(--yellow); margin-bottom: 8px; }
+    #setupMsg { font-size: 13px; margin-top: 12px; padding: 10px; border-radius: 4px; display: none; }
+    #setupMsg.ok { background: #1c3a25; color: var(--green); }
+    #setupMsg.err { background: #3a1c1c; color: var(--red); }
+
+    /* layout */
+    header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 20px; height: 52px; display: flex; align-items: center; gap: 14px; position: sticky; top: 0; z-index: 10; }
+    header h1 { font-size: 17px; font-weight: 600; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+    .dot.ok { background: var(--green); box-shadow: 0 0 6px var(--green); }
+    .dot.err { background: var(--red); }
+    #agentInfo { color: var(--muted); font-size: 12px; }
+    #updatedAt { margin-left: auto; color: var(--muted); font-size: 11px; }
+
+    nav { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 20px; display: flex; overflow-x: auto; }
+    nav button { background: none; border: none; color: var(--muted); padding: 10px 16px; cursor: pointer; border-bottom: 2px solid transparent; font-size: 13px; transition: color .15s; white-space: nowrap; }
+    nav button:hover { color: var(--text); }
+    nav button.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+    main { padding: 20px; max-width: 1280px; }
+    .section { display: none; }
+    .section.active { display: block; }
+
+    /* toolbar */
+    .toolbar { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; flex-wrap: wrap; }
+    .toolbar select, .toolbar input { background: var(--surface); border: 1px solid var(--border); color: var(--text); padding: 5px 10px; border-radius: 4px; font-size: 13px; }
+    .toolbar select:focus, .toolbar input:focus { outline: none; border-color: var(--accent); }
+
+    /* table */
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+    table { width: 100%; border-collapse: collapse; }
+    thead tr { background: #1c2128; }
+    th { padding: 9px 12px; text-align: left; color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .4px; white-space: nowrap; }
+    td { padding: 9px 12px; border-top: 1px solid var(--border); vertical-align: middle; }
+    tr:hover td { background: rgba(255,255,255,.02); }
+    .trunc { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+    .mono { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; }
+    .empty { padding: 48px; text-align: center; color: var(--muted); }
+
+    /* badges */
+    .badge { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+    .b-pending     { background: #2a2a1c; color: var(--yellow); }
+    .b-running     { background: #1a2a3a; color: var(--accent); }
+    .b-done        { background: #1c3a25; color: var(--green); }
+    .b-failed      { background: #3a1c1c; color: var(--red); }
+    .b-cancelled   { background: #222; color: var(--muted); }
+    .b-admin       { background: #2a1c3a; color: var(--purple); }
+    .b-user        { background: #1c3a25; color: var(--green); }
+    .b-blocked     { background: #3a1c1c; color: var(--red); }
+
+    /* kanban lane badges */
+    .b-backlog     { background: #1e2126; color: var(--muted); }
+    .b-assigned    { background: #1a2a3a; color: var(--accent); }
+    .b-in_progress { background: #2a2a1c; color: var(--yellow); }
+    .b-review      { background: #2a1c3a; color: var(--purple); }
+
+    /* agent class badges */
+    .b-generalist  { background: #1c2a1c; color: #4ec94e; }
+    .b-researcher  { background: #1c2238; color: #58a6ff; }
+    .b-coder       { background: #2a1c2a; color: var(--purple); }
+    .b-memory      { background: #2a2010; color: var(--yellow); }
+    .b-chief       { background: #1c2a2a; color: var(--teal); }
+    .b-controller  { background: #1e1e1e; color: var(--muted); }
+
+    /* buttons */
+    .btn { background: var(--accent); color: #0d1117; border: none; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 13px; }
+    .btn:hover { opacity: .9; }
+    .btn-ghost { background: var(--border); color: var(--text); }
+    .btn-approve { background: var(--green); color: #0d1117; }
+    .btn-deny { background: var(--red); color: #fff; }
+    .b-security { background: #3a1c3a; color: var(--purple); }
+
+    /* role select */
+    select.role-sel { background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 3px 6px; border-radius: 4px; font-size: 12px; cursor: pointer; }
+    select.role-sel:focus { outline: none; border-color: var(--accent); }
+
+    /* memory grid */
+    .mem-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+    .mem-card { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 14px; }
+    .mem-key { font-weight: 600; color: var(--accent); word-break: break-all; margin-bottom: 4px; font-size: 13px; }
+    .mem-val { color: var(--muted); font-size: 13px; word-break: break-word; max-height: 72px; overflow: hidden; line-height: 1.4; }
+    .mem-meta { font-size: 11px; color: var(--muted); margin-top: 8px; opacity: .7; }
+
+    /* lane counts bar */
+    .lane-counts { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+    .lane-count { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 10px 18px; text-align: center; min-width: 80px; }
+    .lane-count .lc-num { font-size: 22px; font-weight: 700; line-height: 1; margin-bottom: 4px; }
+    .lane-count .lc-lbl { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
+
+    /* token chart */
+    .chart-wrap { padding: 12px; }
+    canvas#tokenChart { display: block; width: 100%; height: 220px; }
+
+    /* token period buttons */
+    .period-group { display: flex; gap: 4px; }
+    .period-group .btn { padding: 5px 12px; font-size: 12px; }
+  </style>
+</head>
+<body>
+
+<div id="authOverlay">
+  <div class="auth-box">
+    <h2>⚡ Comms</h2>
+    <p>Enter auth token to continue.</p>
+    <input type="password" id="tokenInput" placeholder="Auth token" autofocus>
+    <button class="btn" onclick="doLogin()">Connect</button>
+    <div class="err" id="authErr" style="display:none"></div>
+  </div>
+</div>
+
+<div id="setupOverlay">
+  <div class="setup-box">
+    <h2>⚡ Comms — Initial Setup</h2>
+    <p class="sub">Configure your bot. All settings are saved to the database.</p>
+
+    <div class="setup-token-box">
+      <p>⚠ Setup token required — find it in the server logs on startup.</p>
+      <div class="field" style="margin:0">
+        <input type="password" id="setupToken" placeholder="Setup token from server logs">
+      </div>
+    </div>
+
+    <div class="setup-section">
+      <h3>Telegram</h3>
+      <div class="field">
+        <label>Bot Token</label>
+        <input type="password" id="cfgTgToken" placeholder="123456:ABC-DEF...">
+        <div class="hint">From @BotFather — /newbot</div>
+      </div>
+      <div class="field">
+        <label>Admin Chat IDs</label>
+        <input type="text" id="cfgAdminIds" placeholder="123456789, 987654321">
+        <div class="hint">Your Telegram user ID(s), comma-separated. Get it from @userinfobot.</div>
+      </div>
+    </div>
+
+    <div class="setup-section">
+      <h3>AI Provider</h3>
+      <div class="field">
+        <label>Provider</label>
+        <select id="cfgProvider" onchange="toggleApiKey()">
+          <option value="api">LLM API (api key required)</option>
+          <option value="cli">LLM CLI (subscription)</option>
+        </select>
+      </div>
+      <div class="field" id="apiKeyField">
+        <label>API Key</label>
+        <input type="password" id="cfgApiKey" placeholder="sk-ant-...">
+      </div>
+    </div>
+
+    <div class="setup-section">
+      <h3>Web Access</h3>
+      <div class="field">
+        <label>Auth Token <button class="gen-btn" onclick="genWebToken()">generate</button></label>
+        <input type="text" id="cfgWebToken" placeholder="your-secret-token">
+        <div class="hint">Used to log into this web UI. Store it safely — it won't be shown again.</div>
+      </div>
+    </div>
+
+    <div style="margin-top:20px">
+      <button class="btn" onclick="doSetup()" style="width:100%;padding:10px">Save Configuration</button>
+      <div id="setupMsg"></div>
+    </div>
+  </div>
+</div>
+
+<header>
+  <h1>⚡ Comms</h1>
+  <div class="dot" id="statusDot"></div>
+  <span id="statusText" style="color:var(--muted);font-size:12px">connecting...</span>
+  <span id="agentInfo"></span>
+  <span id="updatedAt"></span>
+</header>
+
+<nav>
+  <button class="active" onclick="showTab('tasks')">Tasks</button>
+  <button onclick="showTab('messages')">Messages</button>
+  <button onclick="showTab('users')">Users</button>
+  <button onclick="showTab('memory')">Memory</button>
+  <button onclick="showTab('approvals')">Approvals</button>
+  <button onclick="showTab('kanban')">Kanban</button>
+  <button onclick="showTab('tokens')">Tokens</button>
+  <button onclick="showTab('logs')">Logs</button>
+</nav>
+
+<main>
+
+<div class="section active" id="tab-tasks">
+  <div class="toolbar">
+    <select id="taskStatus" onchange="loadTasks()">
+      <option value="">All</option>
+      <option value="pending">Pending</option>
+      <option value="running">Running</option>
+      <option value="done">Done</option>
+      <option value="failed">Failed</option>
+    </select>
+    <select id="taskLimit" onchange="loadTasks()">
+      <option value="20">20</option>
+      <option value="50" selected>50</option>
+      <option value="100">100</option>
+    </select>
+  </div>
+  <div class="card">
+    <table>
+      <thead><tr>
+        <th>#</th><th>Status</th><th>User</th><th>Content</th>
+        <th>Created</th><th>Duration</th><th>Agent</th>
+      </tr></thead>
+      <tbody id="taskBody"><tr><td colspan="7" class="empty">Loading…</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="section" id="tab-messages">
+  <div class="toolbar">
+    <input type="number" id="msgChat" placeholder="Chat ID" style="width:130px">
+    <select id="msgLimit" onchange="loadMessages()">
+      <option value="20">20</option>
+      <option value="50" selected>50</option>
+      <option value="100">100</option>
+    </select>
+    <button class="btn btn-ghost" onclick="loadMessages()">Filter</button>
+  </div>
+  <div class="card">
+    <table>
+      <thead><tr>
+        <th>Msg ID</th><th>Chat</th><th>From</th><th>Text</th><th>Time</th>
+      </tr></thead>
+      <tbody id="msgBody"><tr><td colspan="5" class="empty">Loading…</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="section" id="tab-users">
+  <div class="card">
+    <table>
+      <thead><tr>
+        <th>#</th><th>Telegram ID</th><th>Name</th><th>Role</th><th>Last Seen</th>
+      </tr></thead>
+      <tbody id="userBody"><tr><td colspan="5" class="empty">Loading…</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="section" id="tab-memory">
+  <div class="toolbar">
+    <input type="text" id="memQ" placeholder="Search…" style="width:240px" onkeydown="if(event.key==='Enter')loadMemory()">
+    <button class="btn btn-ghost" onclick="loadMemory()">Search</button>
+  </div>
+  <div class="mem-grid" id="memGrid"><div class="empty">Loading…</div></div>
+</div>
+
+<div class="section" id="tab-approvals">
+  <div class="toolbar">
+    <button class="btn btn-ghost" onclick="loadApprovals()">Refresh</button>
+  </div>
+  <div class="card">
+    <table>
+      <thead><tr>
+        <th>#</th><th>Triggers</th><th>User</th><th>Age</th><th>Preview</th><th>Actions</th>
+      </tr></thead>
+      <tbody id="approvalBody"><tr><td colspan="6" class="empty">No pending approvals</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="section" id="tab-kanban">
+  <div class="lane-counts" id="laneCounts"></div>
+  <div class="toolbar">
+    <select id="kanbanLane" onchange="loadKanban()">
+      <option value="">All Lanes</option>
+      <option value="backlog">Backlog</option>
+      <option value="assigned">Assigned</option>
+      <option value="in_progress">In Progress</option>
+      <option value="review">Review</option>
+      <option value="done">Done</option>
+      <option value="failed">Failed</option>
+      <option value="blocked">Blocked</option>
+    </select>
+    <select id="kanbanLimit" onchange="loadKanban()">
+      <option value="50" selected>50</option>
+      <option value="100">100</option>
+    </select>
+  </div>
+  <div class="card">
+    <table>
+      <thead><tr>
+        <th>#</th><th>Lane</th><th>Class</th><th>User</th><th>Content</th>
+        <th>Created</th><th>Duration</th>
+      </tr></thead>
+      <tbody id="kanbanBody"><tr><td colspan="7" class="empty">Loading…</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="section" id="tab-tokens">
+  <div class="toolbar">
+    <div class="period-group" id="periodGroup">
+      <button class="btn btn-ghost" onclick="setTokenPeriod('1h')" id="tp-1h">1h</button>
+      <button class="btn" onclick="setTokenPeriod('24h')" id="tp-24h">24h</button>
+      <button class="btn btn-ghost" onclick="setTokenPeriod('7d')" id="tp-7d">7d</button>
+      <button class="btn btn-ghost" onclick="setTokenPeriod('30d')" id="tp-30d">30d</button>
+    </div>
+  </div>
+  <div class="card" style="margin-bottom:16px">
+    <div class="chart-wrap">
+      <canvas id="tokenChart"></canvas>
+    </div>
+  </div>
+  <div class="card">
+    <table>
+      <thead><tr>
+        <th>Class</th><th>Input</th><th>Output</th><th>Cache Read</th><th>Cache Write</th><th>Calls</th><th>Total</th>
+      </tr></thead>
+      <tbody id="tokenBody"><tr><td colspan="7" class="empty">No data</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="section" id="tab-logs">
+  <div class="toolbar">
+    <select id="logLines" onchange="loadLogs()">
+      <option value="100">100 lines</option>
+      <option value="200" selected>200 lines</option>
+      <option value="500">500 lines</option>
+    </select>
+    <button class="btn btn-ghost" onclick="loadLogs()">Refresh</button>
+  </div>
+  <div class="card" style="padding:0">
+    <pre id="logPre" style="padding:12px;font-size:12px;overflow-x:auto;white-space:pre-wrap;word-break:break-all;color:var(--muted);max-height:70vh;overflow-y:auto;margin:0">Loading…</pre>
+  </div>
+</div>
+
+</main>
+
+<script>
+let TOKEN = localStorage.getItem('comms_token') || '';
+let activeTab = 'tasks';
+let timer = null;
+let tokenPeriod = '24h';
+
+const TABS = ['tasks', 'messages', 'users', 'memory', 'approvals', 'kanban', 'tokens', 'logs'];
+
+const LANE_COLORS = {
+  backlog: '#8b949e', assigned: '#58a6ff', in_progress: '#d29922',
+  review: '#c396f7', done: '#3fb950', failed: '#f85149', blocked: '#f85149',
+};
+const CLASS_COLORS = {
+  generalist: '#4ec94e', researcher: '#58a6ff', coder: '#c396f7',
+  memory: '#d29922', chief: '#39d0d0', controller: '#8b949e',
+};
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, {
+    ...opts,
+    headers: { 'X-Auth-Token': TOKEN, 'Content-Type': 'application/json', ...(opts.headers || {}) }
+  });
+  if (r.status === 401) { TOKEN = ''; localStorage.removeItem('comms_token'); showAuth(); return null; }
+  if (!r.ok) return null;
+  return r.json();
+}
+
+function showAuth() {
+  document.getElementById('authOverlay').style.display = 'flex';
+  if (timer) { clearInterval(timer); timer = null; }
+}
+
+async function doLogin() {
+  TOKEN = document.getElementById('tokenInput').value.trim();
+  document.getElementById('authErr').style.display = 'none';
+  const ok = await fetchStatus();
+  if (ok) {
+    localStorage.setItem('comms_token', TOKEN);
+    document.getElementById('authOverlay').style.display = 'none';
+    boot();
+  } else {
+    document.getElementById('authErr').textContent = 'Wrong token or server unreachable.';
+    document.getElementById('authErr').style.display = 'block';
+  }
+}
+document.getElementById('tokenInput').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+
+async function fetchStatus() {
+  try {
+    const d = await api('/api/status');
+    if (!d) return false;
+    const dot = document.getElementById('statusDot');
+    dot.className = 'dot ' + (d.status === 'ok' ? 'ok' : 'err');
+    document.getElementById('statusText').textContent = d.status;
+    const a = d.active_agents ?? 0;
+    const pol = d.poller ? '✓ poller' : '✗ poller';
+    document.getElementById('agentInfo').textContent =
+      a > 0 ? `· ${a} agent${a !== 1 ? 's' : ''} · ${pol}` : `· ${pol}`;
+    document.getElementById('agentInfo').style.color = 'var(--muted)';
+    document.getElementById('agentInfo').style.fontSize = '12px';
+    document.getElementById('updatedAt').textContent = new Date().toLocaleTimeString();
+    return true;
+  } catch { return false; }
+}
+
+function showTab(tab) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('nav button').forEach((b, i) => b.classList.toggle('active', TABS[i] === tab));
+  document.getElementById('tab-' + tab).classList.add('active');
+  activeTab = tab;
+  loadTab(tab);
+}
+
+function loadTab(t) {
+  if (t === 'tasks') loadTasks();
+  else if (t === 'messages') loadMessages();
+  else if (t === 'users') loadUsers();
+  else if (t === 'memory') loadMemory();
+  else if (t === 'approvals') loadApprovals();
+  else if (t === 'kanban') loadKanban();
+  else if (t === 'tokens') loadTokens();
+  else if (t === 'logs') loadLogs();
+}
+
+function boot() {
+  loadTab(activeTab);
+  fetchStatus();
+  if (timer) clearInterval(timer);
+  timer = setInterval(() => { fetchStatus(); loadTab(activeTab); }, 5000);
+}
+
+const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const ts = t => t ? new Date(t * 1000).toLocaleString() : '–';
+const dur = (s, e) => {
+  if (!s) return '–';
+  const d = ((e || Math.floor(Date.now() / 1000)) - s);
+  return d < 60 ? d + 's' : Math.floor(d / 60) + 'm ' + (d % 60) + 's';
+};
+const fmt = n => {
+  n = n || 0;
+  return n >= 1000000 ? (n / 1000000).toFixed(1) + 'M'
+       : n >= 1000    ? (n / 1000).toFixed(1) + 'k'
+       : String(n);
+};
+
+async function loadTasks() {
+  const st = document.getElementById('taskStatus').value;
+  const lim = document.getElementById('taskLimit').value;
+  const rows = await api('/api/tasks?limit=' + lim + (st ? '&status=' + st : ''));
+  const b = document.getElementById('taskBody');
+  if (!rows?.length) { b.innerHTML = '<tr><td colspan="7" class="empty">No tasks</td></tr>'; return; }
+  b.innerHTML = rows.map(t => `
+    <tr>
+      <td class="mono">${t.id}</td>
+      <td><span class="badge b-${t.status}">${t.status}</span></td>
+      <td class="mono">${t.user_id}</td>
+      <td><span class="trunc" title="${esc(t.content)}">${esc(t.content)}</span></td>
+      <td style="white-space:nowrap;color:var(--muted);font-size:12px">${ts(t.created_at)}</td>
+      <td style="white-space:nowrap">${dur(t.started_at, t.completed_at)}</td>
+      <td class="mono" style="color:var(--muted)">${t.agent_id || '–'}</td>
+    </tr>`).join('');
+}
+
+async function loadMessages() {
+  const chat = document.getElementById('msgChat').value;
+  const lim = document.getElementById('msgLimit').value;
+  const rows = await api('/api/messages?limit=' + lim + (chat ? '&chat_id=' + chat : ''));
+  const b = document.getElementById('msgBody');
+  if (!rows?.length) { b.innerHTML = '<tr><td colspan="5" class="empty">No messages</td></tr>'; return; }
+  b.innerHTML = rows.map(m => `
+    <tr>
+      <td class="mono">${m.telegram_message_id}</td>
+      <td class="mono">${m.chat_id}</td>
+      <td class="mono">${m.from_user_id ?? '–'}</td>
+      <td><span class="trunc" title="${esc(m.text)}">${esc(m.text || '[voice]')}</span></td>
+      <td style="white-space:nowrap;color:var(--muted);font-size:12px">${ts(m.timestamp)}</td>
+    </tr>`).join('');
+}
+
+async function loadUsers() {
+  const rows = await api('/api/users');
+  const b = document.getElementById('userBody');
+  if (!rows?.length) { b.innerHTML = '<tr><td colspan="5" class="empty">No users</td></tr>'; return; }
+  b.innerHTML = rows.map(u => `
+    <tr>
+      <td class="mono">${u.id}</td>
+      <td class="mono">${u.telegram_id}</td>
+      <td>${esc(u.name || '–')}</td>
+      <td>
+        <select class="role-sel" data-id="${u.telegram_id}" onchange="setRole(this)">
+          <option value="admin"   ${u.role==='admin'   ?'selected':''}>admin</option>
+          <option value="user"    ${u.role==='user'    ?'selected':''}>user</option>
+          <option value="blocked" ${u.role==='blocked' ?'selected':''}>blocked</option>
+        </select>
+      </td>
+      <td style="color:var(--muted);font-size:12px">${ts(u.last_seen)}</td>
+    </tr>`).join('');
+}
+
+async function setRole(sel) {
+  await api('/api/users/' + sel.dataset.id + '/role', {
+    method: 'POST',
+    body: JSON.stringify({ role: sel.value })
+  });
+}
+
+async function loadMemory() {
+  const q = document.getElementById('memQ').value.trim();
+  const items = await api('/api/memory' + (q ? '?q=' + encodeURIComponent(q) : ''));
+  const g = document.getElementById('memGrid');
+  if (!items?.length) { g.innerHTML = '<div class="empty">No memory entries</div>'; return; }
+  g.innerHTML = items.map(m => `
+    <div class="mem-card">
+      <div class="mem-key">${esc(m.key)}</div>
+      <div class="mem-val">${esc(m.value)}</div>
+      <div class="mem-meta">${m.user_id ? 'user ' + m.user_id : 'global'} · ${ts(m.updated_at)}</div>
+    </div>`).join('');
+}
+
+async function loadApprovals() {
+  const rows = await api('/api/approvals');
+  const b = document.getElementById('approvalBody');
+  if (!rows?.length) { b.innerHTML = '<tr><td colspan="6" class="empty">No pending approvals</td></tr>'; return; }
+  b.innerHTML = rows.map(a => `
+    <tr>
+      <td class="mono">${a.id}</td>
+      <td>${a.action_types.map(t => `<span class="badge b-security">${esc(t)}</span>`).join(' ')}</td>
+      <td class="mono">${a.user_id}</td>
+      <td style="color:var(--muted);font-size:12px">${a.age_seconds}s</td>
+      <td><span class="trunc" title="${esc(a.content)}">${esc(a.content)}</span></td>
+      <td style="display:flex;gap:6px;padding:6px 12px">
+        <button class="btn btn-approve" onclick="decideApproval(${a.id},'approve')">Approve</button>
+        <button class="btn btn-deny" onclick="decideApproval(${a.id},'deny')">Deny</button>
+      </td>
+    </tr>`).join('');
+}
+
+async function decideApproval(id, action) {
+  await api('/api/approvals/' + id + '/' + action, { method: 'POST' });
+  loadApprovals();
+}
+
+async function loadKanban() {
+  const lane = document.getElementById('kanbanLane').value;
+  const limit = document.getElementById('kanbanLimit').value;
+
+  const counts = await api('/api/kanban/counts');
+  if (counts) {
+    const lanes = ['backlog', 'assigned', 'in_progress', 'review', 'done', 'failed', 'blocked'];
+    document.getElementById('laneCounts').innerHTML = lanes.map(l => `
+      <div class="lane-count">
+        <div class="lc-num" style="color:${LANE_COLORS[l] || '#8b949e'}">${counts[l] || 0}</div>
+        <div class="lc-lbl">${l.replace('_', ' ')}</div>
+      </div>`).join('');
+  }
+
+  const rows = await api('/api/kanban?limit=' + limit + (lane ? '&lane=' + lane : ''));
+  const b = document.getElementById('kanbanBody');
+  if (!rows?.length) { b.innerHTML = '<tr><td colspan="7" class="empty">No tasks</td></tr>'; return; }
+  b.innerHTML = rows.map(t => `
+    <tr>
+      <td class="mono">${t.id}</td>
+      <td><span class="badge b-${t.lane}">${t.lane.replace('_', ' ')}</span></td>
+      <td>${t.agent_class ? `<span class="badge b-${t.agent_class}">${t.agent_class}</span>` : '–'}</td>
+      <td class="mono">${t.user_id}</td>
+      <td><span class="trunc" title="${esc(t.content)}">${esc(t.content)}</span></td>
+      <td style="white-space:nowrap;color:var(--muted);font-size:12px">${ts(t.created_at)}</td>
+      <td>${dur(t.started_at, t.completed_at)}</td>
+    </tr>`).join('');
+}
+
+function setTokenPeriod(p) {
+  tokenPeriod = p;
+  ['1h', '24h', '7d', '30d'].forEach(x => {
+    const btn = document.getElementById('tp-' + x);
+    btn.className = 'btn' + (x === p ? '' : ' btn-ghost');
+  });
+  loadTokens();
+}
+
+async function loadTokens() {
+  const data = await api('/api/tokens?period=' + tokenPeriod);
+  if (!data) return;
+
+  const b = document.getElementById('tokenBody');
+  const classes = Object.keys(data.stats || {});
+  if (!classes.length) {
+    b.innerHTML = '<tr><td colspan="7" class="empty">No token data for this period</td></tr>';
+    drawTokenChart([]);
+    return;
+  }
+
+  let tIn = 0, tOut = 0, tCR = 0, tCW = 0, tCalls = 0;
+  b.innerHTML = classes.map(cls => {
+    const s = data.stats[cls];
+    const total = (s.input || 0) + (s.output || 0) + (s.cache_read || 0) + (s.cache_write || 0);
+    tIn += s.input || 0; tOut += s.output || 0;
+    tCR += s.cache_read || 0; tCW += s.cache_write || 0; tCalls += s.calls || 0;
+    return `<tr>
+      <td><span class="badge b-${cls}">${cls}</span></td>
+      <td class="mono">${fmt(s.input)}</td>
+      <td class="mono">${fmt(s.output)}</td>
+      <td class="mono">${fmt(s.cache_read)}</td>
+      <td class="mono">${fmt(s.cache_write)}</td>
+      <td class="mono">${s.calls || 0}</td>
+      <td class="mono" style="color:var(--accent)">${fmt(total)}</td>
+    </tr>`;
+  }).join('') + `<tr style="background:#1c2128;font-weight:600">
+    <td style="color:var(--muted)">Total</td>
+    <td class="mono">${fmt(tIn)}</td>
+    <td class="mono">${fmt(tOut)}</td>
+    <td class="mono">${fmt(tCR)}</td>
+    <td class="mono">${fmt(tCW)}</td>
+    <td class="mono">${tCalls}</td>
+    <td class="mono" style="color:var(--accent)">${fmt(tIn + tOut + tCR + tCW)}</td>
+  </tr>`;
+
+  drawTokenChart(data.timeseries || []);
+}
+
+function drawTokenChart(tsData) {
+  const canvas = document.getElementById('tokenChart');
+  const W = canvas.offsetWidth || 800;
+  const H = 220;
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+
+  if (!tsData.length) {
+    ctx.fillStyle = '#8b949e';
+    ctx.font = '13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('No timeseries data', W / 2, H / 2);
+    return;
+  }
+
+  const buckets = [...new Set(tsData.map(r => r.bucket))].sort((a, b) => a - b);
+  const classes = [...new Set(tsData.map(r => r.agent_class))];
+  const byBucket = {};
+  tsData.forEach(r => {
+    if (!byBucket[r.bucket]) byBucket[r.bucket] = {};
+    byBucket[r.bucket][r.agent_class] = (byBucket[r.bucket][r.agent_class] || 0) + r.tokens;
+  });
+
+  const maxH = Math.max(...buckets.map(b => Object.values(byBucket[b] || {}).reduce((a, v) => a + v, 0)));
+  if (!maxH) {
+    ctx.fillStyle = '#8b949e';
+    ctx.font = '13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('No data', W / 2, H / 2);
+    return;
+  }
+
+  const PAD = { top: 24, bottom: 36, left: 54, right: 12 };
+  const cW = W - PAD.left - PAD.right;
+  const cH = H - PAD.top - PAD.bottom;
+  const barW = Math.max(4, Math.min(36, cW / buckets.length - 2));
+  const step = cW / buckets.length;
+
+  // grid lines
+  ctx.strokeStyle = '#21262d';
+  ctx.lineWidth = 1;
+  [0.25, 0.5, 0.75, 1].forEach(r => {
+    const y = PAD.top + cH * (1 - r);
+    ctx.beginPath();
+    ctx.moveTo(PAD.left, y);
+    ctx.lineTo(W - PAD.right, y);
+    ctx.stroke();
+    ctx.fillStyle = '#8b949e';
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText(fmt(Math.round(maxH * r)), PAD.left - 4, y + 3);
+  });
+
+  // stacked bars
+  buckets.forEach((b, i) => {
+    const x = PAD.left + i * step + (step - barW) / 2;
+    let yBase = PAD.top + cH;
+    const data = byBucket[b] || {};
+    classes.forEach(cls => {
+      const v = data[cls] || 0;
+      if (!v) return;
+      const bH = Math.max(1, (v / maxH) * cH);
+      yBase -= bH;
+      ctx.fillStyle = CLASS_COLORS[cls] || '#555';
+      ctx.fillRect(x, yBase, barW, bH);
+    });
+  });
+
+  // x axis labels
+  ctx.fillStyle = '#8b949e';
+  ctx.font = '10px sans-serif';
+  ctx.textAlign = 'center';
+  const labelStep = Math.max(1, Math.floor(buckets.length / 6));
+  buckets.forEach((b, i) => {
+    if (i % labelStep !== 0 && i !== buckets.length - 1) return;
+    const x = PAD.left + i * step + step / 2;
+    const d = new Date(b * 1000);
+    const lbl = buckets.length <= 25
+      ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    ctx.fillText(lbl, x, H - 10);
+  });
+
+  // legend
+  let lx = PAD.left;
+  const ly = PAD.top - 10;
+  classes.forEach(cls => {
+    ctx.fillStyle = CLASS_COLORS[cls] || '#555';
+    ctx.fillRect(lx, ly, 9, 9);
+    ctx.fillStyle = '#8b949e';
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(cls, lx + 12, ly + 8);
+    lx += 12 + ctx.measureText(cls).width + 14;
+  });
+}
+
+async function loadLogs() {
+  const n = document.getElementById('logLines').value;
+  const pre = document.getElementById('logPre');
+  try {
+    const r = await fetch('/api/logs?lines=' + n, { headers: { 'X-Auth-Token': TOKEN } });
+    if (r.status === 401) { TOKEN = ''; localStorage.removeItem('comms_token'); showAuth(); return; }
+    const text = await r.text();
+    pre.textContent = text || '(empty)';
+    pre.scrollTop = pre.scrollHeight;
+  } catch (e) { pre.textContent = 'Error: ' + e; }
+}
+
+async function checkSetupMode() {
+  try {
+    const r = await fetch('/api/setup');
+    if (!r.ok) return false;
+    const d = await r.json();
+    return d.setup_required === true;
+  } catch { return false; }
+}
+
+function toggleApiKey() {
+  const p = document.getElementById('cfgProvider').value;
+  document.getElementById('apiKeyField').style.display = p === 'api' ? 'block' : 'none';
+}
+
+function genWebToken() {
+  const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let t = '';
+  for (let i = 0; i < 32; i++) t += chars[Math.floor(Math.random() * chars.length)];
+  document.getElementById('cfgWebToken').value = t;
+}
+
+async function doSetup() {
+  const msg = document.getElementById('setupMsg');
+  msg.style.display = 'none';
+
+  const setupToken = document.getElementById('setupToken').value.trim();
+  const tgToken = document.getElementById('cfgTgToken').value.trim();
+  const adminRaw = document.getElementById('cfgAdminIds').value.trim();
+  const provider = document.getElementById('cfgProvider').value;
+  const apiKey = document.getElementById('cfgApiKey').value.trim();
+  const webToken = document.getElementById('cfgWebToken').value.trim();
+
+  if (!setupToken) { showSetupErr('Setup token required — check server logs.'); return; }
+  if (!tgToken) { showSetupErr('Telegram bot token required.'); return; }
+  if (!adminRaw) { showSetupErr('At least one admin chat ID required.'); return; }
+  if (!webToken) { showSetupErr('Web auth token required.'); return; }
+  if (provider === 'api' && !apiKey) { showSetupErr('API key required.'); return; }
+
+  const adminIds = adminRaw.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
+  if (!adminIds.length) { showSetupErr('Invalid admin chat IDs — enter numeric Telegram IDs.'); return; }
+
+  const cfg = {
+    telegram: { token: tgToken, admin_chat_ids: adminIds, allowed_updates: ['message', 'edited_message', 'message_reaction'], reaction_map: {} },
+    llm: { provider, api_key: provider === 'api' ? apiKey : '', model: 'claude-sonnet-4-6', max_tokens: 8192, max_context_tokens: 150000, context_warn_threshold: 0.8, context_compact_threshold: 0.9, usage_poll_interval_seconds: 300 },
+    web: { port: 8080, host: '0.0.0.0', auth_token: webToken },
+    users: { default_role: 'blocked', admin_ids: adminIds },
+    agents: { max_parallel: 4, task_timeout_seconds: 600, po_timeout_seconds: 3600, max_retries: 3, model_tiers: { fast: 'claude-haiku-4-5-20251001', balanced: 'claude-sonnet-4-6', best: 'claude-opus-4-8' }, models: { default: 'balanced', controller: 'fast', chief: 'balanced', po: 'balanced', generalist: 'balanced', researcher: 'balanced', memory: 'fast', compactor: 'fast', mechanic: 'balanced', coder: { default: 'balanced', architect: 'balanced', developer: 'balanced', tester: 'fast', qa: 'balanced' } } },
+    spending: { max_daily_usd: null, max_monthly_usd: null, on_limit_exceeded: 'reject', model_pricing: { 'claude-haiku-4-5-20251001': { input_per_mtok: 0.80, output_per_mtok: 4.00 }, 'claude-sonnet-4-6': { input_per_mtok: 3.00, output_per_mtok: 15.00 }, 'claude-opus-4-8': { input_per_mtok: 15.00, output_per_mtok: 75.00 } } },
+    supervisor: { health_check_interval: 60, max_restart_attempts: 3, restart_backoff_seconds: [5, 15, 60] },
+    security: { enabled: false, pending_timeout_seconds: 300, rules: [] },
+    logging: { dir: '/data/logs', level: 'INFO' }
+  };
+
+  try {
+    const r = await fetch('/api/setup/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Setup-Token': setupToken },
+      body: JSON.stringify({ config: cfg }),
+    });
+    if (r.status === 403) { showSetupErr('Invalid setup token.'); return; }
+    if (!r.ok) { const e = await r.json().catch(() => ({})); showSetupErr(e.detail || 'Save failed.'); return; }
+    msg.className = 'ok'; msg.textContent = 'Configuration saved. Bot will start within 15 seconds — reload this page.'; msg.style.display = 'block';
+    setTimeout(() => location.reload(), 12000);
+  } catch (e) { showSetupErr('Network error: ' + e); }
+}
+
+function showSetupErr(text) {
+  const msg = document.getElementById('setupMsg');
+  msg.className = 'err'; msg.textContent = text; msg.style.display = 'block';
+}
+
+// Boot: check setup mode first, then normal auth
+(async () => {
+  const needsSetup = await checkSetupMode();
+  if (needsSetup) {
+    document.getElementById('authOverlay').style.display = 'none';
+    document.getElementById('setupOverlay').style.display = 'flex';
+    return;
+  }
+  if (TOKEN) {
+    const ok = await fetchStatus();
+    if (ok) { document.getElementById('authOverlay').style.display = 'none'; boot(); }
+    else { TOKEN = ''; localStorage.removeItem('comms_token'); }
+  }
+})();
+</script>
+</body>
+</html>
