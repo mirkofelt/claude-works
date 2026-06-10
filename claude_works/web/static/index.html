@@ -31,6 +31,17 @@
     .auth-box input:focus { outline: none; border-color: var(--accent); }
     .err { color: var(--red); font-size: 13px; margin-top: 8px; }
 
+    /* setup gate — shown on first launch, hides entire app */
+    #setupGate { position: fixed; inset: 0; background: var(--bg); display: none; align-items: center; justify-content: center; z-index: 300; flex-direction: column; gap: 32px; }
+    .gate-box { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 40px 36px; width: 100%; max-width: 380px; text-align: center; }
+    .gate-box img { width: 72px; height: 72px; margin-bottom: 20px; border-radius: 16px; }
+    .gate-box h1 { font-size: 22px; font-weight: 600; margin-bottom: 6px; }
+    .gate-box p { color: var(--muted); font-size: 13px; margin-bottom: 28px; line-height: 1.5; }
+    .gate-box input { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 10px 14px; border-radius: 6px; font-size: 14px; margin-bottom: 14px; text-align: center; letter-spacing: .04em; }
+    .gate-box input:focus { outline: none; border-color: var(--accent); }
+    .gate-box .btn { width: 100%; padding: 10px; }
+    .gate-box .gate-err { color: var(--red); font-size: 13px; margin-top: 10px; display: none; }
+
     /* setup overlay */
     #setupOverlay { position: fixed; inset: 0; background: rgba(0,0,0,.92); display: none; align-items: center; justify-content: center; z-index: 200; overflow-y: auto; padding: 24px; }
     .setup-box { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 32px; width: 100%; max-width: 520px; }
@@ -145,6 +156,17 @@
   </style>
 </head>
 <body>
+
+<div id="setupGate">
+  <div class="gate-box">
+    <img src="/static/icon.png" alt="Claude Works">
+    <h1>Claude Works</h1>
+    <p>First launch detected.<br>Enter the setup token from your server logs.</p>
+    <input type="password" id="gateToken" placeholder="Setup token" autofocus onkeydown="if(event.key==='Enter')doGateSubmit()">
+    <button class="btn" onclick="doGateSubmit()">Continue</button>
+    <div class="gate-err" id="gateErr"></div>
+  </div>
+</div>
 
 <div id="authOverlay">
   <div class="auth-box">
@@ -882,12 +904,27 @@ function showSetupErr(text) {
   msg.className = 'err'; msg.textContent = text; msg.style.display = 'block';
 }
 
+let _gateToken = '';
+
+function doGateSubmit() {
+  const tok = document.getElementById('gateToken').value.trim();
+  const err = document.getElementById('gateErr');
+  if (!tok) { err.textContent = 'Setup token required — check server logs.'; err.style.display = 'block'; return; }
+  _gateToken = tok;
+  document.getElementById('gateErr').style.display = 'none';
+  document.getElementById('gateToken').value = '';
+  document.getElementById('setupToken').value = tok;
+  document.getElementById('setupGate').style.display = 'none';
+  document.getElementById('setupOverlay').style.display = 'flex';
+}
+
 // Boot: check setup mode first, then normal auth
 (async () => {
   const needsSetup = await checkSetupMode();
   if (needsSetup) {
     document.getElementById('authOverlay').style.display = 'none';
-    document.getElementById('setupOverlay').style.display = 'flex';
+    document.getElementById('setupOverlay').style.display = 'none';
+    document.getElementById('setupGate').style.display = 'flex';
     return;
   }
   if (TOKEN) {
