@@ -256,6 +256,48 @@
       </div>
     </div>
 
+    <div class="setup-section">
+      <h3>Email — optional</h3>
+      <div class="field">
+        <label>SMTP Host</label>
+        <input type="text" id="cfgSmtpHost" placeholder="smtp.protonmail.ch">
+      </div>
+      <div class="field">
+        <label>SMTP Port</label>
+        <input type="number" id="cfgSmtpPort" placeholder="587" value="587">
+      </div>
+      <div class="field">
+        <label>SMTP User / From address</label>
+        <input type="text" id="cfgSmtpUser" placeholder="you@example.com">
+      </div>
+      <div class="field">
+        <label>SMTP Password</label>
+        <input type="password" id="cfgSmtpPassword" placeholder="">
+      </div>
+      <div class="field">
+        <label>IMAP Host</label>
+        <input type="text" id="cfgImapHost" placeholder="imap.protonmail.ch">
+      </div>
+      <div class="field">
+        <label>IMAP Port</label>
+        <input type="number" id="cfgImapPort" placeholder="993" value="993">
+      </div>
+      <div class="field">
+        <label>IMAP Password</label>
+        <input type="password" id="cfgImapPassword" placeholder="(same as SMTP or separate)">
+        <div class="hint">Leave all email fields blank to disable email features.</div>
+      </div>
+    </div>
+
+    <div class="setup-section">
+      <h3>GitHub — optional</h3>
+      <div class="field">
+        <label>Personal Access Token</label>
+        <input type="password" id="cfgGithubPat" placeholder="github_pat_...">
+        <div class="hint">Needs repo scope. Leave blank to disable GitHub features.</div>
+      </div>
+    </div>
+
     <div style="margin-top:20px">
       <button class="btn" onclick="doSetup()" style="width:100%;padding:10px">Save Configuration</button>
       <div id="setupMsg"></div>
@@ -1051,6 +1093,14 @@ async function doSetup() {
   const apiKey = document.getElementById('cfgApiKey').value.trim();
   const cliBinary = document.getElementById('cfgCliBinary').value.trim();
   const webToken = document.getElementById('cfgWebToken').value.trim();
+  const smtpHost = document.getElementById('cfgSmtpHost').value.trim();
+  const smtpPort = parseInt(document.getElementById('cfgSmtpPort').value.trim()) || 587;
+  const smtpUser = document.getElementById('cfgSmtpUser').value.trim();
+  const smtpPassword = document.getElementById('cfgSmtpPassword').value.trim();
+  const imapHost = document.getElementById('cfgImapHost').value.trim();
+  const imapPort = parseInt(document.getElementById('cfgImapPort').value.trim()) || 993;
+  const imapPassword = document.getElementById('cfgImapPassword').value.trim();
+  const githubPat = document.getElementById('cfgGithubPat').value.trim();
 
   if (!setupToken) { showSetupErr('Setup token required — check server logs.'); return; }
   if (!tgToken) { showSetupErr('Telegram bot token required.'); return; }
@@ -1071,7 +1121,9 @@ async function doSetup() {
     spending: { max_daily_usd: null, max_monthly_usd: null, on_limit_exceeded: 'reject', model_pricing: { 'claude-haiku-4-5-20251001': { input_per_mtok: 0.80, output_per_mtok: 4.00 }, 'claude-sonnet-4-6': { input_per_mtok: 3.00, output_per_mtok: 15.00 }, 'claude-opus-4-8': { input_per_mtok: 15.00, output_per_mtok: 75.00 } } },
     supervisor: { health_check_interval: 60, max_restart_attempts: 3, restart_backoff_seconds: [5, 15, 60] },
     security: { enabled: false, pending_timeout_seconds: 300, rules: [] },
-    logging: { dir: '/data/logs', level: 'INFO' }
+    logging: { dir: '/data/logs', level: 'INFO' },
+    ...(smtpHost ? { email: { smtp_host: smtpHost, smtp_port: smtpPort, smtp_user: smtpUser, smtp_password: smtpPassword, smtp_tls: true, from_address: smtpUser, imap_host: imapHost || smtpHost.replace('smtp.', 'imap.'), imap_port: imapPort, imap_user: smtpUser, imap_password: imapPassword || smtpPassword } } : {}),
+    ...(githubPat ? { github: { personal_access_token: githubPat } } : {})
   };
 
   try {
