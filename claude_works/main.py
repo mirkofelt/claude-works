@@ -883,16 +883,24 @@ class Daemon:
 
             if send_email_args:
                 to, subject, body = send_email_args
-                try:
-                    email_cfg = config.section("email")
-                    await _send_email(to, subject, body, email_cfg)
-                    await self._api.send_message(task.chat_id, f"✉️ E-Mail an {to} gesendet.")
-                except KeyError:
-                    logger.error("Email config missing — set email.smtp_host/user/password in settings.json")
-                    await self._api.send_message(task.chat_id, "E-Mail nicht gesendet: E-Mail-Konfiguration fehlt.")
-                except Exception as e:
-                    logger.warning("Email send failed for task=%d: %s", task.id, e)
-                    await self._api.send_message(task.chat_id, f"E-Mail-Versand fehlgeschlagen: {e}")
+                email_content = f"To: {to}\nSubject: {subject}\n\n{body}"
+                email_allowed = await self._security.check_action(
+                    "email_send", email_content, task_id=task.id, chat_id=task.chat_id, user_id=task.user_id
+                )
+                if not email_allowed:
+                    logger.info("Email send blocked by security officer for task=%d", task.id)
+                    await self._api.send_message(task.chat_id, "E-Mail durch Security Officer blockiert — möglicher Datenleck erkannt.")
+                else:
+                    try:
+                        email_cfg = config.section("email")
+                        await _send_email(to, subject, body, email_cfg)
+                        await self._api.send_message(task.chat_id, f"✉️ E-Mail an {to} gesendet.")
+                    except KeyError:
+                        logger.error("Email config missing — set email.smtp_host/user/password in settings.json")
+                        await self._api.send_message(task.chat_id, "E-Mail nicht gesendet: E-Mail-Konfiguration fehlt.")
+                    except Exception as e:
+                        logger.warning("Email send failed for task=%d: %s", task.id, e)
+                        await self._api.send_message(task.chat_id, f"E-Mail-Versand fehlgeschlagen: {e}")
 
             if read_email_args:
                 folder, count = read_email_args
@@ -917,12 +925,13 @@ class Daemon:
                 method, endpoint, body = github_args
                 is_write = method in ("POST", "PUT", "PATCH", "DELETE")
                 if is_write:
+                    gh_content = f"{method} {endpoint}\n\n{body or ''}"
                     gh_allowed = await self._security.check_action(
-                        "github_write", f"{method} {endpoint}", task_id=task.id, chat_id=task.chat_id, user_id=task.user_id
+                        "github_write", gh_content, task_id=task.id, chat_id=task.chat_id, user_id=task.user_id
                     )
                     if not gh_allowed:
-                        logger.info("GitHub write blocked by security for task=%d", task.id)
-                        await self._api.send_message(task.chat_id, "GitHub-Schreibzugriff durch Security blockiert.")
+                        logger.info("GitHub write blocked by security officer for task=%d", task.id)
+                        await self._api.send_message(task.chat_id, "GitHub-Schreibzugriff durch Security Officer blockiert — möglicher Datenleck erkannt.")
                         github_args = None
                 if github_args:
                     try:
