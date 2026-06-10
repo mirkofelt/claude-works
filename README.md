@@ -1,82 +1,192 @@
 # Claude Works
 
-Claude Works — non-blocking, multi-agent Telegram communication system. Standalone Docker container.
+Non-blocking, multi-agent Telegram communication system. Standalone Docker container — one volume, zero config files in the image.
 
-## Features
+## Installation
 
-- **Multi-layer agent architecture** — ControllerAgent routes tasks by type; specialist pool (generalist / researcher / coder / memory) + ChiefAgent for strategy
-- **Provider-agnostic LLM layer** — all API calls via `LLMProvider` ABC; swap backends by changing one config key
-- **Kanban task lifecycle** — tasks flow through backlog → assigned → in_progress → review → done/failed; asyncio event-driven, no polling
-- **Token telemetry** — per-call tracking by agent class + model; time-series aggregation; visible in Web UI
-- **Knowledge base** — structured knowledge store (type/title/content/tags/source), agent-accessible
-- **Non-blocking message processing** — Telegram poller never blocks; all work runs in background agents
-- **Message bundling** — rapid follow-ups merged into single task via time + context heuristic
-- **Reaction handling** — Telegram reactions mapped to configurable actions
-- **User auth** — role-based (admin/user/blocked), new users auto-blocked pending admin approval
-- **Per-user memory** — SQLite key/value store, agent-scoped per user
-- **MCP support** — configurable MCP servers passed to LLM provider via beta API
-- **Security supervisor** — gating layer for critical operations (internet access, data deletion, etc.); approve via Telegram or Web UI
-- **Web UI** — dark dashboard at port 8080; tabs: Tasks, Messages, Users, Memory, Approvals, Kanban, Tokens, Logs
-- **Setup wizard** — INITIALIZE mode: Web UI setup overlay with single-use token; no API calls during setup
-- **Supervisor process** — health-check loop, auto-restart with backoff, Telegram alert on failure
-- **Structured logging** — rotating log file, uvicorn integrated
-- **Split DB** — config (`config.db`) separate from operational data (`claude-works.db`)
-
-## Quick Start
+### 1. Pull image
 
 ```bash
+docker pull ghcr.io/mirkofelt/claude-works:latest
+```
+
+Or build locally:
+
+```bash
+git clone https://github.com/mirkofelt/claude-works
+cd claude-works
 docker compose up -d
 ```
 
-On first start the daemon enters **INITIALIZE** mode. Open `http://localhost:8080`, enter the one-time setup token printed to stdout, and fill in the configuration form. All settings are stored in `config.db` — no `settings.json` needed.
+### 2. Mount `/data`
 
-## Configuration
+The only required mount. All user state lives here — config, knowledge, prompts, logs.
 
-All config is stored in `config.db` (the `daemon_config` table). The Web UI setup wizard is the primary way to configure the system. See `settings.example.json` for the full config structure and available keys.
+```yaml
+# docker-compose.yml (minimal)
+services:
+  claude-works:
+    image: ghcr.io/mirkofelt/claude-works:latest
+    volumes:
+      - ./data:/data
+    ports:
+      - "8080:8080"
+```
 
-Key sections: `telegram`, `llm`, `agents`, `web`, `users`, `supervisor`, `security`, `mcp`, `logging`
+### 3. First start — two options
 
-Config hot-reload: the daemon polls `config.db` every 5 seconds. Changes saved via the Web UI take effect without a restart. For an immediate reload: `/reload_config` (Telegram) or `POST /api/config/reload` (Web API).
+**Option A: Web wizard (interactive)**
 
-Environment variables:
-- `DB_FILE` — path to operational DB (default: `/data/claude-works.db`)
-- `CONFIG_DB_FILE` — path to config DB (default: `/data/config.db`)
+Start the container. Open `http://localhost:8080`, enter the one-time setup token printed to stdout, fill in the form. Done.
+
+**Option B: settings.json (headless / scripted)**
+
+Place a `settings.json` in `/data/` before starting. The daemon reads it automatically, skips the wizard, and goes straight to RUN mode.
+
+```bash
+cp settings.example.json data/settings.json
+# edit data/settings.json — fill in YOUR_* placeholders
+docker compose up -d
+```
+
+Required fields in `settings.json`:
+
+```json
+{
+  "telegram": { "token": "BOT_TOKEN", "admin_chat_ids": [NUMERIC_USER_ID] },
+  "llm": { "provider": "api", "api_key": "YOUR_API_KEY" },
+  "web": { "auth_token": "YOUR_SECRET" }
+}
+```
+
+All other fields are optional — see `settings.example.json` for the full structure.
+
+### 4. Claude CLI (optional, for subscription users)
+
+Copy the `claude` binary into the container's PATH or use the bundled one:
+
+```bash
+# Authenticate (one-time, auth persists in /data/.claude)
+docker compose exec claude-works claude auth login
+```
+
+Then set `llm.provider = "cli"` in the Settings tab of the Web UI.
+
+---
+
+## Import from AI Agent
+
+Any AI assistant with persistent memory (ClaudeClaw, ChatGPT, etc.) can export its knowledge into claude-works for use by agents.
+
+### How it works
+
+Files placed in `/data/knowledge/` are automatically imported into the knowledge base on every container start. Changed files are re-imported. Deleted files leave the KB entry intact.
+
+### Copyable prompt for agents
+
+Paste this prompt to any AI assistant that knows you:
+
+```
+Create a claude-works knowledge export from your current context and memory.
+Generate the following files:
+
+knowledge/01_persona.md
+  — Your character: name, communication style, behavioral rules, how you present yourself.
+
+knowledge/02_user_profile.md
+  — User profile: person, job, family, contacts, tech stack, communication preferences.
+
+knowledge/03_finances.md (if known)
+  — Financial situation: income, expenses, debts, assets, FIRE goals.
+
+knowledge/04_projects.md
+  — Active projects: descriptions, status, priorities, technical details, architecture.
+
+knowledge/05_properties.md (if known)
+  — Real estate: construction details, costs, open invoices, contractors.
+
+knowledge/06_travel.md (if known)
+  — Planned trips: booking status, dates, deadlines, itineraries.
+
+knowledge/07_rules.md
+  — Behavioral feedback: what to do, what to avoid, trust levels, system quirks.
+
+knowledge/08_*.md
+  — Any additional topics from memory (business ideas, health, subscriptions, etc.)
+
+Format rules:
+- Markdown only, no YAML frontmatter needed
+- Tables preferred over prose for structured data
+- Include dates where relevant ("as of June 2026")
+- Highlight deadlines and open tasks explicitly
+- No credentials, passwords, or API keys in any file
+
+Also create settings.json using this template:
+[paste contents of settings.example.json here]
+Replace all YOUR_* placeholders — leave them as-is if unknown.
+```
+
+### File layout
+
+```
+/data/knowledge/
+  01_persona.md
+  02_user_profile.md
+  03_finances.md
+  04_projects.md
+  05_properties.md
+  06_travel.md
+  07_rules.md
+  08_*.md         ← any additional topics
+```
+
+---
 
 ## /data layout
 
-Everything user-owned lives under `/data`. The container image is read-only; no user state is stored inside it.
-
 ```
 /data/
-├── config.db              # daemon config DB — managed via Web UI setup wizard
-├── claude-works.db        # operational DB (auto-created)
-├── persona.md             # optional: ChiefAgent persona
-├── logs/
-│   ├── claude-works.log   # rotating application log
-│   └── init.log           # container startup log (see below)
-├── requirements.local.txt # optional: extra pip packages, installed at each startup
-└── init.sh                # optional: custom shell commands run at each startup
+  config.db              # daemon config (managed via Web UI or settings.json seed)
+  claude-works.db        # operational DB (auto-created)
+  settings.json          # optional seed: read once on first start if no config.db
+  .claude/               # Claude CLI auth (CLAUDE_HOME)
+  prompts/               # agent prompt overrides (auto-exported from image on first start)
+  knowledge/             # knowledge documents (auto-imported on every start)
+  projects/              # working directory for Claude CLI subprocess
+  logs/
+    claude-works.log     # rotating application log
+    tor.log              # Tor daemon log
+    init.log             # container startup log
+  requirements.local.txt # optional: extra pip packages, installed at startup
+  init.sh                # optional: custom shell commands run at startup
 ```
 
-### Extending the container
+---
 
-Rather than modifying the image, place customisations in `/data` — they survive container rebuilds and are self-documenting:
+## Features
 
-| File | Purpose |
-|------|---------|
-| `requirements.local.txt` | Extra Python packages (`pip install -r`) |
-| `init.sh` | Arbitrary shell commands (apt installs, tool downloads, env setup) |
+- **Multi-agent architecture** — ControllerAgent routes by type; specialist pool (generalist / researcher / coder / memory) + ChiefAgent
+- **Output patterns** — agents produce structured output: `[VOICE:]`, `[MAP:]`, `[BUTTONS:]`, `[SEND_EMAIL:]`, `[READ_EMAIL:]`, `[GITHUB_API:]`
+- **Tor routing** — URL fetches go through Tor by default; fallback to direct with user confirmation
+- **Security Officer** — LLM-based content review before outbound actions (email, GitHub writes, TTS)
+- **Proactive error recovery** — ControllerAgent retries failed tasks via LLM-guided routing
+- **Hot-reload prompts** — edit files in `/data/prompts/`, changes apply within 5 seconds
+- **Knowledge base** — FTS5 full-text search; auto-import from `/data/knowledge/` on start
+- **Token telemetry** — per-agent tracking, spending limits, visible in Web UI
+- **Settings UI** — all config editable in the Web UI without restart
+- **Kanban task lifecycle** — backlog → assigned → in_progress → review → done/failed
+- **User auth** — role-based (admin/user/blocked), new users auto-blocked
+- **MCP support** — configurable MCP servers
+- **Supervisor process** — health-check loop, auto-restart with backoff
 
-Both are executed on every container start before the application launches. Output is appended to `/data/logs/init.log` with timestamps, so the history of all container modifications is always available in `/data`.
-
-## Architecture
-
-See `docs/architecture.md` for full module breakdown and data flow.
+---
 
 ## Development
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 pytest
 python -m claude_works.main
 ```
+
+Branch strategy: `feature/*` → PR to `develop` → release merge to `main`.
