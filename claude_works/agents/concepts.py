@@ -58,6 +58,11 @@ Sends a Telegram location pin. Tag stripped from text reply.
 **Buttons** (already documented below):
 [BUTTONS: label|data, ...]
 
+**Web content** (automatic, no tag needed):
+When the user's message contains URLs (https://...), the system automatically fetches
+and injects the page content into your context under "## Fetched Web Content".
+You can use that content directly in your answer — no special tag required.
+
 Tags can be combined. Text outside tags is sent as the normal text reply.
 
 ## Clarifying Questions

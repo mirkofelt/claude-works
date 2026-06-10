@@ -8,6 +8,7 @@ import os
 import signal
 from typing import Any
 
+import httpx
 import uvicorn
 
 from . import config, db
@@ -93,6 +94,31 @@ def _parse_buttons(text: str) -> "tuple[str, list[list[dict]] | None]":
         buttons.append({"text": label, "callback_data": data[:64]})
     rows = [buttons[i:i+3] for i in range(0, len(buttons), 3)]
     return clean.strip(), rows
+
+
+_URL_RE = re.compile(r'https?://[^\s<>"\']+')
+_MAX_FETCH_URLS = 3
+_MAX_FETCH_CHARS = 4000
+
+
+async def _fetch_url_content(url: str) -> str | None:
+    try:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            resp = await client.get(url, headers={"User-Agent": "Mozilla/5.0 (compatible; claude-works/1.0)"})
+            resp.raise_for_status()
+            ct = resp.headers.get("content-type", "")
+            if "text" not in ct and "json" not in ct:
+                return None
+            text = resp.text
+        text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'<[^>]+>', ' ', text)
+        text = re.sub(r'&(?:[a-z]+|#\d+);', ' ', text)
+        text = re.sub(r'\s+', ' ', text).strip()
+        return text[:_MAX_FETCH_CHARS] if text else None
+    except Exception as e:
+        logger.debug("URL fetch failed (%s): %s", url, e)
+        return None
 
 
 class Daemon:
@@ -519,6 +545,17 @@ class Daemon:
                 logger.warning("Voice download/transcription error: %s", e)
                 content = "[Voice message — transcription failed]" + ("\n" + content if content else "")
 
+        urls = _URL_RE.findall(content)
+        if urls:
+            fetched_sections = []
+            for url in urls[:_MAX_FETCH_URLS]:
+                page_text = await _fetch_url_content(url)
+                if page_text:
+                    fetched_sections.append(f"[Content of {url}]\n{page_text}")
+                    logger.debug("Fetched URL for context: %s (%d chars)", url, len(page_text))
+            if fetched_sections:
+                content = content + "\n\n## Fetched Web Content\n" + "\n\n---\n\n".join(fetched_sections)
+
         task = KanbanTask(
             id=None,
             chat_id=chat_id,
@@ -707,7 +744,7 @@ class Daemon:
 
             if map_query:
                 try:
-                    async with __import__("httpx").AsyncClient(timeout=10.0) as hc:
+                    async with httpx.AsyncClient(timeout=10.0) as hc:
                         r = await hc.get(
                             "https://nominatim.openstreetmap.org/search",
                             params={"q": map_query, "format": "json", "limit": 1},
