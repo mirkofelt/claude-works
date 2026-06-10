@@ -8,9 +8,6 @@ from ..telemetry.tokens import TokenTracker
 
 logger = logging.getLogger(__name__)
 
-_SYSTEM_PROMPT = _load_prompt("mechanic")
-
-
 class MechanicContext(str, Enum):
     MIGRATE = "migrate"
     REPAIR = "repair"
@@ -37,7 +34,7 @@ class MechanicAgent(BaseAgent):
         self._mode = mode
 
     def _system_prompt(self) -> str:
-        return _SYSTEM_PROMPT
+        return _load_prompt("mechanic")
 
     def _build_initial_message(self) -> str:
         return f"[{self._mode.value.upper()} MODE]\n\n{self._context}"

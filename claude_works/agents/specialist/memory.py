@@ -1,5 +1,5 @@
 from ..base import BaseAgent
-from ..concepts import SYSTEM_PROMPT
+from ..concepts import get_system_prompt
 from ...llm.provider import LLMProvider
 from ...telemetry.tokens import TokenTracker
 
@@ -25,5 +25,5 @@ class MemoryAgent(BaseAgent):
         self._persona = persona
 
     def _system_prompt(self) -> str:
-        base = self._persona or SYSTEM_PROMPT
+        base = self._persona or get_system_prompt()
         return base + _MEMORY_ADDENDUM

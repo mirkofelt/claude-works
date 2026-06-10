@@ -7,14 +7,31 @@ logger = logging.getLogger(__name__)
 _BUILTIN_DIR = Path(__file__).parent
 _DATA_DIR = Path(os.environ.get("PROMPTS_DIR", "/data/prompts"))
 
+# mtime-aware cache: name -> (mtime_float, text)
+_cache: dict[str, tuple[float, str]] = {}
+
 
 def load(name: str) -> str:
-    """Load prompt by name. Checks /data/prompts/<name>.md first, falls back to built-in."""
+    """Load prompt by name. Checks /data/prompts/<name>.md first, falls back to built-in.
+    Re-reads from disk whenever the file's mtime changes."""
     override = _DATA_DIR / f"{name}.md"
-    if override.is_file():
-        logger.debug("Prompt %r loaded from data dir override", name)
-        return override.read_text(encoding="utf-8").strip()
-    return (_BUILTIN_DIR / f"{name}.md").read_text(encoding="utf-8").strip()
+    builtin = _BUILTIN_DIR / f"{name}.md"
+    path = override if override.is_file() else builtin
+
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        raise FileNotFoundError(f"Prompt not found: {name!r} (checked {override}, {builtin})")
+
+    cached = _cache.get(name)
+    if cached and cached[0] == mtime:
+        return cached[1]
+
+    text = path.read_text(encoding="utf-8").strip()
+    _cache[name] = (mtime, text)
+    if cached:
+        logger.info("Prompt %r reloaded (file changed)", name)
+    return text
 
 
 def export_defaults() -> int:

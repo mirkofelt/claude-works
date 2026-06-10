@@ -10,7 +10,7 @@ from ..knowledge import store as knowledge_store
 from ..llm.errors import RateLimitError
 from ..llm.provider import LLMProvider, get_provider
 from ..telemetry.tokens import TokenTracker
-from .concepts import SYSTEM_PROMPT, CAVEMAN_ADDENDUM
+from .concepts import get_system_prompt, get_caveman_addendum
 
 logger = logging.getLogger(__name__)
 
@@ -65,10 +65,10 @@ class ChiefAgent:
         self.load_persona()
 
     def _system_prompt(self, user_context: dict) -> str:
-        base = self._persona or SYSTEM_PROMPT
+        base = self._persona or get_system_prompt()
         base += _CHIEF_ADDENDUM
         if user_context.get("caveman_mode", True):
-            base += CAVEMAN_ADDENDUM
+            base += get_caveman_addendum()
         return base
 
     async def _run_task(self, task, on_result) -> None:

@@ -1,5 +1,5 @@
 from ..base import BaseAgent
-from ..concepts import SYSTEM_PROMPT, CAVEMAN_ADDENDUM
+from ..concepts import get_system_prompt, get_caveman_addendum
 from ...llm.provider import LLMProvider
 from ...telemetry.tokens import TokenTracker
 
@@ -25,8 +25,8 @@ class CoderAgent(BaseAgent):
         self._persona = persona
 
     def _system_prompt(self) -> str:
-        base = self._persona or SYSTEM_PROMPT
+        base = self._persona or get_system_prompt()
         base += _CODER_ADDENDUM
         if self._user_context.get("caveman_mode", True):
-            base += CAVEMAN_ADDENDUM
+            base += get_caveman_addendum()
         return base

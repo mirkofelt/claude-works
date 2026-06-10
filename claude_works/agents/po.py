@@ -14,10 +14,6 @@ logger = logging.getLogger(__name__)
 
 from ..prompts import load as _load_prompt
 
-_DECOMPOSE_SYSTEM = _load_prompt("po_decompose")
-_SYNTHESIZE_SYSTEM = _load_prompt("po_synthesize")
-
-
 class ProductOwnerAgent:
     """Decomposes high-level tasks into subtasks, tracks completion, synthesizes results.
 
@@ -79,7 +75,7 @@ class ProductOwnerAgent:
     async def _decompose(self, task: KanbanTask) -> list[dict]:
         text = await self._llm(
             [{"role": "user", "content": task.content[:4000]}],
-            system=_DECOMPOSE_SYSTEM,
+            system=_load_prompt("po_decompose"),
             model=get_agent_model("controller"),  # fast tier — routing doesn't need Sonnet
         )
         try:
@@ -113,7 +109,7 @@ class ProductOwnerAgent:
         results_text = "\n\n".join(parts) or "(no results)"
         return await self._llm(
             [{"role": "user", "content": f"## Goal\n{goal}\n\n## Subtask Results\n{results_text}"}],
-            system=_SYNTHESIZE_SYSTEM,
+            system=_load_prompt("po_synthesize"),
             max_tokens=2048,
         )
 

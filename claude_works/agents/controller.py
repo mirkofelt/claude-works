@@ -38,9 +38,6 @@ def _fast_route(content: str) -> "AgentClass | None":
 
 from ..prompts import load as _load_prompt
 
-_ROUTING_SYSTEM = _load_prompt("controller_routing")
-_RECOVERY_SYSTEM = _load_prompt("controller_recovery")
-
 _MAX_RECOVERY_ATTEMPTS = 2
 
 
@@ -80,7 +77,7 @@ class ControllerAgent:
         prompt = f"Task:\n{content[:400]}\n\nError:\n{error[:200]}"
         response = await self._get_provider().complete(
             [{"role": "user", "content": prompt}],
-            system=_RECOVERY_SYSTEM,
+            system=_load_prompt("controller_recovery"),
             model=model,
             max_tokens=128,
         )
@@ -168,7 +165,7 @@ class ControllerAgent:
 
         response = await self._get_provider().complete(
             [{"role": "user", "content": content[:500]}],
-            system=_ROUTING_SYSTEM,
+            system=_load_prompt("controller_routing"),
             model=model,
             max_tokens=128,
         )

@@ -3,7 +3,7 @@ import logging
 import uuid
 
 from ..base import BaseAgent
-from ..concepts import SYSTEM_PROMPT, CAVEMAN_ADDENDUM, _DEV_STANDARDS_ADDENDUM
+from ..concepts import get_system_prompt, get_caveman_addendum, get_dev_standards
 from ...config import get_agent_model
 from ...llm.provider import LLMProvider
 from ...telemetry.tokens import TokenTracker
@@ -21,20 +21,20 @@ Produce a concise design document for the given task:
 Output: design doc only. No code.
 """
 
-_DEVELOPER_ADDENDUM = _DEV_STANDARDS_ADDENDUM + """
+_DEVELOPER_ADDENDUM = """
 ## Role: Developer
 Implement based on the provided spec. Write complete, working code.
 Return code only. Minimal prose.
 """
 
-_TESTER_ADDENDUM = _DEV_STANDARDS_ADDENDUM + """
+_TESTER_ADDENDUM = """
 ## Role: Tester
 Write tests covering happy path, edge cases, error conditions.
 No mocking of DB or external services — use in-memory / test doubles that exercise real logic.
 Return test code only.
 """
 
-_TESTER_SPEC_ADDENDUM = _DEV_STANDARDS_ADDENDUM + """
+_TESTER_SPEC_ADDENDUM = """
 ## Role: Tester
 Write tests based on the spec and task description (implementation not yet available).
 Cover happy path, edge cases, error conditions.
@@ -74,10 +74,12 @@ class _TeamMember(BaseAgent):
         return get_agent_model("coder", stage=self._stage)
 
     def _system_prompt(self) -> str:
-        base = self._persona or SYSTEM_PROMPT
+        base = self._persona or get_system_prompt()
+        if self._stage in ("developer", "tester", "tester_spec"):
+            base += get_dev_standards()
         base += self._addendum
         if self._user_context.get("caveman_mode", True):
-            base += CAVEMAN_ADDENDUM
+            base += get_caveman_addendum()
         return base
 
 

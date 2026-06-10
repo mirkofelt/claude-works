@@ -11,8 +11,6 @@ from ..prompts import load as _load_prompt
 
 logger = logging.getLogger(__name__)
 
-_OFFICER_SYSTEM = _load_prompt("security_officer")
-
 
 @dataclass
 class PendingApproval:
@@ -71,7 +69,7 @@ class SecuritySupervisor:
             prompt = f"Action: {action_type}\n\nContent to review:\n{content[:2000]}"
             response = await self._get_provider().complete(
                 [{"role": "user", "content": prompt}],
-                system=_OFFICER_SYSTEM,
+                system=_load_prompt("security_officer"),
                 model=model,
                 max_tokens=128,
             )
