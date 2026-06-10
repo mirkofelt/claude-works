@@ -808,7 +808,7 @@ function boot() {
   loadTab(activeTab);
   fetchStatus();
   if (timer) clearInterval(timer);
-  timer = setInterval(() => { fetchStatus(); loadTab(activeTab); }, 5000);
+  timer = setInterval(() => { fetchStatus(); if (activeTab !== 'settings') loadTab(activeTab); }, 5000);
 }
 
 const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
