@@ -1,29 +1,43 @@
+import asyncio
 import json
 import logging
-
-import httpx
+import os
 
 logger = logging.getLogger(__name__)
 
-_GITHUB_API_BASE = "https://api.github.com"
-
 
 async def github_api(method: str, endpoint: str, body: str | None, cfg: dict) -> dict:
-    token = cfg["personal_access_token"]
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
-    url = _GITHUB_API_BASE + endpoint if not endpoint.startswith("http") else endpoint
-    payload = None
+    """Execute a GitHub API call via the gh CLI. Requires gh binary in PATH or cfg.gh_binary."""
+    binary = cfg.get("gh_binary", "gh")
+    token = cfg.get("token", "")
+
+    cmd = [binary, "api", "--method", method.upper(), endpoint]
     if body:
         try:
-            payload = json.loads(body)
-        except json.JSONDecodeError:
-            logger.warning("GitHub API body not valid JSON: %r", body[:80])
+            json.loads(body)  # validate JSON before passing
+        except json.JSONDecodeError as e:
+            raise ValueError(f"GitHub API body is not valid JSON: {e}") from e
+        cmd += ["--input", "-"]
 
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        resp = await client.request(method.upper(), url, headers=headers, json=payload)
-        resp.raise_for_status()
-        return resp.json() if resp.text else {}
+    env = os.environ.copy()
+    if token:
+        env["GH_TOKEN"] = token
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdin=asyncio.subprocess.PIPE if body else asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=env,
+    )
+    stdin_data = body.encode() if body else None
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(input=stdin_data), timeout=30.0)
+    except asyncio.TimeoutError as exc:
+        proc.kill()
+        raise RuntimeError("gh api timed out after 30s") from exc
+
+    if proc.returncode != 0:
+        raise RuntimeError(f"gh api failed ({proc.returncode}): {stderr.decode()[:400]}")
+
+    return json.loads(stdout.decode()) if stdout.strip() else {}

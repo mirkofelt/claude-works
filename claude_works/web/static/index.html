@@ -292,9 +292,9 @@
     <div class="setup-section">
       <h3>GitHub — optional</h3>
       <div class="field">
-        <label>Personal Access Token</label>
+        <label>Token (GH_TOKEN)</label>
         <input type="password" id="cfgGithubPat" placeholder="github_pat_...">
-        <div class="hint">Needs repo scope. Leave blank to disable GitHub features.</div>
+        <div class="hint">Passed as GH_TOKEN to gh CLI. Needs repo scope. Leave blank to disable.</div>
       </div>
     </div>
 
@@ -1165,7 +1165,7 @@ async function doSetup() {
     security: { enabled: false, pending_timeout_seconds: 300, rules: [] },
     logging: { dir: '/data/logs', level: 'INFO' },
     ...(smtpHost ? { email: { smtp_host: smtpHost, smtp_port: smtpPort, smtp_user: smtpUser, smtp_password: smtpPassword, smtp_tls: true, from_address: smtpUser, imap_host: imapHost || smtpHost.replace('smtp.', 'imap.'), imap_port: imapPort, imap_user: smtpUser, imap_password: imapPassword || smtpPassword } } : {}),
-    ...(githubPat ? { github: { personal_access_token: githubPat } } : {}),
+    ...(githubPat ? { github: { token: githubPat, gh_binary: 'gh' } } : {}),
     ...(elApiKey ? { tts: { provider: 'elevenlabs', elevenlabs_api_key: elApiKey, elevenlabs_voice_id: elVoiceId, elevenlabs_model: elModel } } : { tts: { provider: 'gtts' } })
   };
 

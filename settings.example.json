@@ -136,7 +136,8 @@
     "imap_password": "YOUR_IMAP_PASSWORD"
   },
   "github": {
-    "_comment": "Personal access token with repo scope for read; repo+write for mutations.",
-    "personal_access_token": "YOUR_GITHUB_PAT"
+    "_comment": "gh CLI token (GH_TOKEN). Needs repo scope for read; repo+write for mutations. gh must be in PATH (installed in Docker image).",
+    "token": "YOUR_GITHUB_TOKEN",
+    "gh_binary": "gh"
   }
 }
