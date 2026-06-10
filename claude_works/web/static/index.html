@@ -568,7 +568,12 @@
       <div class="cfg-body">
         <div class="field"><label>Bot Token</label><input type="password" id="s_tg_token" placeholder="123456:ABC..."></div>
         <div class="field"><label>Admin Chat IDs</label><input type="text" id="s_tg_admin_ids" placeholder="123456789, 987654321"><div class="hint">Comma-separated</div></div>
-        <div class="field wide"><label>Reaction Map (JSON)</label><textarea id="s_tg_reaction_map" rows="3"></textarea></div>
+        <div class="field wide">
+          <label>Reaction Map</label>
+          <div id="s_tg_reaction_rows" style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px"></div>
+          <button type="button" onclick="reactionRowAdd()" style="padding:4px 10px;font-size:12px;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:4px;cursor:pointer">+ Reaction</button>
+          <div class="hint">Emoji-Reaktion → Aktion</div>
+        </div>
       </div>
     </details>
 
@@ -1425,6 +1430,32 @@ async function deleteKnowledge(id) {
   loadKnowledge();
 }
 
+const _REACTION_ACTIONS = ['approve','reject','save','prioritize','dismiss','clarify'];
+
+function reactionRowAdd(emoji = '', action = 'approve') {
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;gap:6px;align-items:center';
+  const opts = _REACTION_ACTIONS.map(a => `<option value="${a}"${a===action?' selected':''}>${a}</option>`).join('');
+  row.innerHTML = `<input type="text" value="${emoji}" placeholder="Emoji" style="width:56px;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 8px;border-radius:4px;font-size:18px;text-align:center"><select style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px;flex:1">${opts}</select><button type="button" onclick="this.parentNode.remove()" style="background:transparent;border:none;color:var(--red);cursor:pointer;font-size:16px;padding:0 4px">✕</button>`;
+  document.getElementById('s_tg_reaction_rows').appendChild(row);
+}
+
+function reactionMapLoad(obj) {
+  const container = document.getElementById('s_tg_reaction_rows');
+  container.innerHTML = '';
+  for (const [emoji, action] of Object.entries(obj || {})) reactionRowAdd(emoji, action);
+}
+
+function reactionMapRead() {
+  const result = {};
+  for (const row of document.getElementById('s_tg_reaction_rows').children) {
+    const [emojiEl, actionEl] = row.querySelectorAll('input,select');
+    const emoji = emojiEl.value.trim();
+    if (emoji) result[emoji] = actionEl.value;
+  }
+  return result;
+}
+
 function _sv(id) { const e = document.getElementById(id); return e ? e.value.trim() : ''; }
 function _sn(id) { const v = _sv(id); return v === '' ? null : Number(v); }
 function _sb(id) { return _sv(id) === 'true'; }
@@ -1445,7 +1476,7 @@ async function loadSettings() {
     const sv = c.supervisor || {}, log = c.logging || {}, mcp = c.mcp || {};
 
     _set('s_tg_token', tg.token); _set('s_tg_admin_ids', (tg.admin_chat_ids||[]).join(', '));
-    _setj('s_tg_reaction_map', tg.reaction_map || {});
+    reactionMapLoad(tg.reaction_map || {});
     _set('s_llm_provider', llm.provider); _set('s_llm_api_key', llm.api_key);
     _set('s_llm_cli_binary', llm.cli_binary); _set('s_llm_model', llm.model);
     _set('s_llm_max_tokens', llm.max_tokens); _set('s_llm_max_ctx', llm.max_context_tokens);
@@ -1485,7 +1516,7 @@ async function saveSettings() {
   try {
     const tiers = _sj('s_ag_tiers'), models = _sj('s_ag_models');
     const secRules = _sj('s_sec_rules'), pricing = _sj('s_sp_pricing');
-    const reactionMap = _sj('s_tg_reaction_map'), mcpServers = _sj('s_mcp_servers');
+    const reactionMap = reactionMapRead(), mcpServers = _sj('s_mcp_servers');
     const backoff = _sj('s_sv_backoff');
     const adminIds = _sa('s_tg_admin_ids');
     cfg = {
