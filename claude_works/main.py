@@ -4,6 +4,7 @@ import logging
 import re
 import urllib.parse
 from .tasks.transcriber import transcribe as _transcribe_audio
+from .tasks.tts import synthesize as _synthesize_tts
 import secrets
 import time
 import os
@@ -797,16 +798,19 @@ class Daemon:
                 sent = {"message_id": 0}
 
             if tts_text:
-                try:
-                    from gtts import gTTS
-                    import io
-                    tts = gTTS(text=tts_text, lang="de")
-                    buf = io.BytesIO()
-                    tts.write_to_fp(buf)
-                    buf.seek(0)
-                    await self._api.send_voice(task.chat_id, buf.read())
-                except Exception as e:
-                    logger.warning("TTS failed for task=%d: %s", task.id, e)
+                tts_allowed = await self._security.check_action(
+                    "tts_send", tts_text, task_id=task.id, chat_id=task.chat_id, user_id=task.user_id
+                )
+                if tts_allowed:
+                    try:
+                        tts_cfg = config.section("tts")
+                        audio = await _synthesize_tts(tts_text, tts_cfg)
+                        if audio:
+                            await self._api.send_voice(task.chat_id, audio)
+                    except Exception as e:
+                        logger.warning("TTS failed for task=%d: %s", task.id, e)
+                else:
+                    logger.info("TTS blocked by security for task=%d", task.id)
 
             if map_query:
                 try:

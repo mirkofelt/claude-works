@@ -9,6 +9,8 @@ DEFAULT_RULES: list[dict] = [
     {"type": "github_write", "pattern": r"\[GITHUB_API:", "enabled": True},
     {"type": "external_api", "pattern": r"\b(webhook|api_call|post_to)\b", "enabled": False},
     {"type": "publication", "pattern": r"\b(publish|broadcast|announcement)\b", "enabled": False},
+    # tts_send is gated unconditionally via check_action() — this entry exists for config override only
+    {"type": "tts_send", "pattern": r"\[VOICE:", "enabled": False},
 ]
 
 

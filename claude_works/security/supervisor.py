@@ -43,6 +43,20 @@ class SecuritySupervisor:
     def enabled(self) -> bool:
         return section("security").get("enabled", False)
 
+    async def check_action(
+        self,
+        action_type: str,
+        content: str,
+        task_id: int | None = None,
+        chat_id: int = 0,
+        user_id: int = 0,
+    ) -> bool:
+        """Gate a specific action unconditionally when security is enabled.
+        Unlike check(), this does not use rule matching — it always requests approval."""
+        if not self.enabled:
+            return True
+        return await self._request_approval([action_type], content, task_id, chat_id, user_id)
+
     async def check(
         self,
         content: str,
@@ -57,7 +71,16 @@ class SecuritySupervisor:
         triggered = check_content(content, self._rules)
         if not triggered:
             return True
+        return await self._request_approval(triggered, content, task_id, chat_id, user_id)
 
+    async def _request_approval(
+        self,
+        action_types: list[str],
+        content: str,
+        task_id: int | None = None,
+        chat_id: int = 0,
+        user_id: int = 0,
+    ) -> bool:
         approval_id = self._next_id
         self._next_id += 1
 
@@ -66,7 +89,7 @@ class SecuritySupervisor:
             task_id=task_id,
             chat_id=chat_id,
             user_id=user_id,
-            action_types=triggered,
+            action_types=action_types,
             content=content[:500],
             requested_at=time.time(),
         )
@@ -74,7 +97,7 @@ class SecuritySupervisor:
 
         logger.warning(
             "Security check triggered id=%d task=%s actions=%s",
-            approval_id, task_id, triggered,
+            approval_id, task_id, action_types,
         )
 
         await self._notify_admins(approval)
