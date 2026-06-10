@@ -343,6 +343,7 @@
   <button onclick="showTab('tokens')">Tokens</button>
   <button onclick="showTab('logs')">Logs</button>
   <button onclick="showTab('chat')">Chat</button>
+  <button onclick="showTab('settings')">Settings</button>
 </nav>
 
 <main>
@@ -542,6 +543,25 @@
   </div>
 </div>
 
+<div class="section" id="tab-settings">
+  <div class="card" style="max-width:860px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+      <h2 style="margin:0;font-size:16px">Configuration</h2>
+      <div style="display:flex;gap:8px;align-items:center">
+        <span id="settingsMsg" style="font-size:12px;display:none"></span>
+        <button class="btn btn-ghost" onclick="loadSettings()">↺ Reload</button>
+        <button class="btn" onclick="saveSettings()">Save & Apply</button>
+      </div>
+    </div>
+    <textarea id="settingsEditor"
+      style="width:100%;min-height:600px;background:#0d1117;border:1px solid var(--border);color:#e6edf3;border-radius:4px;padding:14px;font-family:monospace;font-size:13px;line-height:1.6;resize:vertical;box-sizing:border-box"
+      spellcheck="false"></textarea>
+    <div style="margin-top:8px;font-size:11px;color:var(--muted)">
+      Changes apply immediately without restart. Reload page if auth token changes.
+    </div>
+  </div>
+</div>
+
 </main>
 
 <script>
@@ -551,7 +571,7 @@ let _chatHistoryLoaded = false;
 let timer = null;
 let tokenPeriod = '24h';
 
-const TABS = ['tasks', 'messages', 'users', 'memory', 'knowledge', 'approvals', 'kanban', 'tokens', 'logs', 'chat'];
+const TABS = ['tasks', 'messages', 'users', 'memory', 'knowledge', 'approvals', 'kanban', 'tokens', 'logs', 'chat', 'settings'];
 
 const LANE_COLORS = {
   backlog: '#8b949e', assigned: '#58a6ff', in_progress: '#d29922',
@@ -629,6 +649,7 @@ function loadTab(t) {
   else if (t === 'tokens') loadTokens();
   else if (t === 'logs') loadLogs();
   else if (t === 'chat') loadAdminChatHistory();
+  else if (t === 'settings') loadSettings();
 }
 
 function boot() {
@@ -1248,6 +1269,45 @@ async function deleteKnowledge(id) {
   if (!confirm('Delete this entry?')) return;
   await api('/api/knowledge/' + id, { method: 'DELETE' });
   loadKnowledge();
+}
+
+async function loadSettings() {
+  const ta = document.getElementById('settingsEditor');
+  const msg = document.getElementById('settingsMsg');
+  try {
+    const data = await api('/api/config');
+    ta.value = JSON.stringify(data.config, null, 2);
+    msg.style.display = 'none';
+  } catch (e) {
+    msg.textContent = 'Load failed: ' + e;
+    msg.style.color = 'var(--red)';
+    msg.style.display = 'inline';
+  }
+}
+
+async function saveSettings() {
+  const ta = document.getElementById('settingsEditor');
+  const msg = document.getElementById('settingsMsg');
+  let cfg;
+  try {
+    cfg = JSON.parse(ta.value);
+  } catch (e) {
+    msg.textContent = 'Invalid JSON: ' + e.message;
+    msg.style.color = 'var(--red)';
+    msg.style.display = 'inline';
+    return;
+  }
+  try {
+    await api('/api/config/save', { method: 'POST', body: { config: cfg } });
+    msg.textContent = 'Saved ✓';
+    msg.style.color = 'var(--green)';
+    msg.style.display = 'inline';
+    setTimeout(() => { msg.style.display = 'none'; }, 3000);
+  } catch (e) {
+    msg.textContent = 'Save failed: ' + e;
+    msg.style.color = 'var(--red)';
+    msg.style.display = 'inline';
+  }
 }
 </script>
 </body>

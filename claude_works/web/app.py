@@ -539,6 +539,27 @@ async def get_kanban_counts():
     return {r["lane"]: r["n"] for r in rows}
 
 
+@app.get("/api/config", dependencies=[Depends(_verify_token)])
+async def get_config():
+    cfg = config.get()
+    return {"config": cfg}
+
+
+@app.post("/api/config/save", dependencies=[Depends(_verify_token)])
+async def save_config_endpoint(body: dict):
+    cfg = body.get("config")
+    if not isinstance(cfg, dict):
+        raise HTTPException(status_code=400, detail="config must be a JSON object")
+    try:
+        conn = await db.init_config()
+        await _store_save_config(conn, cfg)
+        await conn.close()
+        config.set(cfg)
+        return {"ok": True, "message": "Config saved and applied"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/config/reload", dependencies=[Depends(_verify_token)])
 async def reload_config():
     from ..config_store import load_config as _load_db_cfg
