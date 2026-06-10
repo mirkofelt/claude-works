@@ -90,6 +90,7 @@ class AgentCoordinator:
             board=self._board,
             provider=provider,
             token_tracker=self._token_tracker,
+            on_result=self._on_result,
         )
         self._chief = ChiefAgent(
             board=self._board,

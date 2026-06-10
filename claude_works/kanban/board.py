@@ -189,6 +189,52 @@ class KanbanBoard:
                 return children
             await asyncio.sleep(2.0)
 
+    async def next_failed(self, exclude_ids: "set[int] | None" = None) -> "KanbanTask | None":
+        """Return oldest FAILED task not in exclude_ids (already-maxed recoveries)."""
+        if exclude_ids:
+            placeholders = ",".join("?" * len(exclude_ids))
+            query = (
+                f"SELECT * FROM kanban_tasks WHERE lane = ? AND id NOT IN ({placeholders})"
+                " AND parent_id IS NULL ORDER BY completed_at ASC LIMIT 1"
+            )
+            params = [Lane.FAILED.value, *sorted(exclude_ids)]
+        else:
+            query = (
+                "SELECT * FROM kanban_tasks WHERE lane = ? AND parent_id IS NULL"
+                " ORDER BY completed_at ASC LIMIT 1"
+            )
+            params = [Lane.FAILED.value]
+        async with self._conn.execute(query, params) as cur:
+            row = await cur.fetchone()
+        return _row_to_task(row) if row else None
+
+    async def recover(self, task_id: int, content: str | None = None) -> bool:
+        """Move a FAILED task back to BACKLOG for retry. Optionally update content."""
+        now = int(time.time())
+        if content is not None:
+            async with self._conn.execute(
+                """UPDATE kanban_tasks SET lane = ?, error = NULL, content = ?,
+                   agent_class = NULL, agent_id = NULL, started_at = NULL,
+                   assigned_at = NULL, completed_at = NULL
+                   WHERE id = ? AND lane = ?""",
+                (Lane.BACKLOG.value, content, task_id, Lane.FAILED.value),
+            ) as cur:
+                updated = cur.rowcount
+        else:
+            async with self._conn.execute(
+                """UPDATE kanban_tasks SET lane = ?, error = NULL,
+                   agent_class = NULL, agent_id = NULL, started_at = NULL,
+                   assigned_at = NULL, completed_at = NULL
+                   WHERE id = ? AND lane = ?""",
+                (Lane.BACKLOG.value, task_id, Lane.FAILED.value),
+            ) as cur:
+                updated = cur.rowcount
+        await self._conn.commit()
+        if updated:
+            self._notify.set()
+            logger.info("Kanban recover id=%d content_updated=%s", task_id, content is not None)
+        return updated > 0
+
     async def wait_for_work(self, timeout: float = 30.0) -> None:
         self._notify.clear()
         try:
