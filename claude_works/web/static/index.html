@@ -580,7 +580,7 @@
     <details class="cfg-section">
       <summary>AI Provider</summary>
       <div class="cfg-body">
-        <div class="field"><label>Provider</label><select id="s_llm_provider"><option value="api">api (key)</option><option value="cli">cli (subscription)</option></select></div>
+        <div class="field"><label>Provider</label><select id="s_llm_provider" onchange="updateCliAuthVisibility()"><option value="api">api (key)</option><option value="cli">cli (subscription)</option></select></div>
         <div class="field"><label>API Key</label><input type="password" id="s_llm_api_key"></div>
         <div class="field"><label>CLI Binary</label><input type="text" id="s_llm_cli_binary" placeholder="claude"></div>
         <div class="field"><label>Default Model</label><input type="text" id="s_llm_model" placeholder="claude-sonnet-4-6"></div>
@@ -588,6 +588,23 @@
         <div class="field"><label>Max Context Tokens</label><input type="number" id="s_llm_max_ctx"></div>
         <div class="field"><label>Context Warn Threshold</label><input type="number" id="s_llm_ctx_warn" step="0.01" min="0" max="1"></div>
         <div class="field"><label>Context Compact Threshold</label><input type="number" id="s_llm_ctx_compact" step="0.01" min="0" max="1"></div>
+        <div id="s_cli_auth_section" class="field wide" style="display:none;border-top:1px solid var(--border);margin-top:16px;padding-top:14px">
+          <div style="font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin-bottom:12px">CLI Authentication</div>
+          <div class="field">
+            <button class="btn" id="s_btn_cli_auth" onclick="startRuntimeCliAuth()" style="width:100%">Authenticate with Anthropic →</button>
+          </div>
+          <div id="s_cli_auth_url_box" style="display:none;margin-top:8px">
+            <div class="hint" style="margin-bottom:4px">Open this URL in your browser, log in, then paste the code below:</div>
+            <a id="s_cli_auth_url" href="#" target="_blank" style="display:block;font-size:11px;color:#58a6ff;word-break:break-all;padding:8px;background:#1a1f28;border-radius:4px;border:1px solid var(--border)"></a>
+          </div>
+          <div id="s_cli_code_field" style="display:none;margin-top:10px">
+            <div class="field" style="margin:0">
+              <input type="text" id="s_cli_auth_code" placeholder="Paste authorization code from browser">
+            </div>
+            <button class="btn" onclick="confirmRuntimeCliAuth()" style="width:100%;margin-top:8px">Confirm →</button>
+          </div>
+          <div id="s_cli_auth_status" style="display:none;font-size:13px;margin-top:10px;padding:8px;border-radius:4px"></div>
+        </div>
       </div>
     </details>
 
@@ -1504,9 +1521,48 @@ async function loadSettings() {
     _set('s_sv_backoff', JSON.stringify(sv.restart_backoff_seconds || []));
     _set('s_log_dir', log.dir); _set('s_log_level', log.level || 'INFO');
     _setb('s_mcp_enabled', mcp.enabled); _setj('s_mcp_servers', mcp.servers || []);
+    updateCliAuthVisibility();
     msg.style.display = 'none';
   } catch (e) {
     msg.textContent = 'Load failed: ' + e; msg.style.color = 'var(--red)'; msg.style.display = 'inline';
+  }
+}
+
+function updateCliAuthVisibility() {
+  const provider = document.getElementById('s_llm_provider').value;
+  const section = document.getElementById('s_cli_auth_section');
+  if (section) section.style.display = provider === 'cli' ? 'block' : 'none';
+}
+
+async function startRuntimeCliAuth() {
+  const btn = document.getElementById('s_btn_cli_auth');
+  const urlBox = document.getElementById('s_cli_auth_url_box');
+  const codeField = document.getElementById('s_cli_code_field');
+  const statusEl = document.getElementById('s_cli_auth_status');
+  btn.disabled = true; btn.textContent = 'Starting…';
+  urlBox.style.display = 'none'; codeField.style.display = 'none'; statusEl.style.display = 'none';
+  const d = await api('/api/cli-auth/start', { method: 'POST', body: JSON.stringify({}) });
+  btn.disabled = false; btn.textContent = 'Authenticate with Anthropic →';
+  if (!d) { statusEl.textContent = 'Failed to start auth.'; statusEl.style.background = 'var(--red)20'; statusEl.style.color = 'var(--red)'; statusEl.style.display = 'block'; return; }
+  const urlEl = document.getElementById('s_cli_auth_url');
+  urlEl.href = d.url; urlEl.textContent = d.url;
+  urlBox.style.display = 'block'; codeField.style.display = 'block';
+}
+
+async function confirmRuntimeCliAuth() {
+  const code = document.getElementById('s_cli_auth_code').value.trim();
+  const statusEl = document.getElementById('s_cli_auth_status');
+  if (!code) return;
+  const d = await api('/api/cli-auth/confirm', { method: 'POST', body: JSON.stringify({ code }) });
+  statusEl.style.display = 'block';
+  if (d && d.ok) {
+    statusEl.textContent = '✓ Authenticated successfully.';
+    statusEl.style.background = 'var(--green)20'; statusEl.style.color = 'var(--green)';
+    document.getElementById('s_cli_code_field').style.display = 'none';
+    document.getElementById('s_cli_auth_url_box').style.display = 'none';
+  } else {
+    statusEl.textContent = 'Auth failed — check logs.';
+    statusEl.style.background = 'var(--red)20'; statusEl.style.color = 'var(--red)';
   }
 }
 

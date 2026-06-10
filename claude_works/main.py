@@ -199,6 +199,7 @@ class Daemon:
         self._stop_called = False
         self._user_backgrounds: dict[int, str] = {}
         self._pending_direct_fetches: dict[str, dict] = {}
+        self._pending_reauth: dict[int, asyncio.subprocess.Process] = {}  # chat_id → proc
 
     # ──────────────────────────────────────────────────────────
     # Lifecycle
@@ -541,6 +542,29 @@ class Daemon:
             await self._handle_command(text, telegram_id, chat_id)
             return
 
+        # Check if user is completing CLI re-auth
+        if chat_id in self._pending_reauth and text and not text.startswith("/"):
+            proc = self._pending_reauth.pop(chat_id)
+            if proc.returncode is not None:
+                await self._api.send_message(chat_id, "Auth-Session abgelaufen. /reauth erneut ausführen.")
+                return
+            try:
+                proc.stdin.write((text.strip() + "\n").encode())
+                await proc.stdin.drain()
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30.0)
+                if proc.returncode == 0:
+                    await self._api.send_message(chat_id, "✓ Claude CLI authentifiziert.")
+                else:
+                    out = stdout.decode(errors="replace") if stdout else ""
+                    await self._api.send_message(chat_id, f"Auth fehlgeschlagen: {out[:200]}")
+            except asyncio.TimeoutError:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                await self._api.send_message(chat_id, "Auth-Bestätigung Timeout. /reauth erneut versuchen.")
+            return
+
         # In REPAIR/MIGRATE mode, route messages to Mechanic if admin
         if self._mode_mgr.mode in (DaemonMode.REPAIR, DaemonMode.MIGRATE):
             if await is_admin(self._conn, telegram_id) and self._mechanic and text:
@@ -824,6 +848,54 @@ class Daemon:
                 return
             await self.exit_repair()
             await self._api.send_message(chat_id, "Exited repair mode. Normal operation resumed.")
+
+        elif cmd == "/reauth":
+            if not await is_admin(self._conn, from_id):
+                await self._api.send_message(chat_id, "Nur für Admins.")
+                return
+            await self._start_telegram_reauth(chat_id)
+            return
+
+    async def _start_telegram_reauth(self, chat_id: int) -> None:
+        cfg = config.section("llm")
+        binary = cfg.get("cli_binary") or "claude"
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                binary, "auth", "login",
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+        except FileNotFoundError:
+            await self._api.send_message(chat_id, f"CLI binary nicht gefunden: {binary}")
+            return
+        url = None
+        buf = ""
+        try:
+            deadline = asyncio.get_event_loop().time() + 20.0
+            while asyncio.get_event_loop().time() < deadline:
+                try:
+                    chunk = await asyncio.wait_for(proc.stdout.read(512), timeout=2.0)
+                except asyncio.TimeoutError:
+                    continue
+                if not chunk:
+                    break
+                buf += chunk.decode(errors="replace")
+                m = re.search(r'https://[^\s]+', buf)
+                if m:
+                    url = m.group().rstrip('.')
+                    break
+        except Exception as exc:
+            await self._api.send_message(chat_id, f"Auth-Start fehlgeschlagen: {exc}")
+            return
+        if not url:
+            await self._api.send_message(chat_id, f"Keine Auth-URL gefunden. Output: {buf[:300]}")
+            return
+        self._pending_reauth[chat_id] = proc
+        await self._api.send_message(
+            chat_id,
+            f"Öffne diese URL im Browser und schick mir danach den Code:\n{url}"
+        )
 
     async def _on_agent_result(self, task: KanbanTask, result: str | None, error: str | None = None) -> None:
         self._stop_typing(task.chat_id)

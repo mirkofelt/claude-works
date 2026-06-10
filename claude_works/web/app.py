@@ -38,6 +38,7 @@ app.mount("/static", StaticFiles(directory=_static_dir), name="static")
 _daemon_ref: Any = None
 _setup_token: str | None = None
 _cli_auth_proc: asyncio.subprocess.Process | None = None
+_runtime_cli_auth_proc: asyncio.subprocess.Process | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -290,6 +291,80 @@ async def cli_auth_confirm(body: dict, x_setup_token: str | None = Header(defaul
         out = stdout.decode(errors="replace") if stdout else ""
         raise HTTPException(status_code=500, detail=f"Auth failed (exit {returncode}): {out[:300]}")
 
+    return {"ok": True}
+
+
+@app.post("/api/cli-auth/start", dependencies=[Depends(_verify_token)])
+async def runtime_cli_auth_start():
+    """Start claude auth login — available in any mode."""
+    global _runtime_cli_auth_proc
+    cfg = config.section("llm") if config._settings else {}
+    binary = cfg.get("cli_binary") or "claude"
+    if not re.match(r'^[a-zA-Z0-9_./-]+$', binary):
+        raise HTTPException(status_code=400, detail="Invalid cli_binary")
+    if _runtime_cli_auth_proc and _runtime_cli_auth_proc.returncode is None:
+        try:
+            _runtime_cli_auth_proc.kill()
+        except Exception:
+            pass
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            binary, "auth", "login",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+    except FileNotFoundError:
+        raise HTTPException(status_code=500, detail=f"CLI binary not found: {binary}")
+    _runtime_cli_auth_proc = proc
+    url = None
+    buf = ""
+    try:
+        deadline = asyncio.get_event_loop().time() + 20.0
+        while asyncio.get_event_loop().time() < deadline:
+            try:
+                chunk = await asyncio.wait_for(proc.stdout.read(512), timeout=2.0)
+            except asyncio.TimeoutError:
+                continue
+            if not chunk:
+                break
+            buf += chunk.decode(errors="replace")
+            m = re.search(r'https://[^\s]+', buf)
+            if m:
+                url = m.group().rstrip('.')
+                break
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Auth start error: {exc}")
+    if not url:
+        raise HTTPException(status_code=500, detail=f"No auth URL found. Output: {buf[:400]}")
+    return {"url": url}
+
+
+@app.post("/api/cli-auth/confirm", dependencies=[Depends(_verify_token)])
+async def runtime_cli_auth_confirm(body: dict):
+    """Submit auth code — available in any mode."""
+    global _runtime_cli_auth_proc
+    if not _runtime_cli_auth_proc or _runtime_cli_auth_proc.returncode is not None:
+        raise HTTPException(status_code=409, detail="No active auth session — call /start first")
+    code = body.get("code", "").strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="code required")
+    try:
+        _runtime_cli_auth_proc.stdin.write((code + "\n").encode())
+        await _runtime_cli_auth_proc.stdin.drain()
+        stdout, _ = await asyncio.wait_for(_runtime_cli_auth_proc.communicate(), timeout=30.0)
+        returncode = _runtime_cli_auth_proc.returncode
+    except asyncio.TimeoutError:
+        try:
+            _runtime_cli_auth_proc.kill()
+        except Exception:
+            pass
+        raise HTTPException(status_code=504, detail="Auth confirmation timed out")
+    finally:
+        _runtime_cli_auth_proc = None
+    if returncode != 0:
+        out = stdout.decode(errors="replace") if stdout else ""
+        raise HTTPException(status_code=500, detail=f"Auth failed (exit {returncode}): {out[:300]}")
     return {"ok": True}
 
 
