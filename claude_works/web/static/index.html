@@ -717,7 +717,8 @@ const CLASS_COLORS = {
 async function api(path, opts = {}) {
   const r = await fetch(path, {
     ...opts,
-    headers: { 'X-Auth-Token': TOKEN, 'Content-Type': 'application/json', ...(opts.headers || {}) }
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) }
   });
   if (r.status === 401) { TOKEN = ''; localStorage.removeItem('comms_token'); showAuth(); return null; }
   if (!r.ok) return null;
@@ -1090,7 +1091,7 @@ async function loadLogs() {
   const n = document.getElementById('logLines').value;
   const pre = document.getElementById('logPre');
   try {
-    const r = await fetch('/api/logs?lines=' + n, { headers: { 'X-Auth-Token': TOKEN } });
+    const r = await fetch('/api/logs?lines=' + n, { credentials: 'same-origin' });
     if (r.status === 401) { TOKEN = ''; localStorage.removeItem('comms_token'); showAuth(); return; }
     const text = await r.text();
     pre.textContent = text || '(empty)';
@@ -1350,9 +1351,16 @@ function doGateSubmit() {
     return;
   }
   if (TOKEN) {
-    const ok = await fetchStatus();
-    if (ok) { document.getElementById('authOverlay').style.display = 'none'; boot(); }
-    else { TOKEN = ''; localStorage.removeItem('comms_token'); }
+    try {
+      const r = await fetch('/api/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: TOKEN }),
+        credentials: 'same-origin',
+      });
+      if (r.ok) { document.getElementById('authOverlay').style.display = 'none'; boot(); }
+      else { TOKEN = ''; localStorage.removeItem('comms_token'); }
+    } catch { TOKEN = ''; localStorage.removeItem('comms_token'); }
   }
 })();
 
