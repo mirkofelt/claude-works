@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Setup — Claude Works</title>
+  <link rel="icon" type="image/png" href="icon.png">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0d1117; --surface: #161b22; --border: #21262d;
+      --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff; --accent2: #79c0ff;
+    }
+    body { background: var(--bg); color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      line-height: 1.7; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    header { border-bottom: 1px solid var(--border); padding: 1rem 2rem;
+      display: flex; align-items: center; gap: .75rem; }
+    header nav { margin-left: auto; display: flex; gap: 1.5rem; font-size: .9rem; }
+    header nav a { color: var(--muted); }
+    header nav a:hover { color: var(--text); text-decoration: none; }
+    header nav a.ext { color: var(--accent); }
+    .content { max-width: 860px; margin: 0 auto; padding: 3rem 2rem 5rem; }
+    h1 { font-size: 2rem; font-weight: 700; margin-bottom: .5rem; letter-spacing: -.02em; }
+    .lead { color: var(--muted); margin-bottom: 2.5rem; font-size: 1.05rem; }
+    h2 { font-size: 1.35rem; font-weight: 600; margin: 3rem 0 1rem;
+      padding-bottom: .4rem; border-bottom: 1px solid var(--border); }
+    h3 { font-size: 1rem; font-weight: 600; margin: 1.75rem 0 .5rem; color: var(--accent2); }
+    p { margin-bottom: .75rem; }
+    ul, ol { margin: .5rem 0 1rem 1.5rem; }
+    li { margin-bottom: .35rem; }
+    code { background: var(--surface); border: 1px solid var(--border);
+      border-radius: 4px; padding: .1em .4em; font-size: .875em;
+      font-family: "SF Mono", Consolas, monospace; }
+    pre { background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+      padding: 1.25rem 1.5rem; overflow-x: auto; margin: .75rem 0 1.25rem; }
+    pre code { background: none; border: none; padding: 0; font-size: .875rem; }
+    .callout { background: var(--surface); border: 1px solid var(--border);
+      border-left: 3px solid var(--accent); border-radius: 6px;
+      padding: 1rem 1.25rem; margin: 1.25rem 0; font-size: .9rem; }
+    .callout.warn { border-left-color: #f0883e; }
+    .callout strong { display: block; margin-bottom: .25rem; }
+    .step { display: flex; gap: 1rem; margin-bottom: 1.25rem; align-items: flex-start; }
+    .step-num { background: var(--accent); color: #0d1117; border-radius: 50%;
+      width: 1.6rem; height: 1.6rem; display: flex; align-items: center; justify-content: center;
+      font-size: .8rem; font-weight: 700; flex-shrink: 0; margin-top: .2rem; }
+    .step-body { flex: 1; }
+    .step-body p { margin-bottom: .4rem; }
+    footer { border-top: 1px solid var(--border); padding: 1.5rem 2rem;
+      text-align: center; font-size: .85rem; color: var(--muted); }
+  </style>
+</head>
+<body>
+
+<header>
+  <a href="index.html" style="display:flex;align-items:center;gap:.75rem;text-decoration:none;">
+    <img src="icon.png" alt="" style="width:32px;height:32px;border-radius:50%;">
+    <span style="font-weight:600;font-size:1.1rem;color:#e6edf3;">Claude Works</span>
+  </a>
+  <nav>
+    <a href="index.html">Home</a>
+    <a href="setup.html">Setup</a>
+    <a href="architecture.html">Architecture</a>
+    <a href="requirements.html">Requirements</a>
+    <a href="https://github.com/mirkofelt/claude-works" target="_blank" rel="noopener" class="ext">GitHub ↗</a>
+  </nav>
+</header>
+
+<div class="content">
+
+<h1>Setup</h1>
+<p class="lead">Two paths: standard Docker Compose for any Linux host, and Unraid via the Docker manager.</p>
+
+<!-- ================================================================ -->
+<h2>A — Docker Compose</h2>
+
+<h3>Prerequisites</h3>
+<ul>
+  <li>Docker ≥ 24 + Compose plugin</li>
+  <li>An LLM provider: API key <em>or</em> a compatible CLI binary in PATH</li>
+  <li>A Telegram Bot token (from <a href="https://t.me/BotFather" target="_blank" rel="noopener">@BotFather ↗</a>)</li>
+</ul>
+
+<h3>Installation</h3>
+
+<div class="step">
+  <div class="step-num">1</div>
+  <div class="step-body">
+    <p><strong>Clone the repository</strong></p>
+    <pre><code>git clone https://github.com/mirkofelt/claude-works.git
+cd claude-works</code></pre>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-num">2</div>
+  <div class="step-body">
+    <p><strong>Start the container</strong></p>
+    <pre><code>docker compose up -d</code></pre>
+    <p>On first boot the daemon enters <strong>INITIALIZE</strong> mode. The Web UI is available immediately.</p>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-num">3</div>
+  <div class="step-body">
+    <p><strong>Get the setup token</strong></p>
+    <pre><code>docker logs claude-works 2>&1 | grep "SETUP TOKEN"</code></pre>
+    <p>The token is a one-time secret printed to stdout. It is <em>not</em> written to the log file.</p>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-num">4</div>
+  <div class="step-body">
+    <p><strong>Complete the setup wizard</strong></p>
+    <p>Open <code>http://localhost:8080</code>, enter the setup token, and fill in:</p>
+    <ul>
+      <li>Telegram bot token + your admin chat ID</li>
+      <li>LLM provider (<code>api</code> with API key, or <code>cli</code> with binary name)</li>
+      <li>Web UI auth token (choose a long random string)</li>
+    </ul>
+    <p>After saving, the daemon auto-transitions to <strong>RUN</strong> mode within 10 seconds.</p>
+  </div>
+</div>
+
+<div class="callout">
+  <strong>Config storage</strong>
+  All settings are saved in <code>/data/config.db</code>. No config files to edit — the Web UI is the only interface. Changes take effect within 5 seconds without a restart.
+</div>
+
+<h3>Internet access via Cloudflare Tunnel</h3>
+<p>To expose the UI securely without opening ports:</p>
+<ol>
+  <li>Create a tunnel at <strong>dash.cloudflare.com → Zero Trust → Networks → Tunnels</strong></li>
+  <li>Copy the tunnel token</li>
+  <li>Add a Public Hostname pointing to <code>http://claude-works:8080</code></li>
+  <li>Optionally add a Cloudflare Access policy (Zero Trust → Access) to restrict to your identity</li>
+  <li>Start with the Cloudflare overlay:</li>
+</ol>
+<pre><code>CLOUDFLARE_TUNNEL_TOKEN=your_token_here \
+docker compose -f docker-compose.yml -f docker-compose.cloudflare.yml up -d</code></pre>
+<p>Set <code>web.trusted_proxy: true</code> in config so rate limiting uses real IPs, not Cloudflare's.</p>
+
+<div class="callout warn">
+  <strong>No open ports</strong>
+  With the Cloudflare overlay, remove or comment out the <code>ports:</code> section in <code>docker-compose.yml</code> so port 8080 is no longer exposed on the host.
+</div>
+
+<!-- ================================================================ -->
+<h2>B — Unraid</h2>
+
+<h3>Prerequisites</h3>
+<ul>
+  <li>Unraid 6.12+ with Docker enabled</li>
+  <li>Same LLM provider and Telegram token as above</li>
+</ul>
+
+<h3>Installation</h3>
+
+<div class="step">
+  <div class="step-num">1</div>
+  <div class="step-body">
+    <p><strong>Add container via Docker manager</strong></p>
+    <p>Unraid UI → <em>Docker</em> → <em>Add Container</em> (Advanced View).</p>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-num">2</div>
+  <div class="step-body">
+    <p><strong>Fill in container settings</strong></p>
+    <table style="width:100%;border-collapse:collapse;font-size:.9rem;margin:.5rem 0 1rem;">
+      <tr><th style="text-align:left;padding:.4rem .75rem;background:var(--surface);border:1px solid var(--border);">Field</th><th style="text-align:left;padding:.4rem .75rem;background:var(--surface);border:1px solid var(--border);">Value</th></tr>
+      <tr><td style="padding:.4rem .75rem;border:1px solid var(--border);">Name</td><td style="padding:.4rem .75rem;border:1px solid var(--border);"><code>claude-works</code></td></tr>
+      <tr><td style="padding:.4rem .75rem;border:1px solid var(--border);">Repository</td><td style="padding:.4rem .75rem;border:1px solid var(--border);"><code>ghcr.io/mirkofelt/claude-works:latest</code> <em>or</em> build locally</td></tr>
+      <tr><td style="padding:.4rem .75rem;border:1px solid var(--border);">Network Type</td><td style="padding:.4rem .75rem;border:1px solid var(--border);">Bridge</td></tr>
+      <tr><td style="padding:.4rem .75rem;border:1px solid var(--border);">Port</td><td style="padding:.4rem .75rem;border:1px solid var(--border);">Host: <code>8080</code> → Container: <code>8080</code></td></tr>
+      <tr><td style="padding:.4rem .75rem;border:1px solid var(--border);">Volume</td><td style="padding:.4rem .75rem;border:1px solid var(--border);">Host: <code>/mnt/user/appdata/claude-works</code> → Container: <code>/data</code></td></tr>
+    </table>
+    <p>Leave all environment variables empty — config goes into the DB via the setup wizard.</p>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-num">3</div>
+  <div class="step-body">
+    <p><strong>Start the container and get the setup token</strong></p>
+    <p>Click <em>Apply</em>. Once running, open the container log in Unraid UI and copy the <code>SETUP TOKEN</code> line.</p>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-num">4</div>
+  <div class="step-body">
+    <p><strong>Complete the setup wizard</strong></p>
+    <p>Navigate to <code>http://&lt;unraid-ip&gt;:8080</code> and complete setup as in step 4 above.</p>
+  </div>
+</div>
+
+<h3>Internet access on Unraid</h3>
+<p>Use a second container for the Cloudflare Tunnel:</p>
+<ol>
+  <li>Add another container: repository <code>cloudflare/cloudflared:latest</code></li>
+  <li>Command / Extra Parameters: <code>tunnel --no-autoupdate run</code></li>
+  <li>Environment variable: <code>TUNNEL_TOKEN</code> = your tunnel token</li>
+  <li>Same network as claude-works (bridge), no port mapping needed</li>
+  <li>Point the tunnel Public Hostname to <code>http://claude-works:8080</code></li>
+</ol>
+
+<div class="callout">
+  <strong>appdata path</strong>
+  All persistent data (databases, logs, persona, custom scripts) lives in <code>/mnt/user/appdata/claude-works/</code>. Back this directory up to keep your config and history.
+</div>
+
+<!-- ================================================================ -->
+<h2>Post-Setup</h2>
+
+<h3>/data customisation</h3>
+<p>Place files in the data directory to extend the container without rebuilding:</p>
+<ul>
+  <li><code>requirements.local.txt</code> — extra Python packages installed at every startup</li>
+  <li><code>init.sh</code> — shell commands run at every startup (apt installs, tool downloads, etc.)</li>
+  <li><code>persona.md</code> — Markdown persona for the ChiefAgent</li>
+</ul>
+<p>All startup output is logged to <code>logs/init.log</code> with timestamps.</p>
+
+<h3>Telegram commands</h3>
+<ul>
+  <li><code>/status</code> — show daemon mode, active agents, queue depth</li>
+  <li><code>/reload_config</code> — force config reload from DB (admin only)</li>
+  <li><code>/reload_persona</code> — hot-reload persona.md without restart (admin only)</li>
+  <li><code>/repair &lt;description&gt;</code> — trigger REPAIR mode manually (admin only)</li>
+</ul>
+
+</div>
+
+<footer>Claude Works — MIT License</footer>
+
+</body>
+</html>
