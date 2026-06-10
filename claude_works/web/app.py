@@ -1,6 +1,8 @@
+import asyncio
 import hashlib
 import hmac
 import os
+import re
 import threading
 import time
 from collections import defaultdict
@@ -35,6 +37,7 @@ app.mount("/static", StaticFiles(directory=_static_dir), name="static")
 
 _daemon_ref: Any = None
 _setup_token: str | None = None
+_cli_auth_proc: asyncio.subprocess.Process | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +195,100 @@ async def save_setup(body: dict, x_setup_token: str | None = Header(default=None
     await conn.close()
 
     _setup_token = None  # single-use
+
+    return {"ok": True}
+
+
+@app.post("/api/setup/cli-auth/start")
+async def cli_auth_start(body: dict, x_setup_token: str | None = Header(default=None)):
+    global _cli_auth_proc, _setup_token
+    if not _daemon_ref or _daemon_ref._mode_mgr.mode != DaemonMode.INITIALIZE:
+        raise HTTPException(status_code=409, detail="Setup only available in initialize mode")
+    if not _setup_token or x_setup_token != _setup_token:
+        raise HTTPException(status_code=403, detail="Invalid setup token")
+
+    binary = body.get("cli_binary", "/usr/local/bin/claude").strip()
+    if not binary or not re.match(r'^[a-zA-Z0-9_./-]+$', binary):
+        raise HTTPException(status_code=400, detail="Invalid cli_binary path")
+
+    if _cli_auth_proc and _cli_auth_proc.returncode is None:
+        try:
+            _cli_auth_proc.kill()
+        except Exception:
+            pass
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            binary, "auth", "login",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+    except FileNotFoundError:
+        raise HTTPException(status_code=500, detail=f"CLI binary not found: {binary}")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to start auth: {exc}")
+
+    _cli_auth_proc = proc
+
+    url = None
+    buf = ""
+    try:
+        deadline = asyncio.get_event_loop().time() + 20.0
+        while asyncio.get_event_loop().time() < deadline:
+            try:
+                chunk = await asyncio.wait_for(proc.stdout.read(512), timeout=2.0)
+            except asyncio.TimeoutError:
+                continue
+            if not chunk:
+                break
+            buf += chunk.decode(errors="replace")
+            m = re.search(r'https://[^\s]+', buf)
+            if m:
+                url = m.group().rstrip('.')
+                break
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Auth start error: {exc}")
+
+    if not url:
+        raise HTTPException(status_code=500, detail=f"No auth URL found. Output: {buf[:400]}")
+
+    return {"url": url}
+
+
+@app.post("/api/setup/cli-auth/confirm")
+async def cli_auth_confirm(body: dict, x_setup_token: str | None = Header(default=None)):
+    global _cli_auth_proc, _setup_token
+    if not _daemon_ref or _daemon_ref._mode_mgr.mode != DaemonMode.INITIALIZE:
+        raise HTTPException(status_code=409, detail="Setup only available in initialize mode")
+    if not _setup_token or x_setup_token != _setup_token:
+        raise HTTPException(status_code=403, detail="Invalid setup token")
+    if not _cli_auth_proc or _cli_auth_proc.returncode is not None:
+        raise HTTPException(status_code=409, detail="No active auth session — call /start first")
+
+    code = body.get("code", "").strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="code required")
+
+    try:
+        _cli_auth_proc.stdin.write((code + "\n").encode())
+        await _cli_auth_proc.stdin.drain()
+        stdout, _ = await asyncio.wait_for(_cli_auth_proc.communicate(), timeout=30.0)
+        returncode = _cli_auth_proc.returncode
+    except asyncio.TimeoutError:
+        try:
+            _cli_auth_proc.kill()
+        except Exception:
+            pass
+        raise HTTPException(status_code=504, detail="Auth confirmation timed out")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Auth confirm error: {exc}")
+    finally:
+        _cli_auth_proc = None
+
+    if returncode != 0:
+        out = stdout.decode(errors="replace") if stdout else ""
+        raise HTTPException(status_code=500, detail=f"Auth failed (exit {returncode}): {out[:300]}")
 
     return {"ok": True}
 

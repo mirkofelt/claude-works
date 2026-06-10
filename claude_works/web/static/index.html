@@ -222,6 +222,24 @@
         <input type="text" id="cfgCliBinary" value="/usr/local/bin/claude">
         <div class="hint">Absolute path to the claude binary inside the container.</div>
       </div>
+      <div id="cliAuthSection" style="display:none;border-top:1px solid var(--border);margin-top:16px;padding-top:16px">
+        <div style="font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin-bottom:14px">Anthropic Authentication</div>
+        <div class="field">
+          <button class="btn" id="btnStartAuth" onclick="startCliAuth()" style="width:100%">Authenticate with Anthropic →</button>
+        </div>
+        <div id="cliAuthUrlBox" style="display:none;margin-top:8px">
+          <div class="hint" style="margin-bottom:4px">Open this URL in your browser, log in, then paste the code below:</div>
+          <a id="cliAuthUrlLink" href="#" target="_blank" style="display:block;font-size:11px;color:#58a6ff;word-break:break-all;padding:8px;background:#1a1f28;border-radius:4px;border:1px solid var(--border)"></a>
+        </div>
+        <div id="cliCodeField" style="display:none;margin-top:10px">
+          <div class="field" style="margin:0">
+            <input type="text" id="cfgCliCode" placeholder="Paste authorization code from browser">
+          </div>
+          <button class="btn" onclick="confirmCliAuth()" style="width:100%;margin-top:8px">Confirm →</button>
+        </div>
+        <div id="cliAuthStatus" style="display:none;font-size:13px;margin-top:10px;padding:8px;border-radius:4px"></div>
+        <div class="hint" style="margin-top:8px">Skip if already authenticated on host — tokens are inherited via bind mount.</div>
+      </div>
     </div>
 
     <div class="setup-section">
@@ -851,6 +869,80 @@ function toggleApiKey() {
   const p = document.getElementById('cfgProvider').value;
   document.getElementById('apiKeyField').style.display = p === 'api' ? 'block' : 'none';
   document.getElementById('cliBinaryField').style.display = p === 'cli' ? 'block' : 'none';
+  document.getElementById('cliAuthSection').style.display = p === 'cli' ? 'block' : 'none';
+}
+
+async function startCliAuth() {
+  const setupToken = document.getElementById('setupToken').value.trim();
+  const binary = document.getElementById('cfgCliBinary').value.trim();
+  const btn = document.getElementById('btnStartAuth');
+  const urlBox = document.getElementById('cliAuthUrlBox');
+  const codeField = document.getElementById('cliCodeField');
+  const status = document.getElementById('cliAuthStatus');
+
+  if (!setupToken) { _cliAuthStatus('err', 'Enter setup token first.'); return; }
+
+  btn.disabled = true;
+  btn.textContent = 'Starting…';
+  status.style.display = 'none';
+  urlBox.style.display = 'none';
+  codeField.style.display = 'none';
+
+  try {
+    const r = await fetch('/api/setup/cli-auth/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Setup-Token': setupToken },
+      body: JSON.stringify({ cli_binary: binary }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Request failed');
+
+    const link = document.getElementById('cliAuthUrlLink');
+    link.href = d.url;
+    link.textContent = d.url;
+    urlBox.style.display = 'block';
+    codeField.style.display = 'block';
+    btn.textContent = 'Restart auth';
+    btn.disabled = false;
+  } catch (e) {
+    btn.textContent = 'Authenticate with Anthropic →';
+    btn.disabled = false;
+    _cliAuthStatus('err', 'Error: ' + e.message);
+  }
+}
+
+async function confirmCliAuth() {
+  const setupToken = document.getElementById('setupToken').value.trim();
+  const code = document.getElementById('cfgCliCode').value.trim();
+
+  if (!code) { _cliAuthStatus('err', 'Paste the authorization code first.'); return; }
+
+  _cliAuthStatus('', 'Verifying…');
+
+  try {
+    const r = await fetch('/api/setup/cli-auth/confirm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Setup-Token': setupToken },
+      body: JSON.stringify({ code }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Request failed');
+
+    document.getElementById('cliAuthUrlBox').style.display = 'none';
+    document.getElementById('cliCodeField').style.display = 'none';
+    document.getElementById('btnStartAuth').style.display = 'none';
+    _cliAuthStatus('ok', '✓ Authenticated — tokens saved to ~/.claude/');
+  } catch (e) {
+    _cliAuthStatus('err', 'Error: ' + e.message);
+  }
+}
+
+function _cliAuthStatus(type, text) {
+  const el = document.getElementById('cliAuthStatus');
+  el.style.display = text ? 'block' : 'none';
+  el.style.background = type === 'ok' ? '#1c3a25' : type === 'err' ? '#3a1c1c' : 'transparent';
+  el.style.color = type === 'ok' ? 'var(--green)' : type === 'err' ? 'var(--red)' : 'var(--muted)';
+  el.textContent = text;
 }
 
 function genWebToken() {
