@@ -19,6 +19,9 @@ from ..logging_setup import log_path
 app = FastAPI(title="Comms", docs_url=None, redoc_url=None)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
+_static_dir = os.path.join(os.path.dirname(__file__), "static")
+app.mount("/static", StaticFiles(directory=_static_dir), name="static")
+
 _daemon_ref: Any = None
 _setup_token: str | None = None
 
