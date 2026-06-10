@@ -334,7 +334,28 @@ class Daemon:
                 agent_class="chief",
                 persona=persona,
             )
-        return await self._web_admin_agent.run(message)
+        now = int(time.time())
+        await self._conn.execute(
+            "INSERT INTO admin_chat_messages (role, content, sent_at) VALUES (?, ?, ?)",
+            ("user", message, now),
+        )
+        await self._conn.commit()
+        reply = await self._web_admin_agent.run(message)
+        await self._conn.execute(
+            "INSERT INTO admin_chat_messages (role, content, sent_at) VALUES (?, ?, ?)",
+            ("assistant", reply, int(time.time())),
+        )
+        await self._conn.commit()
+        return reply
+
+    async def web_admin_history(self, limit: int = 100) -> list[dict]:
+        """Return last N admin chat messages in chronological order."""
+        async with self._conn.execute(
+            "SELECT role, content, sent_at FROM admin_chat_messages ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ) as cur:
+            rows = await cur.fetchall()
+        return [{"role": r["role"], "content": r["content"], "sent_at": r["sent_at"]} for r in reversed(rows)]
 
     # ──────────────────────────────────────────────────────────
     # Telegram handling

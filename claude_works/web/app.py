@@ -345,6 +345,14 @@ async def repair_chat(body: dict):
     return {"reply": reply}
 
 
+@app.get("/api/admin/chat/history", dependencies=[Depends(_verify_token)])
+async def admin_chat_history():
+    if not _daemon_ref:
+        raise HTTPException(status_code=503, detail="Daemon not running")
+    messages = await _daemon_ref.web_admin_history()
+    return {"messages": messages}
+
+
 @app.post("/api/admin/chat", dependencies=[Depends(_verify_token)])
 async def admin_chat(body: dict):
     if not _daemon_ref:

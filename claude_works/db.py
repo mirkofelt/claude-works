@@ -187,6 +187,13 @@ CREATE TABLE IF NOT EXISTS security_approvals (
     decided_at INTEGER,
     decided_by INTEGER
 );
+
+CREATE TABLE IF NOT EXISTS admin_chat_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    sent_at INTEGER NOT NULL
+);
 """
 
 CONFIG_TABLES = """
