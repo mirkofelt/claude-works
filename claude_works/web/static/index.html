@@ -721,6 +721,13 @@ async function api(path, opts = {}) {
     headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) }
   });
   if (r.status === 401) { TOKEN = ''; localStorage.removeItem('comms_token'); showAuth(); return null; }
+  if (r.status === 429) {
+    let detail = 'Rate limited';
+    try { detail = (await r.json()).detail || detail; } catch {}
+    document.getElementById('statusText').textContent = '⛔ ' + detail;
+    document.getElementById('statusDot').className = 'dot err';
+    return null;
+  }
   if (!r.ok) return null;
   return r.json();
 }
