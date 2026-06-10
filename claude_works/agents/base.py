@@ -48,6 +48,12 @@ class BaseAgent(ABC):
             self._provider = get_provider(section("llm"))
         return self._provider
 
+    def _user_context_section(self) -> str:
+        bg = self._user_context.get("background", "")
+        if bg:
+            return f"\n\n## User Context\nBackground: {bg}"
+        return ""
+
     def _get_mcp_servers(self) -> list[dict] | None:
         cfg = section("mcp")
         if not cfg.get("enabled", False):

@@ -1,13 +1,14 @@
 import asyncio
 import logging
-import time
-from typing import AsyncIterator, Callable, Awaitable
+from typing import Callable, Awaitable
 
 from .api import TelegramAPI
 
 logger = logging.getLogger(__name__)
 
 UpdateHandler = Callable[[dict], Awaitable[None]]
+
+_ALLOWED_UPDATES = ["message", "edited_message", "message_reaction", "callback_query"]
 
 
 class TelegramPoller:
@@ -41,7 +42,11 @@ class TelegramPoller:
         backoff = 1
         while self._running:
             try:
-                updates = await self._api.get_updates(offset=self._offset, timeout=25)
+                updates = await self._api.get_updates(
+                    offset=self._offset,
+                    timeout=25,
+                    allowed_updates=_ALLOWED_UPDATES,
+                )
                 backoff = 1
                 for update in updates:
                     uid = update["update_id"]

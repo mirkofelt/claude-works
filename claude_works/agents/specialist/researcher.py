@@ -29,4 +29,4 @@ class ResearchAgent(BaseAgent):
         base += _RESEARCHER_ADDENDUM
         if self._user_context.get("caveman_mode", True):
             base += CAVEMAN_ADDENDUM
-        return base
+        return base + self._user_context_section()

@@ -21,4 +21,4 @@ class GeneralistAgent(BaseAgent):
         base = self._persona or SYSTEM_PROMPT
         if self._user_context.get("caveman_mode", True):
             base += CAVEMAN_ADDENDUM
-        return base
+        return base + self._user_context_section()

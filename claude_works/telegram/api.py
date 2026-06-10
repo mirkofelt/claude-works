@@ -43,7 +43,7 @@ class TelegramAPI:
             "getUpdates",
             offset=offset,
             timeout=timeout,
-            allowed_updates=allowed_updates or ["message", "edited_message", "message_reaction"],
+            allowed_updates=allowed_updates or ["message", "edited_message", "message_reaction", "callback_query"],
         )
 
     async def send_message(
@@ -52,6 +52,7 @@ class TelegramAPI:
         text: str,
         parse_mode: str | None = "Markdown",
         reply_to_message_id: int | None = None,
+        reply_markup: dict | None = None,
     ) -> dict[str, Any]:
         return await self._call(
             "sendMessage",
@@ -59,6 +60,7 @@ class TelegramAPI:
             text=text,
             parse_mode=parse_mode,
             reply_to_message_id=reply_to_message_id,
+            reply_markup=reply_markup,
         )
 
     async def send_chat_action(self, chat_id: int, action: str = "typing") -> bool:
@@ -94,3 +96,11 @@ class TelegramAPI:
         resp = await self._client.get(url)
         resp.raise_for_status()
         return resp.content
+
+    async def answer_callback_query(self, callback_query_id: str, text: str = "") -> bool:
+        await self._call(
+            "answerCallbackQuery",
+            callback_query_id=callback_query_id,
+            text=text,
+        )
+        return True

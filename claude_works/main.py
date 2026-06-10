@@ -34,6 +34,26 @@ TYPING_INTERVAL = 4.0
 PID_FILE = "/data/claude-works.pid"
 
 
+def _parse_buttons(text: str) -> "tuple[str, list[list[dict]] | None]":
+    """Extract [BUTTONS: ...] tag from text. Returns (clean_text, inline_keyboard or None).
+    Format: [BUTTONS: label1|data1, label2|data2, ...]
+    Buttons are laid out in rows of max 3."""
+    import re
+    m = re.search(r'\[BUTTONS:\s*([^\]]+)\]', text)
+    if not m:
+        return text, None
+    clean = text[:m.start()].rstrip() + text[m.end():]
+    specs = [s.strip() for s in m.group(1).split(',')]
+    buttons = []
+    for spec in specs:
+        parts = spec.split('|', 1)
+        label = parts[0].strip()
+        data = parts[1].strip() if len(parts) > 1 else label
+        buttons.append({"text": label, "callback_data": data[:64]})
+    rows = [buttons[i:i+3] for i in range(0, len(buttons), 3)]
+    return clean.strip(), rows
+
+
 class Daemon:
     def __init__(self) -> None:
         self._conn: Any = None
@@ -56,6 +76,7 @@ class Daemon:
         self._usage_state = None
         self._usage_near_limit_notified = False
         self._stop_called = False
+        self._user_backgrounds: dict[int, str] = {}
 
     # ──────────────────────────────────────────────────────────
     # Lifecycle
@@ -129,6 +150,7 @@ class Daemon:
             token_tracker=self._token_tracker,
             on_result=self._on_agent_result,
             on_requeue=self._on_task_requeued,
+            user_backgrounds=self._user_backgrounds,
         )
         self._coordinator.start()
 
@@ -319,6 +341,9 @@ class Daemon:
     # ──────────────────────────────────────────────────────────
 
     async def _on_update(self, update: dict) -> None:
+        if "callback_query" in update:
+            await self._handle_callback_query(update["callback_query"])
+            return
         if "message" in update or "edited_message" in update:
             msg_data = update.get("message") or update.get("edited_message")
             is_edited = "edited_message" in update
@@ -344,6 +369,16 @@ class Daemon:
 
         name = from_user.get("first_name") or from_user.get("username")
         user = await upsert_user(self._conn, telegram_id, name)
+
+        if user.get("metadata"):
+            import json as _json
+            try:
+                meta = _json.loads(user["metadata"]) if isinstance(user["metadata"], str) else user["metadata"]
+                background = meta.get("background", "") if isinstance(meta, dict) else ""
+            except Exception:
+                background = ""
+            if background:
+                self._user_backgrounds[telegram_id] = background
 
         if not await is_allowed(self._conn, telegram_id):
             if user["role"] == "blocked":
@@ -441,6 +476,25 @@ class Daemon:
         )
         await self._conn.commit()
         logger.info("Reaction %s (%s) on message %s", emoji, action, message_id)
+
+    async def _handle_callback_query(self, cq: dict) -> None:
+        callback_query_id = cq.get("id", "")
+        from_user = cq.get("from", {})
+        chat = cq.get("message", {}).get("chat", {})
+        chat_id = chat.get("id") or from_user.get("id")
+        telegram_id = from_user.get("id")
+        data = cq.get("data", "")
+        if not telegram_id or not chat_id or not data:
+            return
+        await self._api.answer_callback_query(callback_query_id)
+        fake_msg = {
+            "message_id": cq.get("message", {}).get("message_id", 0),
+            "chat": {"id": chat_id},
+            "from": from_user,
+            "text": data,
+            "date": int(time.time()),
+        }
+        await self._handle_message(fake_msg)
 
     async def _handle_command(self, text: str, from_id: int, chat_id: int) -> None:
         parts = text.strip().split()
@@ -551,11 +605,13 @@ class Daemon:
             if not allowed:
                 await self._api.send_message(task.chat_id, "Response blocked by security policy.")
                 return
-            sent = await self._api.send_message(task.chat_id, result)
+            clean_result, keyboard = _parse_buttons(result)
+            reply_markup = {"inline_keyboard": keyboard} if keyboard is not None else None
+            sent = await self._api.send_message(task.chat_id, clean_result, reply_markup=reply_markup)
             await self._conn.execute(
                 """INSERT INTO bot_messages (telegram_message_id, chat_id, task_id, text, sent_at)
                    VALUES (?, ?, ?, ?, ?)""",
-                (sent["message_id"], task.chat_id, task.id, result, int(time.time())),
+                (sent["message_id"], task.chat_id, task.id, clean_result, int(time.time())),
             )
             await self._conn.commit()
         elif error:

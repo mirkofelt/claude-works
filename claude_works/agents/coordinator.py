@@ -61,11 +61,12 @@ _SPECIALIST_MAP = {
 class AgentCoordinator:
     """Orchestrates controller, chief, and specialist workers over KanbanBoard."""
 
-    def __init__(self, board: KanbanBoard, token_tracker: TokenTracker, on_result, on_requeue=None) -> None:
+    def __init__(self, board: KanbanBoard, token_tracker: TokenTracker, on_result, on_requeue=None, user_backgrounds: dict | None = None) -> None:
         self._board = board
         self._token_tracker = token_tracker
         self._on_result = on_result
         self._on_requeue = on_requeue
+        self._user_backgrounds: dict[int, str] = user_backgrounds or {}
         self._provider: LLMProvider | None = None
         self._controller: ControllerAgent | None = None
         self._chief: ChiefAgent | None = None
@@ -195,7 +196,11 @@ class AgentCoordinator:
 
         agent = AgentCls(
             task_id=task.id,
-            user_context={"user_id": task.user_id, "chat_id": task.chat_id},
+            user_context={
+                "user_id": task.user_id,
+                "chat_id": task.chat_id,
+                "background": self._user_backgrounds.get(task.user_id, ""),
+            },
             provider=self._get_provider(),
             token_tracker=self._token_tracker,
             persona=persona,
