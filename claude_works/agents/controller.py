@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import re
 import uuid
 
 from ..config import get_agent_model, section
@@ -11,6 +12,29 @@ from ..llm.provider import LLMProvider, get_provider
 from ..telemetry.tokens import TokenTracker
 
 logger = logging.getLogger(__name__)
+
+_FAST_ROUTES: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"^/?(status|ping|help)\b", re.I), "generalist"),
+    (re.compile(r"^/?(reload_config|reload_persona|repair)\b", re.I), "generalist"),
+    (re.compile(r"^\s*(remember|store|save)\s+", re.I), "memory"),
+    (re.compile(r"^\s*(forget|delete from (memory|kb)|remove from (memory|kb))\b", re.I), "memory"),
+    (re.compile(r"^\s*(search|find|lookup|retrieve)\s+(memory|kb|knowledge)\b", re.I), "memory"),
+]
+_FAST_ROUTE_MAX_LEN = 200
+
+
+def _fast_route(content: str) -> "AgentClass | None":
+    if len(content.strip()) > _FAST_ROUTE_MAX_LEN:
+        return None
+    stripped = content.strip()
+    for pattern, agent_class_val in _FAST_ROUTES:
+        if pattern.match(stripped):
+            try:
+                return AgentClass(agent_class_val)
+            except ValueError:
+                pass
+    return None
+
 
 _ROUTING_SYSTEM = """You are a task router. Given a task, respond ONLY with valid JSON:
 {"agent_class": "<class>", "reason": "<brief reason>"}
@@ -51,11 +75,15 @@ class ControllerAgent:
         return self._provider
 
     async def _route(self, content: str) -> AgentClass:
-        cfg = section("llm")
+        fast = _fast_route(content)
+        if fast is not None:
+            logger.info("Controller fast-route: %r → %s", content[:60], fast.value)
+            return fast
+
         model = get_agent_model("controller")
 
         response = await self._get_provider().complete(
-            [{"role": "user", "content": content[:2000]}],
+            [{"role": "user", "content": content[:500]}],
             system=_ROUTING_SYSTEM,
             model=model,
             max_tokens=128,

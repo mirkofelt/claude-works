@@ -21,8 +21,14 @@ from .specialist.memory import MemoryAgent
 logger = logging.getLogger(__name__)
 
 
+_KB_MIN_WORDS = 4
+_KB_ENTRY_MAX_CHARS = 400
+
+
 async def _inject_knowledge(content: str, user_id: int | None) -> str:
     """Prepend relevant knowledge base entries to task content for agent context."""
+    if len(content.split()) < _KB_MIN_WORDS:
+        return content
     try:
         conn = await db.get_conn()
         entries = await knowledge_store.search(conn, content, user_id=user_id, limit=5)
@@ -35,7 +41,10 @@ async def _inject_knowledge(content: str, user_id: int | None) -> str:
     for e in entries:
         tags = ", ".join(e.get("tags") or [])
         tag_str = f" [{tags}]" if tags else ""
-        lines.append(f"- [{e['type']}]{tag_str} **{e['title']}**: {e['content']}")
+        body = e["content"][:_KB_ENTRY_MAX_CHARS]
+        if len(e["content"]) > _KB_ENTRY_MAX_CHARS:
+            body += "…"
+        lines.append(f"- [{e['type']}]{tag_str} **{e['title']}**: {body}")
     kb_block = "## Relevant knowledge\n" + "\n".join(lines)
     return f"{kb_block}\n\n---\n\n{content}"
 

@@ -57,10 +57,10 @@ class ProductOwnerAgent:
             self._provider = get_provider(section("llm"))
         return self._provider
 
-    async def _llm(self, messages: list[dict], system: str, max_tokens: int = 512) -> str:
+    async def _llm(self, messages: list[dict], system: str, max_tokens: int = 512, model: str | None = None) -> str:
         attempt = 0
         while True:
-            model = get_agent_model("po")
+            model = model or get_agent_model("po")
             if self._token_tracker:
                 allowed = await self._token_tracker.get_allowed_model(model)
                 if allowed is None:
@@ -95,6 +95,7 @@ class ProductOwnerAgent:
         text = await self._llm(
             [{"role": "user", "content": task.content[:4000]}],
             system=_DECOMPOSE_SYSTEM,
+            model=get_agent_model("controller"),  # fast tier — routing doesn't need Sonnet
         )
         try:
             items = json.loads(text.strip())
@@ -111,12 +112,17 @@ class ProductOwnerAgent:
             logger.warning("PO decompose parse error for task=%d: %r", task.id, text[:120])
             return [{"title": "Execute", "description": task.content, "agent_class": "generalist"}]
 
+    _MAX_CHILD_RESULT_CHARS = 4800  # ~1200 tokens
+
     async def _synthesize(self, goal: str, children: list[KanbanTask]) -> str:
         parts = []
         for c in children:
             label = (c.content or "")[:80]
             if c.result:
-                parts.append(f"### {label}\n{c.result}")
+                result_text = c.result[:self._MAX_CHILD_RESULT_CHARS]
+                if len(c.result) > self._MAX_CHILD_RESULT_CHARS:
+                    result_text += "\n[…truncated]"
+                parts.append(f"### {label}\n{result_text}")
             elif c.error:
                 parts.append(f"### {label}\n[FAILED: {c.error}]")
         results_text = "\n\n".join(parts) or "(no results)"

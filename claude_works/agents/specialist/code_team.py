@@ -1,8 +1,9 @@
+import asyncio
 import logging
 import uuid
 
 from ..base import BaseAgent
-from ..concepts import SYSTEM_PROMPT, CAVEMAN_ADDENDUM
+from ..concepts import SYSTEM_PROMPT, CAVEMAN_ADDENDUM, _DEV_STANDARDS_ADDENDUM
 from ...config import get_agent_model
 from ...llm.provider import LLMProvider
 from ...telemetry.tokens import TokenTracker
@@ -20,21 +21,24 @@ Produce a concise design document for the given task:
 Output: design doc only. No code.
 """
 
-_DEVELOPER_ADDENDUM = """
-
+_DEVELOPER_ADDENDUM = _DEV_STANDARDS_ADDENDUM + """
 ## Role: Developer
 Implement based on the provided spec. Write complete, working code.
-Standards: no credentials in code, English in code/comments, secure by default.
 Return code only. Minimal prose.
 """
 
-_TESTER_ADDENDUM = """
-
+_TESTER_ADDENDUM = _DEV_STANDARDS_ADDENDUM + """
 ## Role: Tester
-Write tests for the provided implementation.
-- Cover happy path, edge cases, error conditions
-- No mocking of DB or external services — use in-memory / test doubles that exercise real logic
-- English in code/comments
+Write tests covering happy path, edge cases, error conditions.
+No mocking of DB or external services — use in-memory / test doubles that exercise real logic.
+Return test code only.
+"""
+
+_TESTER_SPEC_ADDENDUM = _DEV_STANDARDS_ADDENDUM + """
+## Role: Tester
+Write tests based on the spec and task description (implementation not yet available).
+Cover happy path, edge cases, error conditions.
+No mocking of DB or external services — use in-memory / test doubles.
 Return test code only.
 """
 
@@ -110,21 +114,29 @@ class CodeTeam:
             stage=stage,
         )
 
+    _SMALL_TASK_THRESHOLD = 500
+
     async def run(self, content: str) -> str:
         logger.info("CodeTeam[%s] pipeline start task=%d", self.id, self._task_id)
 
-        spec = await self._member(_ARCHITECT_ADDENDUM, "architect").run(content)
-        logger.debug("CodeTeam[%s] arch done len=%d", self.id, len(spec))
+        # Skip architect for small tasks (3.2)
+        if len(content) < self._SMALL_TASK_THRESHOLD:
+            spec = content
+            logger.debug("CodeTeam[%s] small task — skipping architect", self.id)
+        else:
+            spec = await self._member(_ARCHITECT_ADDENDUM, "architect").run(content)
+            logger.debug("CodeTeam[%s] arch done len=%d", self.id, len(spec))
 
-        code = await self._member(_DEVELOPER_ADDENDUM, "developer").run(
-            f"## Task\n{content}\n\n## Architecture Spec\n{spec}"
+        # Developer + Tester in parallel from spec (3.3)
+        code, tests = await asyncio.gather(
+            self._member(_DEVELOPER_ADDENDUM, "developer").run(
+                f"## Task\n{content}\n\n## Architecture Spec\n{spec}"
+            ),
+            self._member(_TESTER_SPEC_ADDENDUM, "tester").run(
+                f"## Task\n{content}\n\n## Architecture Spec\n{spec}"
+            ),
         )
-        logger.debug("CodeTeam[%s] dev done len=%d", self.id, len(code))
-
-        tests = await self._member(_TESTER_ADDENDUM, "tester").run(
-            f"## Task\n{content}\n\n## Spec\n{spec}\n\n## Implementation\n{code}"
-        )
-        logger.debug("CodeTeam[%s] tests done len=%d", self.id, len(tests))
+        logger.debug("CodeTeam[%s] dev+test done", self.id)
 
         final = await self._member(_QA_ADDENDUM, "qa").run(
             f"## Task\n{content}\n\n## Spec\n{spec}\n\n"

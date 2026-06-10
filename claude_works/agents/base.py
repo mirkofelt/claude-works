@@ -8,8 +8,8 @@ from ..telemetry.tokens import BudgetExceededError, TokenTracker
 
 logger = logging.getLogger(__name__)
 
-CONTEXT_WARN_THRESHOLD = 0.8
-CONTEXT_COMPACT_THRESHOLD = 0.9
+CONTEXT_WARN_THRESHOLD = 0.5
+CONTEXT_COMPACT_THRESHOLD = 0.6
 
 
 class BaseAgent(ABC):
@@ -111,8 +111,12 @@ class BaseAgent(ABC):
     async def _compact(self) -> None:
         if len(self._messages) < 4:
             return
+        history = "\n\n".join(
+            f"{'USER' if m['role'] == 'user' else 'ASSISTANT'}: {m['content']}"
+            for m in self._messages[:-2]
+        )
         response = await self._get_provider().complete(
-            [{"role": "user", "content": f"Summarize this conversation concisely:\n\n{self._messages[:-2]}"}],
+            [{"role": "user", "content": f"Summarize this conversation concisely:\n\n{history}"}],
             system="You are a concise summarizer.",
             model=get_agent_model("compactor"),
             max_tokens=1024,
