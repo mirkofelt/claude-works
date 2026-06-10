@@ -21,6 +21,7 @@ from .telemetry.tokens import TokenTracker
 from .knowledge import store as knowledge_store
 from .agents.coordinator import AgentCoordinator
 from .agents.mechanic import MechanicAgent, MechanicContext
+from .agents.specialist.generalist import GeneralistAgent
 from .auth.users import upsert_user, is_allowed, is_admin, set_role
 from .memory import store as memory_store
 from .security import SecuritySupervisor
@@ -51,6 +52,7 @@ class Daemon:
         self._mechanic: MechanicAgent | None = None
         self._mechanic_report: str | None = None
         self._mechanic_task: asyncio.Task | None = None
+        self._web_admin_agent: GeneralistAgent | None = None
         self._usage_state = None
         self._usage_near_limit_notified = False
         self._stop_called = False
@@ -297,6 +299,20 @@ class Daemon:
         self._mechanic_report = None
         self._mechanic_task = None
         await self._init_run_components()
+
+    async def web_admin_chat(self, message: str) -> str:
+        """Process admin message from web UI, return reply. Maintains multi-turn context."""
+        if self._web_admin_agent is None:
+            persona = ""
+            if self._coordinator and self._coordinator._chief:
+                persona = self._coordinator._chief.persona
+            self._web_admin_agent = GeneralistAgent(
+                task_id=0,
+                user_context={"user_id": -1, "chat_id": -1, "caveman_mode": False},
+                agent_class="chief",
+                persona=persona,
+            )
+        return await self._web_admin_agent.run(message)
 
     # ──────────────────────────────────────────────────────────
     # Telegram handling

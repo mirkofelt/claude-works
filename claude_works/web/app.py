@@ -345,6 +345,17 @@ async def repair_chat(body: dict):
     return {"reply": reply}
 
 
+@app.post("/api/admin/chat", dependencies=[Depends(_verify_token)])
+async def admin_chat(body: dict):
+    if not _daemon_ref:
+        raise HTTPException(status_code=503, detail="Daemon not running")
+    message = body.get("message", "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="message required")
+    reply = await _daemon_ref.web_admin_chat(message)
+    return {"reply": reply}
+
+
 @app.get("/api/repair/report", dependencies=[Depends(_verify_token)])
 async def get_repair_report():
     if not _daemon_ref:

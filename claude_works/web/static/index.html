@@ -277,6 +277,7 @@
   <button onclick="showTab('kanban')">Kanban</button>
   <button onclick="showTab('tokens')">Tokens</button>
   <button onclick="showTab('logs')">Logs</button>
+  <button onclick="showTab('chat')">Chat</button>
 </nav>
 
 <main>
@@ -462,6 +463,20 @@
   </div>
 </div>
 
+<div class="section" id="tab-chat">
+  <div style="display:flex;flex-direction:column;height:calc(100vh - 140px)">
+    <div id="chatHistory" style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px">
+      <div style="color:var(--muted);font-size:13px;text-align:center">Admin chat — context resets on page reload.</div>
+    </div>
+    <div style="padding:12px;border-top:1px solid var(--border);display:flex;gap:8px">
+      <textarea id="chatInput" placeholder="Message…" rows="2"
+        style="flex:1;padding:8px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px;resize:none;font-family:inherit;font-size:14px"
+        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAdminChat()}"></textarea>
+      <button class="btn" onclick="sendAdminChat()" style="align-self:flex-end;padding:8px 16px">Send</button>
+    </div>
+  </div>
+</div>
+
 </main>
 
 <script>
@@ -470,7 +485,7 @@ let activeTab = 'tasks';
 let timer = null;
 let tokenPeriod = '24h';
 
-const TABS = ['tasks', 'messages', 'users', 'memory', 'knowledge', 'approvals', 'kanban', 'tokens', 'logs'];
+const TABS = ['tasks', 'messages', 'users', 'memory', 'knowledge', 'approvals', 'kanban', 'tokens', 'logs', 'chat'];
 
 const LANE_COLORS = {
   backlog: '#8b949e', assigned: '#58a6ff', in_progress: '#d29922',
@@ -854,6 +869,41 @@ async function loadLogs() {
     pre.textContent = text || '(empty)';
     pre.scrollTop = pre.scrollHeight;
   } catch (e) { pre.textContent = 'Error: ' + e; }
+}
+
+async function sendAdminChat() {
+  const input = document.getElementById('chatInput');
+  const history = document.getElementById('chatHistory');
+  const text = input.value.trim();
+  if (!text) return;
+
+  input.value = '';
+  input.disabled = true;
+
+  const userBubble = document.createElement('div');
+  userBubble.style.cssText = 'align-self:flex-end;max-width:75%;padding:8px 12px;background:#1f4068;border-radius:8px;font-size:14px;white-space:pre-wrap;word-break:break-word';
+  userBubble.textContent = text;
+  history.appendChild(userBubble);
+
+  const thinkingBubble = document.createElement('div');
+  thinkingBubble.style.cssText = 'align-self:flex-start;max-width:75%;padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;font-size:14px;color:var(--muted)';
+  thinkingBubble.textContent = '…';
+  history.appendChild(thinkingBubble);
+  history.scrollTop = history.scrollHeight;
+
+  try {
+    const d = await api('/api/admin/chat', { method: 'POST', body: JSON.stringify({ message: text }) });
+    thinkingBubble.style.color = 'var(--text)';
+    thinkingBubble.style.fontFamily = 'inherit';
+    thinkingBubble.textContent = d ? d.reply : 'Error: no response';
+  } catch (e) {
+    thinkingBubble.style.color = 'var(--red)';
+    thinkingBubble.textContent = 'Error: ' + e;
+  }
+
+  history.scrollTop = history.scrollHeight;
+  input.disabled = false;
+  input.focus();
 }
 
 async function checkSetupMode() {
