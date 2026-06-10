@@ -730,14 +730,21 @@ function showAuth() {
 }
 
 async function doLogin() {
-  TOKEN = document.getElementById('tokenInput').value.trim();
+  const raw = document.getElementById('tokenInput').value.trim();
   document.getElementById('authErr').style.display = 'none';
-  const ok = await fetchStatus();
-  if (ok) {
+  try {
+    const r = await fetch('/api/auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: raw }),
+      credentials: 'same-origin',
+    });
+    if (!r.ok) throw new Error('bad');
+    TOKEN = raw;
     localStorage.setItem('comms_token', TOKEN);
     document.getElementById('authOverlay').style.display = 'none';
     boot();
-  } else {
+  } catch {
     document.getElementById('authErr').textContent = 'Wrong token or server unreachable.';
     document.getElementById('authErr').style.display = 'block';
   }
