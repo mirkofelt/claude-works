@@ -1,0 +1,47 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>claude-works</Name>
+  <Repository>ghcr.io/mirkofelt/claude-works:latest</Repository>
+  <Registry>https://ghcr.io</Registry>
+  <Network>bridge</Network>
+  <Shell>bash</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/mirkofelt/claude-works/issues</Support>
+  <Project>https://github.com/mirkofelt/claude-works</Project>
+  <Overview>Claude-powered AI assistant with Telegram integration, multi-agent coordination, and a web dashboard. Place a configured settings.json (see settings.example.json in the repo) into your AppData folder before first start.</Overview>
+  <Category>Productivity: Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8080]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/mirkofelt/claude-works/main/unraid/template.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/mirkofelt/claude-works/main/icon.png</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <Networking>
+    <Mode>bridge</Mode>
+    <Publish>
+      <Port>
+        <HostPort>8080</HostPort>
+        <ContainerPort>8080</ContainerPort>
+        <Protocol>tcp</Protocol>
+      </Port>
+    </Publish>
+  </Networking>
+  <Data>
+    <Volume>
+      <HostDir>/mnt/user/appdata/claude-works</HostDir>
+      <ContainerDir>/data</ContainerDir>
+      <Mode>rw</Mode>
+    </Volume>
+  </Data>
+  <Environment>
+    <Variable>
+      <Value>INFO</Value>
+      <Name>LOG_LEVEL</Name>
+      <Mode/>
+    </Variable>
+  </Environment>
+  <Labels/>
+  <Config Name="Web UI Port" Target="8080" Default="8080" Mode="tcp" Description="Web dashboard port" Type="Port" Display="always" Required="true" Mask="false">8080</Config>
+  <Config Name="AppData" Target="/data" Default="/mnt/user/appdata/claude-works" Mode="rw" Description="Persistent data directory. Place settings.json here before first start (see settings.example.json in the repo)." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/claude-works</Config>
+  <Config Name="Log Level" Target="LOG_LEVEL" Default="INFO" Mode="" Description="Logging verbosity: DEBUG, INFO, WARNING, ERROR" Type="Variable" Display="advanced" Required="false" Mask="false">INFO</Config>
+</Container>
