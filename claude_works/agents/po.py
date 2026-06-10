@@ -44,13 +44,11 @@ class ProductOwnerAgent:
         board: KanbanBoard,
         provider: LLMProvider | None = None,
         token_tracker: TokenTracker | None = None,
-        knowledge=None,
     ) -> None:
         self.id = str(uuid.uuid4())[:8]
         self._board = board
         self._provider = provider
         self._token_tracker = token_tracker
-        self._knowledge = knowledge
         self._running = False
         self._owns_provider = provider is None
 

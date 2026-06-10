@@ -1,3 +1,3 @@
-from .store import KnowledgeStore
+from . import store
 
-__all__ = ["KnowledgeStore"]
+__all__ = ["store"]

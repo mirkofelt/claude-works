@@ -3,6 +3,8 @@ import logging
 import time
 
 from ..config import section
+from .. import db
+from ..knowledge import store as knowledge_store
 from ..kanban.board import KanbanBoard
 from ..kanban.models import AgentClass, KanbanTask
 from ..llm.errors import RateLimitError
@@ -18,6 +20,26 @@ from .specialist.memory import MemoryAgent
 
 logger = logging.getLogger(__name__)
 
+
+async def _inject_knowledge(content: str, user_id: int | None) -> str:
+    """Prepend relevant knowledge base entries to task content for agent context."""
+    try:
+        conn = await db.get_conn()
+        entries = await knowledge_store.search(conn, content, user_id=user_id, limit=5)
+        await conn.close()
+    except Exception:
+        return content
+    if not entries:
+        return content
+    lines = []
+    for e in entries:
+        tags = ", ".join(e.get("tags") or [])
+        tag_str = f" [{tags}]" if tags else ""
+        lines.append(f"- [{e['type']}]{tag_str} **{e['title']}**: {e['content']}")
+    kb_block = "## Relevant knowledge\n" + "\n".join(lines)
+    return f"{kb_block}\n\n---\n\n{content}"
+
+
 _SPECIALIST_MAP = {
     AgentClass.GENERALIST: GeneralistAgent,
     AgentClass.RESEARCHER: ResearchAgent,
@@ -29,9 +51,8 @@ _SPECIALIST_MAP = {
 class AgentCoordinator:
     """Orchestrates controller, chief, and specialist workers over KanbanBoard."""
 
-    def __init__(self, board: KanbanBoard, knowledge, token_tracker: TokenTracker, on_result, on_requeue=None) -> None:
+    def __init__(self, board: KanbanBoard, token_tracker: TokenTracker, on_result, on_requeue=None) -> None:
         self._board = board
-        self._knowledge = knowledge
         self._token_tracker = token_tracker
         self._on_result = on_result
         self._on_requeue = on_requeue
@@ -61,7 +82,6 @@ class AgentCoordinator:
         )
         self._chief = ChiefAgent(
             board=self._board,
-            knowledge=self._knowledge,
             provider=provider,
             token_tracker=self._token_tracker,
         )
@@ -69,7 +89,6 @@ class AgentCoordinator:
             board=self._board,
             provider=provider,
             token_tracker=self._token_tracker,
-            knowledge=self._knowledge,
         )
 
         self._tasks.append(asyncio.create_task(self._controller.run_loop(), name="controller-loop"))
@@ -176,7 +195,8 @@ class AgentCoordinator:
 
         try:
             await self._board.start(task.id, agent_run_id)
-            result = await asyncio.wait_for(agent.run(task.content), timeout=timeout)
+            content = await _inject_knowledge(task.content, task.user_id)
+            result = await asyncio.wait_for(agent.run(content), timeout=timeout)
             self._rate_limit_count = 0  # reset on success
             elapsed = time.time() - started
             logger.info("Specialist %s task %d done in %.1fs", agent_class.value, task.id, elapsed)

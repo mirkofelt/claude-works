@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .. import config, db
 from ..config_store import save_config as _store_save_config
 from ..memory import store as memory_store
+from ..knowledge import store as knowledge_store
 from ..auth.users import get_user, set_role
 from ..kanban.models import Lane
 from ..mode import DaemonMode
@@ -302,6 +303,46 @@ async def get_memory(user_id: int | None = None, q: str | None = None):
         items = await memory_store.list_all(conn, user_id=user_id)
     await conn.close()
     return items
+
+
+@app.get("/api/knowledge", dependencies=[Depends(_verify_token)])
+async def get_knowledge(q: str | None = None, type: str | None = None):
+    conn = await _get_conn()
+    if q:
+        items = await knowledge_store.search(conn, q)
+    else:
+        items = await knowledge_store.list_all(conn, type=type)
+    await conn.close()
+    return items
+
+
+@app.post("/api/knowledge", dependencies=[Depends(_verify_token)])
+async def add_knowledge(body: dict):
+    title = body.get("title", "").strip()
+    content = body.get("content", "").strip()
+    if not title or not content:
+        raise HTTPException(status_code=400, detail="title and content required")
+    conn = await _get_conn()
+    entry_id = await knowledge_store.add(
+        conn,
+        title=title,
+        content=content,
+        type=body.get("type", "note"),
+        tags=body.get("tags"),
+        source="admin",
+    )
+    await conn.close()
+    return {"id": entry_id}
+
+
+@app.delete("/api/knowledge/{entry_id}", dependencies=[Depends(_verify_token)])
+async def delete_knowledge(entry_id: int):
+    conn = await _get_conn()
+    ok = await knowledge_store.delete(conn, entry_id)
+    await conn.close()
+    if not ok:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    return {"ok": True}
 
 
 @app.get("/api/users", dependencies=[Depends(_verify_token)])

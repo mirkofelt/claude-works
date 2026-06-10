@@ -6,7 +6,7 @@ import uuid
 from ..config import section
 from ..kanban.board import KanbanBoard
 from ..kanban.models import AgentClass
-from ..knowledge.store import KnowledgeStore
+from ..knowledge import store as knowledge_store
 from ..llm.errors import RateLimitError
 from ..llm.provider import LLMProvider, get_provider
 from ..telemetry.tokens import TokenTracker
@@ -31,13 +31,11 @@ class ChiefAgent:
     def __init__(
         self,
         board: KanbanBoard,
-        knowledge: KnowledgeStore,
         provider: LLMProvider | None = None,
         token_tracker: TokenTracker | None = None,
     ) -> None:
         self.id = str(uuid.uuid4())[:8]
         self._board = board
-        self._knowledge = knowledge
         self._provider = provider
         self._token_tracker = token_tracker
         self._persona: str = ""

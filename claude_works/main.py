@@ -18,7 +18,7 @@ from .tasks.bundler import should_bundle, merge_content
 from .kanban.board import KanbanBoard
 from .kanban.models import KanbanTask
 from .telemetry.tokens import TokenTracker
-from .knowledge.store import KnowledgeStore
+from .knowledge import store as knowledge_store
 from .agents.coordinator import AgentCoordinator
 from .agents.mechanic import MechanicAgent, MechanicContext
 from .auth.users import upsert_user, is_allowed, is_admin, set_role
@@ -40,7 +40,7 @@ class CommsDaemon:
         self._poller: TelegramPoller | None = None
         self._board: KanbanBoard | None = None
         self._token_tracker: TokenTracker | None = None
-        self._knowledge: KnowledgeStore | None = None
+        
         self._coordinator: AgentCoordinator | None = None
         self._web_server: uvicorn.Server | None = None
         self._security: SecuritySupervisor = SecuritySupervisor()
@@ -121,11 +121,9 @@ class CommsDaemon:
 
         self._board = KanbanBoard(self._conn)
         self._token_tracker = TokenTracker(self._conn)
-        self._knowledge = KnowledgeStore(self._conn)
 
         self._coordinator = AgentCoordinator(
             board=self._board,
-            knowledge=self._knowledge,
             token_tracker=self._token_tracker,
             on_result=self._on_agent_result,
             on_requeue=self._on_task_requeued,
