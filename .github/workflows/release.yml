@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - 'v*'
 
 jobs:
   release:
@@ -57,6 +59,7 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository }}:latest
             ghcr.io/${{ github.repository }}:${{ steps.version.outputs.sha }}
+            ghcr.io/${{ github.repository }}:${{ steps.version.outputs.tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
