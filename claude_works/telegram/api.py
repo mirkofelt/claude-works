@@ -104,3 +104,29 @@ class TelegramAPI:
             text=text,
         )
         return True
+
+    async def send_location(
+        self,
+        chat_id: int,
+        latitude: float,
+        longitude: float,
+        title: str | None = None,
+        reply_markup: dict | None = None,
+    ) -> dict:
+        if title:
+            return await self._call(
+                "sendVenue",
+                chat_id=chat_id,
+                latitude=latitude,
+                longitude=longitude,
+                title=title,
+                address=" ",
+                reply_markup=reply_markup,
+            )
+        return await self._call(
+            "sendLocation",
+            chat_id=chat_id,
+            latitude=latitude,
+            longitude=longitude,
+            reply_markup=reply_markup,
+        )

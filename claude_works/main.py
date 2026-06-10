@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import re
+from .tasks.transcriber import transcribe as _transcribe_audio
 import secrets
 import time
 import os
@@ -55,6 +56,24 @@ def _md_to_telegram_html(text: str) -> str:
                     s = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", s, flags=re.DOTALL)
                     result.append(s)
     return "".join(result)
+
+
+def _extract_voice_tag(text: str) -> "tuple[str, str | None]":
+    """Extract [VOICE: text] tag. Returns (clean_text, tts_text or None)."""
+    m = re.search(r'\[VOICE:\s*([^\]]+)\]', text, re.DOTALL)
+    if not m:
+        return text, None
+    clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
+    return clean, m.group(1).strip()
+
+
+def _extract_map_tag(text: str) -> "tuple[str, str | None]":
+    """Extract [MAP: query] tag. Returns (clean_text, map_query or None)."""
+    m = re.search(r'\[MAP:\s*([^\]]+)\]', text)
+    if not m:
+        return text, None
+    clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
+    return clean, m.group(1).strip()
 
 
 def _parse_buttons(text: str) -> "tuple[str, list[list[dict]] | None]":
@@ -487,7 +506,18 @@ class Daemon:
         del self._pending_messages[chat_id]
         content = incoming.text or ""
         if incoming.voice_file_id:
-            content = f"[Voice message, file_id={incoming.voice_file_id}]" + (f"\n{content}" if content else "")
+            try:
+                audio_bytes = await self._api.get_file(incoming.voice_file_id)
+                cfg = config.section("transcription")
+                api_key = cfg.get("openai_api_key", "")
+                transcript = await _transcribe_audio(api_key, audio_bytes)
+                if transcript:
+                    content = transcript + ("\n" + content if content else "")
+                else:
+                    content = "[Voice message — transcription unavailable]" + ("\n" + content if content else "")
+            except Exception as e:
+                logger.warning("Voice download/transcription error: %s", e)
+                content = "[Voice message — transcription failed]" + ("\n" + content if content else "")
 
         task = KanbanTask(
             id=None,
@@ -649,13 +679,51 @@ class Daemon:
                 await self._api.send_message(task.chat_id, "Response blocked by security policy.")
                 return
             clean_result, keyboard = _parse_buttons(result)
+            clean_result, tts_text = _extract_voice_tag(clean_result)
+            clean_result, map_query = _extract_map_tag(clean_result)
             reply_markup = {"inline_keyboard": keyboard} if keyboard is not None else None
-            html_result = _md_to_telegram_html(clean_result)
-            try:
-                sent = await self._api.send_message(task.chat_id, html_result, parse_mode="HTML", reply_markup=reply_markup)
-            except Exception:
-                logger.warning("HTML send failed for task=%d, retrying as plain text", task.id)
-                sent = await self._api.send_message(task.chat_id, clean_result, reply_markup=reply_markup)
+
+            if clean_result.strip():
+                html_result = _md_to_telegram_html(clean_result)
+                try:
+                    sent = await self._api.send_message(task.chat_id, html_result, parse_mode="HTML", reply_markup=reply_markup)
+                except Exception:
+                    logger.warning("HTML send failed for task=%d, retrying plain", task.id)
+                    sent = await self._api.send_message(task.chat_id, clean_result, reply_markup=reply_markup)
+            else:
+                sent = {"message_id": 0}
+
+            if tts_text:
+                try:
+                    from gtts import gTTS
+                    import io
+                    tts = gTTS(text=tts_text, lang="de")
+                    buf = io.BytesIO()
+                    tts.write_to_fp(buf)
+                    buf.seek(0)
+                    await self._api.send_voice(task.chat_id, buf.read())
+                except Exception as e:
+                    logger.warning("TTS failed for task=%d: %s", task.id, e)
+
+            if map_query:
+                try:
+                    async with __import__("httpx").AsyncClient(timeout=10.0) as hc:
+                        r = await hc.get(
+                            "https://nominatim.openstreetmap.org/search",
+                            params={"q": map_query, "format": "json", "limit": 1},
+                            headers={"User-Agent": "claude-works-bot/1.0"},
+                        )
+                        results = r.json()
+                    if results:
+                        lat = float(results[0]["lat"])
+                        lon = float(results[0]["lon"])
+                        title = results[0].get("display_name", map_query)[:60]
+                        await self._api.send_location(task.chat_id, lat, lon, title=title)
+                    else:
+                        await self._api.send_message(task.chat_id, f"📍 {map_query} — nicht gefunden.")
+                except Exception as e:
+                    logger.warning("Map geocoding failed for task=%d: %s", task.id, e)
+
             await self._conn.execute(
                 """INSERT INTO bot_messages (telegram_message_id, chat_id, task_id, text, sent_at)
                    VALUES (?, ?, ?, ?, ?)""",
