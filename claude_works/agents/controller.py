@@ -36,36 +36,10 @@ def _fast_route(content: str) -> "AgentClass | None":
     return None
 
 
-_ROUTING_SYSTEM = """You are a task router. Given a task, respond ONLY with valid JSON:
-{"agent_class": "<class>", "reason": "<brief reason>"}
+from ..prompts import load as _load_prompt
 
-Classes:
-- "generalist": conversation, general questions, analysis, simple requests
-- "researcher": research, fact-finding, information lookup
-- "coder": code writing, debugging, reviews (runs full Architect→Dev→Test→QA pipeline)
-- "memory": knowledge base operations (store/retrieve/manage)
-- "chief": strategic decisions, persona-sensitive tasks, high-priority
-- "po": complex multi-step projects requiring planning and decomposition, autonomous long-running tasks
-
-Use "po" when the task is clearly multi-faceted and benefits from being split into parallel subtasks.
-For simple single-step requests, prefer the direct specialist class.
-
-No other text. Valid JSON only."""
-
-_RECOVERY_SYSTEM = """You are a task recovery router. A task failed — decide recovery action.
-
-Respond ONLY with valid JSON:
-{"action": "<action>", "agent_class": "<class>", "reason": "<brief>"}
-
-Actions:
-- "retry": same agent, retry as-is (transient error, rate limit, timeout)
-- "reroute": different agent class (wrong specialization caused the failure)
-- "enrich": same agent, but prepend failure context to help it avoid the same mistake
-- "abandon": unrecoverable (permission error, budget exceeded, malformed request)
-
-Agent classes: generalist, researcher, coder, memory, chief
-
-No other text. Valid JSON only."""
+_ROUTING_SYSTEM = _load_prompt("controller_routing")
+_RECOVERY_SYSTEM = _load_prompt("controller_recovery")
 
 _MAX_RECOVERY_ATTEMPTS = 2
 

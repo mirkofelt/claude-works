@@ -134,8 +134,6 @@ class Supervisor:
 
 
 async def main() -> None:
-    import sys
-    sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
     try:
         from claude_works.logging_setup import setup as _setup_logging
         _setup_logging()

@@ -19,4 +19,4 @@ VOLUME ["/data"]
 EXPOSE 8080
 
 ENTRYPOINT ["/app/entrypoint.sh"]
-CMD ["python", "-m", "supervisor.supervisor"]
+CMD ["python", "-m", "claude_works.supervisor"]
