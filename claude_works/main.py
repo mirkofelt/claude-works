@@ -260,6 +260,9 @@ class Daemon:
         """Initialize all runtime components. Called in RUN mode."""
         self._mode_mgr.transition(DaemonMode.RUN)
 
+        from .prompts import export_defaults as _export_prompts
+        _export_prompts()
+
         self._conn = await db.init()
         tg_cfg = config.section("telegram")
         self._api = TelegramAPI(tg_cfg["token"])
