@@ -11,7 +11,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
        > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update && apt-get install -y --no-install-recommends gh \
     && NODE_VERSION=22.16.0 \
-    && curl -fsSL https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz \
+    && ARCH=$(dpkg --print-architecture) \
+    && NODE_ARCH=$([ "$ARCH" = "amd64" ] && echo "x64" || echo "$ARCH") \
+    && curl -fsSL https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz \
        | tar -xJ -C /usr/local --strip-components=1 \
     && npm install -g @anthropic-ai/claude-code \
     && rm -rf /var/lib/apt/lists/* /root/.npm
