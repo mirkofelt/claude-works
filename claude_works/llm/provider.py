@@ -226,9 +226,7 @@ def get_provider(cfg: dict) -> LLMProvider:
     if provider_type == "api":
         return APIProvider(api_key=cfg["api_key"])
     if provider_type == "cli":
-        binary = cfg.get("cli_binary", "")
-        if not binary:
-            raise ValueError("llm.cli_binary is required when provider is 'cli'")
+        binary = cfg.get("cli_binary") or "claude"
         if not re.match(r'^[a-zA-Z0-9_./-]+$', binary):
             raise ValueError(f"llm.cli_binary contains invalid characters: {binary!r}")
         return CliProvider(cli_binary=binary)

@@ -1301,7 +1301,7 @@ async function doSetup() {
   if (!adminRaw) { showSetupErr('At least one admin chat ID required.'); return; }
   if (!webToken) { showSetupErr('Web auth token required.'); return; }
   if (provider === 'api' && !apiKey) { showSetupErr('API key required.'); return; }
-  if (provider === 'cli' && !cliBinary) { showSetupErr('CLI binary path required.'); return; }
+  // cli_binary defaults to 'claude' on the server side if empty
 
   const adminIds = adminRaw.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
   if (!adminIds.length) { showSetupErr('Invalid admin chat IDs — enter numeric Telegram IDs.'); return; }
