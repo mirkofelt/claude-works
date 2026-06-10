@@ -1,4 +1,5 @@
 import logging
+import re
 import uuid
 from abc import ABC, abstractmethod
 
@@ -10,6 +11,10 @@ logger = logging.getLogger(__name__)
 
 CONTEXT_WARN_THRESHOLD = 0.5
 CONTEXT_COMPACT_THRESHOLD = 0.6
+
+_TOPIC_SHIFT_THRESHOLD = 0.10
+_TOPIC_SHIFT_MIN_WORDS = 5
+_TOPIC_SHIFT_MIN_MESSAGES = 4
 
 
 class BaseAgent(ABC):
@@ -57,9 +62,14 @@ class BaseAgent(ABC):
         max_context = cfg.get("max_context_tokens", 150000)
 
         if self._token_tracker:
-            model = await self._token_tracker.get_allowed_model(model)
+            user_id = self._user_context.get("user_id")
+            model = await self._token_tracker.get_allowed_model(model, user_id=user_id)
             if model is None:
                 raise BudgetExceededError("Spending limit reached — task rejected")
+
+        if self._topic_shifted(content):
+            logger.info("Agent %s[%s] topic shift — proactive compact", self.agent_class, self.id)
+            await self._compact()
 
         self._messages.append({"role": "user", "content": content})
 
@@ -107,6 +117,22 @@ class BaseAgent(ABC):
             logger.warning("Agent %s context %.0f%%", self.id, utilization * 100)
 
         return response.text
+
+    def _topic_shifted(self, new_content: str) -> bool:
+        if len(self._messages) < _TOPIC_SHIFT_MIN_MESSAGES:
+            return False
+        new_words = set(re.findall(r'\b\w{4,}\b', new_content.lower()))
+        if len(new_words) < _TOPIC_SHIFT_MIN_WORDS:
+            return False
+        recent_text = " ".join(
+            m["content"] for m in self._messages[-4:]
+            if isinstance(m.get("content"), str)
+        )
+        recent_words = set(re.findall(r'\b\w{4,}\b', recent_text.lower()))
+        if not recent_words:
+            return False
+        overlap = len(new_words & recent_words) / len(new_words | recent_words)
+        return overlap < _TOPIC_SHIFT_THRESHOLD
 
     async def _compact(self) -> None:
         if len(self._messages) < 4:

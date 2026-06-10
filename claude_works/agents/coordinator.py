@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 _KB_MIN_WORDS = 4
 _KB_ENTRY_MAX_CHARS = 400
+_CODETEAM_PREVIEW_LEN = 100
 
 
 async def _inject_knowledge(content: str, user_id: int | None) -> str:
@@ -204,6 +205,14 @@ class AgentCoordinator:
 
         try:
             await self._board.start(task.id, agent_run_id)
+
+            if agent_class == AgentClass.CODER and section("agents").get("codeteam_intent_confirm", True):
+                first_line = task.content.strip().split("\n")[0]
+                preview = first_line[:_CODETEAM_PREVIEW_LEN]
+                if len(task.content.strip()) > _CODETEAM_PREVIEW_LEN or "\n" in task.content.strip():
+                    preview += "…"
+                await self._on_result(task, f"Working on: {preview}", None)
+
             content = await _inject_knowledge(task.content, task.user_id)
             result = await asyncio.wait_for(agent.run(content), timeout=timeout)
             self._rate_limit_count = 0  # reset on success

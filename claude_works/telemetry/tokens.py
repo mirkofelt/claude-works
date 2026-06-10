@@ -55,6 +55,14 @@ class TokenTracker:
             row = await cur.fetchone()
         return float(row[0] or 0.0) if row else 0.0
 
+    async def _sum_cost_for_user(self, user_id: int, since: int) -> float:
+        async with self._conn.execute(
+            "SELECT SUM(cost_usd) FROM token_usage WHERE user_id = ? AND timestamp >= ?",
+            (user_id, since),
+        ) as cur:
+            row = await cur.fetchone()
+        return float(row[0] or 0.0) if row else 0.0
+
     async def total_cost(self, since: int | None = None) -> float:
         if since is None:
             async with self._conn.execute("SELECT SUM(cost_usd) FROM token_usage") as cur:
@@ -66,18 +74,20 @@ class TokenTracker:
                 row = await cur.fetchone()
         return float(row[0] or 0.0) if row else 0.0
 
-    async def get_allowed_model(self, requested_model: str) -> str | None:
+    async def get_allowed_model(self, requested_model: str, user_id: int | None = None) -> str | None:
         """Return model to use, or None to reject.
 
-        Checks daily/monthly spending limits. If over limit:
+        Checks daily/monthly spending limits and per-user daily limit. If over limit:
           on_limit_exceeded=reject (default) → returns None → caller raises BudgetExceededError
           on_limit_exceeded=downgrade → returns next cheaper model (None if already cheapest)
+        Per-user limit always rejects (no downgrade).
         """
         cfg = section("spending")
         max_daily = cfg.get("max_daily_usd")
         max_monthly = cfg.get("max_monthly_usd")
+        per_user_daily = cfg.get("per_user_daily_usd")
 
-        if max_daily is None and max_monthly is None:
+        if max_daily is None and max_monthly is None and per_user_daily is None:
             return requested_model
 
         now = int(time.time())
@@ -89,6 +99,11 @@ class TokenTracker:
         if not over_budget and max_monthly is not None:
             if await self._sum_cost(now - 2592000) >= max_monthly:
                 over_budget = True
+
+        if not over_budget and per_user_daily is not None and user_id is not None:
+            if await self._sum_cost_for_user(user_id, now - 86400) >= per_user_daily:
+                logger.warning("Per-user daily budget exceeded for user_id=%s", user_id)
+                return None
 
         if not over_budget:
             return requested_model

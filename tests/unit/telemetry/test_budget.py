@@ -99,3 +99,50 @@ async def test_downgrade_model_chain(monkeypatch):
     assert cfg.downgrade_model("claude-opus-4-8") == "claude-sonnet-4-6"
     assert cfg.downgrade_model("claude-sonnet-4-6") == "claude-haiku-4-5-20251001"
     assert cfg.downgrade_model("claude-haiku-4-5-20251001") is None
+
+
+@pytest.mark.asyncio
+async def test_per_user_daily_limit_rejects(monkeypatch):
+    monkeypatch.setattr(cfg, "_settings", {
+        "spending": {"per_user_daily_usd": 0.001}
+    })
+    tracker = await _make_tracker()
+    await tracker.log(
+        agent_id="test", agent_class="generalist", task_id=1,
+        user_id=42, chat_id=1, model="claude-sonnet-4-6",
+        input_tokens=100_000, output_tokens=10_000,
+    )
+    result = await tracker.get_allowed_model("claude-sonnet-4-6", user_id=42)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_per_user_limit_other_user_unaffected(monkeypatch):
+    monkeypatch.setattr(cfg, "_settings", {
+        "spending": {"per_user_daily_usd": 0.001}
+    })
+    tracker = await _make_tracker()
+    await tracker.log(
+        agent_id="test", agent_class="generalist", task_id=1,
+        user_id=42, chat_id=1, model="claude-sonnet-4-6",
+        input_tokens=100_000, output_tokens=10_000,
+    )
+    # user 99 has spent nothing — should pass
+    result = await tracker.get_allowed_model("claude-sonnet-4-6", user_id=99)
+    assert result == "claude-sonnet-4-6"
+
+
+@pytest.mark.asyncio
+async def test_per_user_limit_no_user_id_skips_check(monkeypatch):
+    monkeypatch.setattr(cfg, "_settings", {
+        "spending": {"per_user_daily_usd": 0.001}
+    })
+    tracker = await _make_tracker()
+    await tracker.log(
+        agent_id="test", agent_class="generalist", task_id=1,
+        user_id=42, chat_id=1, model="claude-sonnet-4-6",
+        input_tokens=100_000, output_tokens=10_000,
+    )
+    # no user_id → per-user check skipped
+    result = await tracker.get_allowed_model("claude-sonnet-4-6", user_id=None)
+    assert result == "claude-sonnet-4-6"
