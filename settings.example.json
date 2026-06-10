@@ -113,9 +113,13 @@
     "dir": "/data/logs",
     "level": "INFO"
   },
-  "elevenlabs": {
-    "api_key": "YOUR_ELEVENLABS_API_KEY",
-    "voice_id": "YOUR_VOICE_ID"
+  "tts": {
+    "_comment": "TTS provider: 'elevenlabs' for high-quality voices (API key required), 'gtts' for offline fallback.",
+    "provider": "elevenlabs",
+    "elevenlabs_api_key": "YOUR_ELEVENLABS_API_KEY",
+    "elevenlabs_voice_id": "YOUR_ELEVENLABS_VOICE_ID",
+    "elevenlabs_model": "eleven_multilingual_v2",
+    "_comment_stt": "Same elevenlabs_api_key is used for speech-to-text (voice message transcription)."
   },
   "email": {
     "_comment_smtp": "SMTP for sending. Proton Mail: smtp.protonmail.ch:587 (STARTTLS) or Bridge at host:1025 (smtp_tls: false).",

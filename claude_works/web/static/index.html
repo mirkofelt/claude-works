@@ -298,6 +298,24 @@
       </div>
     </div>
 
+    <div class="setup-section">
+      <h3>ElevenLabs — optional</h3>
+      <div class="field">
+        <label>API Key</label>
+        <input type="password" id="cfgElApiKey" placeholder="sk_...">
+        <div class="hint">Used for both TTS (voice output) and STT (voice message transcription).</div>
+      </div>
+      <div class="field">
+        <label>Voice ID</label>
+        <input type="text" id="cfgElVoiceId" placeholder="EXAVITQu4vr4xnSDxMaL">
+      </div>
+      <div class="field">
+        <label>Model</label>
+        <input type="text" id="cfgElModel" placeholder="eleven_multilingual_v2" value="eleven_multilingual_v2">
+        <div class="hint">Leave blank to disable voice features.</div>
+      </div>
+    </div>
+
     <div style="margin-top:20px">
       <button class="btn" onclick="doSetup()" style="width:100%;padding:10px">Save Configuration</button>
       <div id="setupMsg"></div>
@@ -1101,6 +1119,9 @@ async function doSetup() {
   const imapPort = parseInt(document.getElementById('cfgImapPort').value.trim()) || 993;
   const imapPassword = document.getElementById('cfgImapPassword').value.trim();
   const githubPat = document.getElementById('cfgGithubPat').value.trim();
+  const elApiKey = document.getElementById('cfgElApiKey').value.trim();
+  const elVoiceId = document.getElementById('cfgElVoiceId').value.trim();
+  const elModel = document.getElementById('cfgElModel').value.trim() || 'eleven_multilingual_v2';
 
   if (!setupToken) { showSetupErr('Setup token required — check server logs.'); return; }
   if (!tgToken) { showSetupErr('Telegram bot token required.'); return; }
@@ -1123,7 +1144,8 @@ async function doSetup() {
     security: { enabled: false, pending_timeout_seconds: 300, rules: [] },
     logging: { dir: '/data/logs', level: 'INFO' },
     ...(smtpHost ? { email: { smtp_host: smtpHost, smtp_port: smtpPort, smtp_user: smtpUser, smtp_password: smtpPassword, smtp_tls: true, from_address: smtpUser, imap_host: imapHost || smtpHost.replace('smtp.', 'imap.'), imap_port: imapPort, imap_user: smtpUser, imap_password: imapPassword || smtpPassword } } : {}),
-    ...(githubPat ? { github: { personal_access_token: githubPat } } : {})
+    ...(githubPat ? { github: { personal_access_token: githubPat } } : {}),
+    ...(elApiKey ? { tts: { provider: 'elevenlabs', elevenlabs_api_key: elApiKey, elevenlabs_voice_id: elVoiceId, elevenlabs_model: elModel } } : { tts: { provider: 'gtts' } })
   };
 
   try {

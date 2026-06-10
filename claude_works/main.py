@@ -589,8 +589,7 @@ class Daemon:
         if incoming.voice_file_id:
             try:
                 audio_bytes = await self._api.get_file(incoming.voice_file_id)
-                cfg = config.section("transcription")
-                api_key = cfg.get("openai_api_key", "")
+                api_key = config.section("tts").get("elevenlabs_api_key", "")
                 transcript = await _transcribe_audio(api_key, audio_bytes)
                 if transcript:
                     content = transcript + ("\n" + content if content else "")
