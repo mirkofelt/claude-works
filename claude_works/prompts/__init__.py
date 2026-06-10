@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -7,28 +8,43 @@ logger = logging.getLogger(__name__)
 _BUILTIN_DIR = Path(__file__).parent
 _DATA_DIR = Path(os.environ.get("PROMPTS_DIR", "/data/prompts"))
 
-# mtime-aware cache: name -> (mtime_float, text)
-_cache: dict[str, tuple[float, str]] = {}
+# TTL before re-checking mtime. Within this window, load() returns cached
+# text with zero disk I/O. Change becomes visible within STAT_TTL seconds.
+_STAT_TTL: float = float(os.environ.get("PROMPTS_STAT_TTL", "5"))
+
+# cache: name -> (mtime, checked_at_monotonic, text)
+_cache: dict[str, tuple[float, float, str]] = {}
 
 
 def load(name: str) -> str:
     """Load prompt by name. Checks /data/prompts/<name>.md first, falls back to built-in.
-    Re-reads from disk whenever the file's mtime changes."""
+    Cached in memory; mtime checked at most every PROMPTS_STAT_TTL seconds (default 5s)."""
+    now = time.monotonic()
+    cached = _cache.get(name)
+
+    if cached:
+        mtime, checked_at, text = cached
+        if now - checked_at < _STAT_TTL:
+            return text  # within TTL — no disk I/O at all
+
+    # TTL expired (or cold start) — check mtime
     override = _DATA_DIR / f"{name}.md"
     builtin = _BUILTIN_DIR / f"{name}.md"
     path = override if override.is_file() else builtin
 
     try:
-        mtime = path.stat().st_mtime
+        new_mtime = path.stat().st_mtime
     except OSError:
         raise FileNotFoundError(f"Prompt not found: {name!r} (checked {override}, {builtin})")
 
-    cached = _cache.get(name)
-    if cached and cached[0] == mtime:
-        return cached[1]
+    if cached and cached[0] == new_mtime:
+        # mtime unchanged — refresh TTL timestamp, return cached text
+        _cache[name] = (new_mtime, now, cached[2])
+        return cached[2]
 
+    # file changed (or cold start) — read from disk
     text = path.read_text(encoding="utf-8").strip()
-    _cache[name] = (mtime, text)
+    _cache[name] = (new_mtime, now, text)
     if cached:
         logger.info("Prompt %r reloaded (file changed)", name)
     return text
