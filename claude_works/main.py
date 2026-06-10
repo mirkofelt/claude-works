@@ -264,6 +264,11 @@ class Daemon:
         _export_prompts()
 
         self._conn = await db.init()
+
+        from .knowledge.store import import_from_directory as _kb_import
+        _imported = await _kb_import(self._conn)
+        if _imported:
+            logger.info("Imported %d knowledge file(s) from /data/knowledge/", _imported)
         tg_cfg = config.section("telegram")
         self._api = TelegramAPI(tg_cfg["token"])
 

@@ -1,10 +1,56 @@
 import json
 import logging
+import os
 import time
+from pathlib import Path
 
 import aiosqlite
 
 logger = logging.getLogger(__name__)
+
+_KNOWLEDGE_DIR = Path(os.environ.get("KNOWLEDGE_DIR", "/data/knowledge"))
+_IMPORT_EXTENSIONS = {".md", ".txt"}
+
+
+async def import_from_directory(conn: aiosqlite.Connection, directory: Path | None = None) -> int:
+    """Scan directory for .md/.txt files and import new/updated entries into KB.
+    Uses source=file::<name> as dedup key. Re-imports if file mtime > last import time.
+    Returns count of files imported or updated."""
+    d = directory or _KNOWLEDGE_DIR
+    if not d.exists():
+        return 0
+
+    imported = 0
+    for path in sorted(d.iterdir()):
+        if path.suffix not in _IMPORT_EXTENSIONS or path.name.startswith('.'):
+            continue
+        try:
+            file_mtime = int(path.stat().st_mtime)
+            source_key = f"file::{path.name}"
+
+            async with conn.execute(
+                "SELECT id, updated_at FROM knowledge WHERE source = ? LIMIT 1",
+                (source_key,),
+            ) as cur:
+                row = await cur.fetchone()
+
+            if row and row["updated_at"] >= file_mtime:
+                continue  # already up to date
+
+            content = path.read_text(encoding="utf-8").strip()
+            title = path.stem.replace("_", " ").replace("-", " ").title()
+
+            if row:
+                await update(conn, row["id"], content=content)
+                logger.info("knowledge re-imported (changed): %s", path.name)
+            else:
+                await add(conn, title=title, content=content, type="document", source=source_key)
+                logger.info("knowledge imported: %s", path.name)
+            imported += 1
+        except Exception as e:
+            logger.warning("knowledge import failed for %s: %s", path.name, e)
+
+    return imported
 
 
 async def add(
