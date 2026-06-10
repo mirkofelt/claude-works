@@ -212,13 +212,6 @@ class AgentCoordinator:
         try:
             await self._board.start(task.id, agent_run_id)
 
-            if agent_class == AgentClass.CODER and section("agents").get("codeteam_intent_confirm", True):
-                first_line = task.content.strip().split("\n")[0]
-                preview = first_line[:_CODETEAM_PREVIEW_LEN]
-                if len(task.content.strip()) > _CODETEAM_PREVIEW_LEN or "\n" in task.content.strip():
-                    preview += "…"
-                await self._on_result(task, f"Working on: {preview}", None)
-
             content = await _inject_knowledge(task.content, task.user_id)
             result = await asyncio.wait_for(agent.run(content), timeout=timeout)
             self._rate_limit_count = 0  # reset on success
