@@ -207,7 +207,7 @@ async def cli_auth_start(body: dict, x_setup_token: str | None = Header(default=
     if not _setup_token or x_setup_token != _setup_token:
         raise HTTPException(status_code=403, detail="Invalid setup token")
 
-    binary = body.get("cli_binary", "/usr/local/bin/claude").strip()
+    binary = body.get("cli_binary", "/data/bin/claude").strip()
     if not binary or not re.match(r'^[a-zA-Z0-9_./-]+$', binary):
         raise HTTPException(status_code=400, detail="Invalid cli_binary path")
 

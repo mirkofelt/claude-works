@@ -233,7 +233,7 @@
       </div>
       <div class="field" id="cliBinaryField" style="display:none">
         <label>CLI Binary Path</label>
-        <input type="text" id="cfgCliBinary" value="/usr/local/bin/claude">
+        <input type="text" id="cfgCliBinary" value="/data/bin/claude">
         <div class="hint">Absolute path to the claude binary inside the container.</div>
       </div>
       <div id="cliAuthSection" style="display:none;border-top:1px solid var(--border);margin-top:16px;padding-top:16px">
@@ -577,7 +577,7 @@
       <div class="cfg-body">
         <div class="field"><label>Provider</label><select id="s_llm_provider"><option value="api">api (key)</option><option value="cli">cli (subscription)</option></select></div>
         <div class="field"><label>API Key</label><input type="password" id="s_llm_api_key"></div>
-        <div class="field"><label>CLI Binary</label><input type="text" id="s_llm_cli_binary" placeholder="/usr/local/bin/claude"></div>
+        <div class="field"><label>CLI Binary</label><input type="text" id="s_llm_cli_binary" placeholder="/data/bin/claude"></div>
         <div class="field"><label>Default Model</label><input type="text" id="s_llm_model" placeholder="claude-sonnet-4-6"></div>
         <div class="field"><label>Max Tokens</label><input type="number" id="s_llm_max_tokens"></div>
         <div class="field"><label>Max Context Tokens</label><input type="number" id="s_llm_max_ctx"></div>

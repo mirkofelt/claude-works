@@ -4,17 +4,9 @@ services:
     container_name: claude-works
     restart: unless-stopped
     volumes:
-      - claude-works-data:/data
-      - ${CLAUDE_BIN:-/root/.claude/npm-global/bin/claude}:/usr/local/bin/claude:ro
-      - ${CLAUDE_HOME:-/root/.claude}:/root/.claude
+      - ${CLAUDE_WORKS_DATA:-./data}:/data
     ports:
       - "8080:8080"
     environment:
       - LOG_LEVEL=INFO
-
-volumes:
-  claude-works-data:
-
-networks:
-  claude-works-net:
-    driver: bridge
+      - CLAUDE_HOME=/data/.claude
