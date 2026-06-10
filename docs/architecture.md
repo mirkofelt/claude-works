@@ -4,7 +4,7 @@
 
 ```
 supervisor/supervisor.py     ← watchdog process (separate)
-└── comms/main.py            ← CommsDaemon (mode state machine)
+└── claude_works/main.py            ← CommsDaemon (mode state machine)
     ├── ModeManager           ← daemon mode lifecycle (STARTUP→INITIALIZE|MIGRATE|RUN↔REPAIR)
     ├── TelegramPoller        ← long-poll loop (RUN mode only)
     ├── AgentCoordinator      ← multi-layer agent orchestration (RUN mode only)
@@ -20,7 +20,7 @@ supervisor/supervisor.py     ← watchdog process (separate)
     └── uvicorn (FastAPI)     ← Web UI + REST API (available in ALL modes)
 ```
 
-The supervisor is optional. CommsDaemon runs standalone via `python -m comms.main`.
+The supervisor is optional. CommsDaemon runs standalone via `python -m claude_works.main`.
 
 ---
 
@@ -67,7 +67,7 @@ MechanicAgent invoked with `MechanicContext.MIGRATE`. Diagnoses schema/config mi
 
 AgentCoordinator stopped. MechanicAgent invoked with `MechanicContext.REPAIR`. Admin messages (Telegram) routed to `mechanic.followup()`. Exit via `/exit_repair` command or Web UI.
 
-### `comms/mode.py`
+### `claude_works/mode.py`
 
 ```python
 class DaemonMode(str, Enum):
@@ -97,7 +97,7 @@ async def detect_startup_mode() -> tuple[DaemonMode, str | None]:
 
 ## Module Breakdown
 
-### `comms/main.py` — CommsDaemon
+### `claude_works/main.py` — CommsDaemon
 
 Central coordinator. Owns all subsystems, wires them together.
 
@@ -117,7 +117,7 @@ Central coordinator. Owns all subsystems, wires them together.
 - `health()` → `{status, poller, active_agents, security_pending, mode, mode_error?, mechanic_report?, rate_limited_until?, llm_usage?}`
 - `_usage_poll_loop()` — polls `coordinator.query_usage()` every `llm.usage_poll_interval_seconds` (default 300s); notifies admins once when `usage_pct >= 0.8`; resets notification flag when usage drops below threshold
 
-### `comms/llm/` — Provider Abstraction
+### `claude_works/llm/` — Provider Abstraction
 
 Provider-agnostic LLM interface. All agents go through this layer — never direct SDK calls.
 
@@ -166,7 +166,7 @@ class CliProvider(LLMProvider):
 - `"api"` → `APIProvider(api_key=cfg["api_key"])`
 - `"cli"` → `CliProvider()`
 
-### `comms/agents/` — Multi-Layer Agent Architecture
+### `claude_works/agents/` — Multi-Layer Agent Architecture
 
 #### `base.py` — BaseAgent ABC
 
@@ -273,7 +273,7 @@ Stages:
 
 All 4 stages log to `token_usage` under `agent_class="coder"`. Constructor signature matches specialist agents (`task_id, user_context, provider, token_tracker, persona`) so coordinator's `_run_specialist()` needs no changes.
 
-### `comms/kanban/` — Task Lifecycle
+### `claude_works/kanban/` — Task Lifecycle
 
 #### `models.py`
 
@@ -311,7 +311,7 @@ SQLite-backed. `asyncio.Event` wakes waiting loops when tasks enter a lane.
 - `await_children(parent_id, child_ids)` → polls every 2s until all `child_ids` reach terminal lane (`DONE`/`FAILED`/`BLOCKED`); returns `list[KanbanTask]`
 - `wait_for_work(timeout)` → yields until `asyncio.Event` set or timeout
 
-### `comms/telemetry/` — Token Tracking + Cost Control
+### `claude_works/telemetry/` — Token Tracking + Cost Control
 
 #### `tokens.py` — TokenTracker
 
@@ -325,7 +325,7 @@ Persists every LLM call to `token_usage` table. Calculates cost at insert time v
 
 `BudgetExceededError` raised by `BaseAgent.run()` when `get_allowed_model()` returns `None`.
 
-### `comms/knowledge/` — Knowledge Base
+### `claude_works/knowledge/` — Knowledge Base
 
 #### `store.py` — KnowledgeStore
 
@@ -338,7 +338,7 @@ Structured knowledge entries in SQLite.
 
 Schema: `id, type, title, content, tags, source, user_id, created_at, updated_at`
 
-### `comms/telegram/`
+### `claude_works/telegram/`
 
 | File | Responsibility |
 |------|---------------|
@@ -346,7 +346,7 @@ Schema: `id, type, title, content, tags, source, user_id, created_at, updated_at
 | `poller.py` | Long-poll loop via `getUpdates`, dispatches to `_on_update` callback |
 | `reactions.py` | Emoji → action mapping, extract reaction from update payload |
 
-### `comms/tasks/`
+### `claude_works/tasks/`
 
 | File | Responsibility |
 |------|---------------|
@@ -354,7 +354,7 @@ Schema: `id, type, title, content, tags, source, user_id, created_at, updated_at
 | `queue.py` | Legacy SQLite task queue (kept for compatibility) |
 | `bundler.py` | `should_bundle()` + `merge_content()` — time + context heuristic for message merging |
 
-### `comms/auth/`
+### `claude_works/auth/`
 
 `users.py` — SQLite user table: `upsert_user`, `is_allowed`, `is_admin`, `set_role`
 
@@ -362,11 +362,11 @@ Roles: `admin` (full access) | `user` (allowed) | `blocked` (ignored)
 
 New users land as `blocked`; admin notified via Telegram.
 
-### `comms/memory/`
+### `claude_works/memory/`
 
 `store.py` — per-user key/value store in SQLite: `set`, `get`, `search`, `list_all`, `delete`
 
-### `comms/security/`
+### `claude_works/security/`
 
 Approval gating for critical agent outputs. Disabled by default (`security.enabled: false`).
 
@@ -392,7 +392,7 @@ Approval gating for critical agent outputs. Disabled by default (`security.enabl
 4. Timeout (default 300s) → auto-deny
 5. Audit trail in `security_approvals` SQLite table
 
-### `comms/web/`
+### `claude_works/web/`
 
 FastAPI app served by uvicorn (same process as CommsDaemon, separate asyncio task).
 
@@ -442,7 +442,7 @@ Bucket size: 3600s for ≤24h, 21600s for >24h.
 
 **Web UI tabs:** Tasks · Messages · Users · Memory · Approvals · Kanban · Tokens · Logs
 
-### `comms/config_store.py` — DB Config Store
+### `claude_works/config_store.py` — DB Config Store
 
 Three async helpers for the `daemon_config` table:
 
@@ -450,7 +450,7 @@ Three async helpers for the `daemon_config` table:
 - `load_config(conn)` → `dict | None` — fetch and deserialize; `None` if no row
 - `delete_config(conn)` — remove config row (used by MechanicAgent during migrations)
 
-### `comms/logging_setup.py`
+### `claude_works/logging_setup.py`
 
 `setup()` — configures root logger: `RotatingFileHandler` (10 MB × 5 backups) + `StreamHandler`. Integrates uvicorn log config.
 
@@ -470,10 +470,10 @@ All user-owned state lives under `/data`. The container image is immutable; noth
 /data/
 ├── settings.json          # main config
 ├── config.db              # daemon config DB (CONFIG_DB_FILE override)
-├── comms.db               # operational DB (DB_FILE override)
+├── claude-works.db               # operational DB (DB_FILE override)
 ├── persona.txt            # optional ChiefAgent persona
 ├── logs/
-│   ├── comms.log          # rotating application log
+│   ├── claude-works.log          # rotating application log
 │   └── init.log           # container startup log (requirements.local.txt, init.sh output)
 ├── requirements.local.txt # optional: extra pip packages installed at each startup
 └── init.sh                # optional: custom shell commands run at each startup
@@ -491,7 +491,7 @@ Two SQLite databases, both in WAL mode with `synchronous=NORMAL`.
 |-------|---------|
 | `daemon_config` | Single-row config store (id=1, settings_json TEXT, updated_at); takes priority over settings.json on startup |
 
-**`/data/comms.db`** — operational data (path override: `DB_FILE` env var)
+**`/data/claude-works.db`** — operational data (path override: `DB_FILE` env var)
 
 | Table | Purpose |
 |-------|---------|

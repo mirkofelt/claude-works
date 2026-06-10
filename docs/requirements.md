@@ -50,7 +50,7 @@ Comms is a personal AI assistant running as a self-hosted Docker container. It r
 - All incoming messages stored (message_id, from, text, timestamp)
 - Outgoing messages stored (bot message_id for reaction context)
 - Reactions stored with reference to original message
-- Two SQLite databases: `config.db` (daemon config) and `comms.db` (operational data)
+- Two SQLite databases: `config.db` (daemon config) and `claude-works.db` (operational data)
 
 ### F8 — Process Hygiene
 - No hanging process longer than defined timeout

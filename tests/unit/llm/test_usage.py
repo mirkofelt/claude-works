@@ -1,5 +1,5 @@
 import pytest
-from comms.llm.usage import UsageStats, parse_usage_text
+from claude_works.llm.usage import UsageStats, parse_usage_text
 
 
 def test_parse_token_slash_format():

@@ -1,5 +1,5 @@
 import pytest
-import comms.config as cfg
+import claude_works.config as cfg
 
 
 def _patch(monkeypatch, agents: dict):

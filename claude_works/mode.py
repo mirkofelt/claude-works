@@ -65,10 +65,10 @@ async def detect_startup_mode() -> tuple[DaemonMode, str | None]:
     from . import config, db
     from .config_store import load_config as load_db_config
 
-    data_db_path = os.environ.get("DB_FILE", "/data/comms.db")
+    data_db_path = os.environ.get("DB_FILE", "/data/claude-works.db")
     data_db_exists = os.path.exists(data_db_path)
 
-    # Try config DB first (config.db is separate from data comms.db)
+    # Try config DB first (config.db is separate from data claude-works.db)
     try:
         conn = await db.init_config()
         db_cfg = await load_db_config(conn)

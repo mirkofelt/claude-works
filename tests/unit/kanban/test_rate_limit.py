@@ -3,10 +3,10 @@ import time
 import pytest
 import aiosqlite
 
-from comms.db import CREATE_TABLES
-from comms.kanban.board import KanbanBoard
-from comms.kanban.models import AgentClass, KanbanTask, Lane
-from comms.llm.errors import RateLimitError
+from claude_works.db import CREATE_TABLES
+from claude_works.kanban.board import KanbanBoard
+from claude_works.kanban.models import AgentClass, KanbanTask, Lane
+from claude_works.llm.errors import RateLimitError
 
 
 # ---------------------------------------------------------------------------
@@ -137,7 +137,7 @@ def test_backoff_caps_at_900():
 def _make_coordinator_stub():
     """Return a bare coordinator with mocked deps for property tests."""
     from unittest.mock import MagicMock
-    from comms.agents.coordinator import AgentCoordinator
+    from claude_works.agents.coordinator import AgentCoordinator
 
     board = MagicMock()
     knowledge = MagicMock()

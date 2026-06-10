@@ -1,7 +1,7 @@
 import time
 import pytest
-from comms.tasks.bundler import should_bundle, merge_content, _is_open_ended
-from comms.tasks.models import IncomingMessage
+from claude_works.tasks.bundler import should_bundle, merge_content, _is_open_ended
+from claude_works.tasks.models import IncomingMessage
 
 
 def _msg(text: str, ts: int, user_id: int = 1, chat_id: int = 100) -> IncomingMessage:

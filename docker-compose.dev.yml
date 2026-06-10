@@ -1,10 +1,10 @@
 services:
-  comms:
+  claude-works:
     build: .
-    container_name: comms-dev
+    container_name: claude-works-dev
     volumes:
       - .:/app
-      - comms-dev-data:/data
+      - claude-works-dev-data:/data
     ports:
       - "8080:8080"
     environment:
@@ -14,4 +14,4 @@ services:
     command: python -m supervisor.supervisor --dev
 
 volumes:
-  comms-dev-data:
+  claude-works-dev-data:

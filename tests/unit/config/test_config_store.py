@@ -1,8 +1,8 @@
 import pytest
 import aiosqlite
 
-from comms.db import CONFIG_TABLES
-from comms.config_store import delete_config, load_config, save_config
+from claude_works.db import CONFIG_TABLES
+from claude_works.config_store import delete_config, load_config, save_config
 
 
 async def _make_conn() -> aiosqlite.Connection:

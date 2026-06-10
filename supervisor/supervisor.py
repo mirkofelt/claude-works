@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 HEALTH_URL = "http://localhost:8080/health"
 HEALTH_INTERVAL = int(os.environ.get("HEALTH_INTERVAL", "60"))
 PID_FILE = "/data/supervisor.pid"
-DAEMON_CMD = [sys.executable, "-m", "comms.main"]
+DAEMON_CMD = [sys.executable, "-m", "claude_works.main"]
 
 
 def _load_settings() -> dict:
@@ -137,7 +137,7 @@ async def main() -> None:
     import sys
     sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
     try:
-        from comms.logging_setup import setup as _setup_logging
+        from claude_works.logging_setup import setup as _setup_logging
         _setup_logging()
     except Exception:
         logging.basicConfig(

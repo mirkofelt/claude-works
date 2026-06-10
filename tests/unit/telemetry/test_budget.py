@@ -1,9 +1,9 @@
 import time
 import pytest
 import aiosqlite
-import comms.config as cfg
-from comms.telemetry.tokens import BudgetExceededError, TokenTracker
-from comms.db import CREATE_TABLES
+import claude_works.config as cfg
+from claude_works.telemetry.tokens import BudgetExceededError, TokenTracker
+from claude_works.db import CREATE_TABLES
 
 
 async def _make_tracker() -> TokenTracker:

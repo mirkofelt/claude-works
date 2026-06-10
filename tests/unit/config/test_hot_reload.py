@@ -1,7 +1,7 @@
 import json
 import time
 import pytest
-import comms.config as cfg
+import claude_works.config as cfg
 
 
 def test_reload_if_changed_no_change(tmp_path, monkeypatch):

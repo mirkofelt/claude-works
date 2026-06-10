@@ -27,7 +27,7 @@ def setup(log_dir: str | None = None, log_level: str | None = None) -> None:
 
     Path(resolved_log_dir).mkdir(parents=True, exist_ok=True)
     file_handler = logging.handlers.RotatingFileHandler(
-        Path(resolved_log_dir) / "comms.log",
+        Path(resolved_log_dir) / "claude_works.log",
         maxBytes=10 * 1024 * 1024,
         backupCount=5,
         encoding="utf-8",
@@ -68,4 +68,4 @@ def uvicorn_log_config() -> dict:
 
 
 def log_path(log_dir: str = "/data/logs") -> Path:
-    return Path(log_dir) / "comms.log"
+    return Path(log_dir) / "claude_works.log"

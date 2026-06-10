@@ -5,9 +5,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from httpx import AsyncClient, ASGITransport
 
-from comms.db import CREATE_TABLES
-from comms.mode import DaemonMode
-from comms.web.app import app
+from claude_works.db import CREATE_TABLES
+from claude_works.mode import DaemonMode
+from claude_works.web.app import app
 
 
 def _make_daemon(mode: DaemonMode) -> MagicMock:
@@ -37,7 +37,7 @@ def client():
 
 @pytest.mark.asyncio
 async def test_get_setup_no_daemon(client):
-    with patch("comms.web.app._daemon_ref", None):
+    with patch("claude_works.web.app._daemon_ref", None):
         async with client as c:
             r = await c.get("/api/setup")
     assert r.status_code == 200
@@ -49,7 +49,7 @@ async def test_get_setup_no_daemon(client):
 @pytest.mark.asyncio
 async def test_get_setup_initialize_mode(client):
     daemon = _make_daemon(DaemonMode.INITIALIZE)
-    with patch("comms.web.app._daemon_ref", daemon):
+    with patch("claude_works.web.app._daemon_ref", daemon):
         async with client as c:
             r = await c.get("/api/setup")
     assert r.status_code == 200
@@ -61,7 +61,7 @@ async def test_get_setup_initialize_mode(client):
 @pytest.mark.asyncio
 async def test_get_setup_run_mode(client):
     daemon = _make_daemon(DaemonMode.RUN)
-    with patch("comms.web.app._daemon_ref", daemon):
+    with patch("claude_works.web.app._daemon_ref", daemon):
         async with client as c:
             r = await c.get("/api/setup")
     assert r.status_code == 200
@@ -74,7 +74,7 @@ async def test_get_setup_run_mode(client):
 
 @pytest.mark.asyncio
 async def test_save_setup_409_when_no_daemon(client):
-    with patch("comms.web.app._daemon_ref", None):
+    with patch("claude_works.web.app._daemon_ref", None):
         async with client as c:
             r = await c.post("/api/setup/save", json={})
     assert r.status_code == 409
@@ -83,8 +83,8 @@ async def test_save_setup_409_when_no_daemon(client):
 @pytest.mark.asyncio
 async def test_save_setup_409_when_not_initialize(client):
     daemon = _make_daemon(DaemonMode.RUN)
-    with patch("comms.web.app._daemon_ref", daemon), \
-         patch("comms.web.app._setup_token", "tok"):
+    with patch("claude_works.web.app._daemon_ref", daemon), \
+         patch("claude_works.web.app._setup_token", "tok"):
         async with client as c:
             r = await c.post("/api/setup/save", json={}, headers={"X-Setup-Token": "tok"})
     assert r.status_code == 409
@@ -97,8 +97,8 @@ async def test_save_setup_409_when_not_initialize(client):
 @pytest.mark.asyncio
 async def test_save_setup_403_no_token(client):
     daemon = _make_daemon(DaemonMode.INITIALIZE)
-    with patch("comms.web.app._daemon_ref", daemon), \
-         patch("comms.web.app._setup_token", "secret"):
+    with patch("claude_works.web.app._daemon_ref", daemon), \
+         patch("claude_works.web.app._setup_token", "secret"):
         async with client as c:
             r = await c.post("/api/setup/save", json={})
     assert r.status_code == 403
@@ -107,8 +107,8 @@ async def test_save_setup_403_no_token(client):
 @pytest.mark.asyncio
 async def test_save_setup_403_wrong_token(client):
     daemon = _make_daemon(DaemonMode.INITIALIZE)
-    with patch("comms.web.app._daemon_ref", daemon), \
-         patch("comms.web.app._setup_token", "secret"):
+    with patch("claude_works.web.app._daemon_ref", daemon), \
+         patch("claude_works.web.app._setup_token", "secret"):
         async with client as c:
             r = await c.post("/api/setup/save", json={}, headers={"X-Setup-Token": "wrong"})
     assert r.status_code == 403
@@ -117,8 +117,8 @@ async def test_save_setup_403_wrong_token(client):
 @pytest.mark.asyncio
 async def test_save_setup_403_when_token_already_used(client):
     daemon = _make_daemon(DaemonMode.INITIALIZE)
-    with patch("comms.web.app._daemon_ref", daemon), \
-         patch("comms.web.app._setup_token", None):
+    with patch("claude_works.web.app._daemon_ref", daemon), \
+         patch("claude_works.web.app._setup_token", None):
         async with client as c:
             r = await c.post("/api/setup/save", json={}, headers={"X-Setup-Token": "tok"})
     assert r.status_code == 403
@@ -144,8 +144,8 @@ _valid_cfg = {
 @pytest.mark.asyncio
 async def test_save_setup_400_missing_telegram_token(client, initialize_daemon):
     body = {"config": {"telegram": {"admin_chat_ids": [1]}, "web": {"auth_token": "x"}}}
-    with patch("comms.web.app._daemon_ref", initialize_daemon), \
-         patch("comms.web.app._setup_token", "tok"):
+    with patch("claude_works.web.app._daemon_ref", initialize_daemon), \
+         patch("claude_works.web.app._setup_token", "tok"):
         async with client as c:
             r = await c.post("/api/setup/save", json=body, headers={"X-Setup-Token": "tok"})
     assert r.status_code == 400
@@ -155,8 +155,8 @@ async def test_save_setup_400_missing_telegram_token(client, initialize_daemon):
 @pytest.mark.asyncio
 async def test_save_setup_400_placeholder_telegram_token(client, initialize_daemon):
     body = {"config": {"telegram": {"token": "YOUR_BOT_TOKEN", "admin_chat_ids": [1]}, "web": {"auth_token": "x"}}}
-    with patch("comms.web.app._daemon_ref", initialize_daemon), \
-         patch("comms.web.app._setup_token", "tok"):
+    with patch("claude_works.web.app._daemon_ref", initialize_daemon), \
+         patch("claude_works.web.app._setup_token", "tok"):
         async with client as c:
             r = await c.post("/api/setup/save", json=body, headers={"X-Setup-Token": "tok"})
     assert r.status_code == 400
@@ -165,8 +165,8 @@ async def test_save_setup_400_placeholder_telegram_token(client, initialize_daem
 @pytest.mark.asyncio
 async def test_save_setup_400_missing_auth_token(client, initialize_daemon):
     body = {"config": {"telegram": {"token": "bot:ABC", "admin_chat_ids": [1]}, "web": {}}}
-    with patch("comms.web.app._daemon_ref", initialize_daemon), \
-         patch("comms.web.app._setup_token", "tok"):
+    with patch("claude_works.web.app._daemon_ref", initialize_daemon), \
+         patch("claude_works.web.app._setup_token", "tok"):
         async with client as c:
             r = await c.post("/api/setup/save", json=body, headers={"X-Setup-Token": "tok"})
     assert r.status_code == 400
@@ -176,8 +176,8 @@ async def test_save_setup_400_missing_auth_token(client, initialize_daemon):
 @pytest.mark.asyncio
 async def test_save_setup_400_missing_admin_ids(client, initialize_daemon):
     body = {"config": {"telegram": {"token": "bot:ABC"}, "web": {"auth_token": "x"}}}
-    with patch("comms.web.app._daemon_ref", initialize_daemon), \
-         patch("comms.web.app._setup_token", "tok"):
+    with patch("claude_works.web.app._daemon_ref", initialize_daemon), \
+         patch("claude_works.web.app._setup_token", "tok"):
         async with client as c:
             r = await c.post("/api/setup/save", json=body, headers={"X-Setup-Token": "tok"})
     assert r.status_code == 400
@@ -193,9 +193,9 @@ async def test_save_setup_happy_path(client, initialize_daemon):
     conn = await _make_conn()
     mock_init = AsyncMock(return_value=conn)
 
-    with patch("comms.web.app._daemon_ref", initialize_daemon), \
-         patch("comms.web.app._setup_token", "tok"), \
-         patch("comms.web.app.db.init", mock_init):
+    with patch("claude_works.web.app._daemon_ref", initialize_daemon), \
+         patch("claude_works.web.app._setup_token", "tok"), \
+         patch("claude_works.web.app.db.init", mock_init):
         async with client as c:
             r = await c.post("/api/setup/save", json=_valid_cfg, headers={"X-Setup-Token": "tok"})
 
@@ -206,14 +206,14 @@ async def test_save_setup_happy_path(client, initialize_daemon):
 
 @pytest.mark.asyncio
 async def test_save_setup_invalidates_token(client, initialize_daemon):
-    import comms.web.app as web_app
+    import claude_works.web.app as web_app
 
     conn = await _make_conn()
     mock_init = AsyncMock(return_value=conn)
 
-    with patch("comms.web.app._daemon_ref", initialize_daemon), \
-         patch("comms.web.app._setup_token", "tok"), \
-         patch("comms.web.app.db.init", mock_init):
+    with patch("claude_works.web.app._daemon_ref", initialize_daemon), \
+         patch("claude_works.web.app._setup_token", "tok"), \
+         patch("claude_works.web.app.db.init", mock_init):
         async with client as c:
             await c.post("/api/setup/save", json=_valid_cfg, headers={"X-Setup-Token": "tok"})
         assert web_app._setup_token is None

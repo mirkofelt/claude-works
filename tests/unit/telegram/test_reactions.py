@@ -1,4 +1,4 @@
-from comms.telegram.reactions import resolve_action, extract_reaction_emoji
+from claude_works.telegram.reactions import resolve_action, extract_reaction_emoji
 
 
 def test_resolve_default_thumbsup():

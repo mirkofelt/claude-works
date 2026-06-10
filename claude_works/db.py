@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 def _db_path() -> str:
-    return os.environ.get("DB_FILE", "/data/comms.db")
+    return os.environ.get("DB_FILE", "/data/claude-works.db")
 
 
 def _config_db_path() -> str:

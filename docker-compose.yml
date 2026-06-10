@@ -1,10 +1,10 @@
 services:
-  comms:
+  claude-works:
     build: .
-    container_name: comms
+    container_name: claude-works
     restart: unless-stopped
     volumes:
-      - comms-data:/data
+      - claude-works-data:/data
     ports:
       - "8080:8080"
     environment:
@@ -12,4 +12,4 @@ services:
       - LOG_LEVEL=INFO
 
 volumes:
-  comms-data:
+  claude-works-data:

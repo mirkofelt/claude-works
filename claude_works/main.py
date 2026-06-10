@@ -30,7 +30,7 @@ from .logging_setup import setup as _setup_logging, uvicorn_log_config as _uvico
 logger = logging.getLogger(__name__)
 
 TYPING_INTERVAL = 4.0
-PID_FILE = "/data/comms.pid"
+PID_FILE = "/data/claude-works.pid"
 
 
 class CommsDaemon:

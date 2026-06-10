@@ -1,6 +1,6 @@
-# Comms
+# Claude Works
 
-Non-blocking, multi-agent Telegram communication system. Standalone Docker container.
+Claude Works — non-blocking, multi-agent Telegram communication system. Standalone Docker container.
 
 ## Features
 
@@ -20,7 +20,7 @@ Non-blocking, multi-agent Telegram communication system. Standalone Docker conta
 - **Setup wizard** — INITIALIZE mode: Web UI setup overlay with single-use token; no API calls during setup
 - **Supervisor process** — health-check loop, auto-restart with backoff, Telegram alert on failure
 - **Structured logging** — rotating log file, uvicorn integrated
-- **Split DB** — config (`config.db`) separate from operational data (`comms.db`)
+- **Split DB** — config (`config.db`) separate from operational data (`claude-works.db`)
 
 ## Quick Start
 
@@ -42,7 +42,7 @@ Key sections: `telegram`, `llm`, `agents`, `web`, `users`, `supervisor`, `securi
 
 Environment variables:
 - `SETTINGS_FILE` — path to settings.json (default: `/data/settings.json`)
-- `DB_FILE` — path to operational DB (default: `/data/comms.db`)
+- `DB_FILE` — path to operational DB (default: `/data/claude-works.db`)
 - `CONFIG_DB_FILE` — path to config DB (default: `/data/config.db`)
 
 ## /data layout
@@ -53,10 +53,10 @@ Everything user-owned lives under `/data`. The container image is read-only; no 
 /data/
 ├── settings.json          # main config (required)
 ├── config.db              # daemon config DB (auto-created)
-├── comms.db               # operational DB (auto-created)
+├── claude-works.db               # operational DB (auto-created)
 ├── persona.txt            # optional: ChiefAgent persona
 ├── logs/
-│   ├── comms.log          # rotating application log
+│   ├── claude-works.log          # rotating application log
 │   └── init.log           # container startup log (see below)
 ├── requirements.local.txt # optional: extra pip packages, installed at each startup
 └── init.sh                # optional: custom shell commands run at each startup
@@ -82,5 +82,5 @@ See `docs/architecture.md` for full module breakdown and data flow.
 ```bash
 pip install -r requirements.txt
 pytest
-python -m comms.main
+python -m claude_works.main
 ```
