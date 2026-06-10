@@ -5,6 +5,8 @@ import re
 import urllib.parse
 from .tasks.transcriber import transcribe as _transcribe_audio
 from .tasks.tts import synthesize as _synthesize_tts
+from .tasks.email import send_email as _send_email, read_emails as _read_emails
+from .tasks.github import github_api as _github_api
 import secrets
 import time
 import os
@@ -97,6 +99,51 @@ def _parse_buttons(text: str) -> "tuple[str, list[list[dict]] | None]":
         buttons.append({"text": label, "callback_data": data[:64]})
     rows = [buttons[i:i+3] for i in range(0, len(buttons), 3)]
     return clean.strip(), rows
+
+
+def _extract_send_email_tag(text: str) -> "tuple[str, tuple[str, str, str] | None]":
+    """Extract [SEND_EMAIL: to | subject | body]. Returns (clean_text, (to, subject, body) or None)."""
+    m = re.search(r'\[SEND_EMAIL:\s*([^\]]+)\]', text, re.DOTALL)
+    if not m:
+        return text, None
+    clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
+    parts = [p.strip() for p in m.group(1).split('|', 2)]
+    if len(parts) < 2:
+        return text, None
+    to = parts[0]
+    subject = parts[1]
+    body = parts[2] if len(parts) > 2 else ""
+    return clean, (to, subject, body)
+
+
+def _extract_read_email_tag(text: str) -> "tuple[str, tuple[str, int] | None]":
+    """Extract [READ_EMAIL: folder | count]. Returns (clean_text, (folder, count) or None)."""
+    m = re.search(r'\[READ_EMAIL:\s*([^\]]+)\]', text)
+    if not m:
+        return text, None
+    clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
+    parts = [p.strip() for p in m.group(1).split('|', 1)]
+    folder = parts[0] or "INBOX"
+    try:
+        count = int(parts[1]) if len(parts) > 1 else 5
+    except ValueError:
+        count = 5
+    return clean, (folder, min(count, 20))
+
+
+def _extract_github_api_tag(text: str) -> "tuple[str, tuple[str, str, str] | None]":
+    """Extract [GITHUB_API: METHOD | /endpoint | body]. Returns (clean_text, (method, endpoint, body) or None)."""
+    m = re.search(r'\[GITHUB_API:\s*([^\]]+)\]', text, re.DOTALL)
+    if not m:
+        return text, None
+    clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
+    parts = [p.strip() for p in m.group(1).split('|', 2)]
+    if len(parts) < 2:
+        return text, None
+    method = parts[0].upper()
+    endpoint = parts[1]
+    body = parts[2] if len(parts) > 2 else ""
+    return clean, (method, endpoint, body)
 
 
 _URL_RE = re.compile(r'https?://[^\s<>"\']+')
@@ -785,6 +832,9 @@ class Daemon:
             clean_result, keyboard = _parse_buttons(result)
             clean_result, tts_text = _extract_voice_tag(clean_result)
             clean_result, map_query = _extract_map_tag(clean_result)
+            clean_result, send_email_args = _extract_send_email_tag(clean_result)
+            clean_result, read_email_args = _extract_read_email_tag(clean_result)
+            clean_result, github_args = _extract_github_api_tag(clean_result)
             reply_markup = {"inline_keyboard": keyboard} if keyboard is not None else None
 
             if clean_result.strip():
@@ -830,6 +880,63 @@ class Daemon:
                         await self._api.send_message(task.chat_id, f"📍 {map_query} — nicht gefunden.")
                 except Exception as e:
                     logger.warning("Map geocoding failed for task=%d: %s", task.id, e)
+
+            if send_email_args:
+                to, subject, body = send_email_args
+                try:
+                    email_cfg = config.section("email")
+                    await _send_email(to, subject, body, email_cfg)
+                    await self._api.send_message(task.chat_id, f"✉️ E-Mail an {to} gesendet.")
+                except KeyError:
+                    logger.error("Email config missing — set email.smtp_host/user/password in settings.json")
+                    await self._api.send_message(task.chat_id, "E-Mail nicht gesendet: E-Mail-Konfiguration fehlt.")
+                except Exception as e:
+                    logger.warning("Email send failed for task=%d: %s", task.id, e)
+                    await self._api.send_message(task.chat_id, f"E-Mail-Versand fehlgeschlagen: {e}")
+
+            if read_email_args:
+                folder, count = read_email_args
+                try:
+                    email_cfg = config.section("email")
+                    emails = await _read_emails(folder, count, email_cfg)
+                    if emails:
+                        lines = [f"📬 {folder} — letzte {len(emails)} E-Mails:\n"]
+                        for i, m in enumerate(emails, 1):
+                            lines.append(f"{i}. **{m['subject']}**\nVon: {m['from']}\n{m['date']}\n")
+                        await self._api.send_message(task.chat_id, "\n".join(lines))
+                    else:
+                        await self._api.send_message(task.chat_id, f"📭 {folder} ist leer.")
+                except KeyError:
+                    logger.error("Email config missing — set email.imap_host/user/password in settings.json")
+                    await self._api.send_message(task.chat_id, "E-Mails nicht abrufbar: IMAP-Konfiguration fehlt.")
+                except Exception as e:
+                    logger.warning("Email read failed for task=%d: %s", task.id, e)
+                    await self._api.send_message(task.chat_id, f"E-Mail-Abruf fehlgeschlagen: {e}")
+
+            if github_args:
+                method, endpoint, body = github_args
+                is_write = method in ("POST", "PUT", "PATCH", "DELETE")
+                if is_write:
+                    gh_allowed = await self._security.check_action(
+                        "github_write", f"{method} {endpoint}", task_id=task.id, chat_id=task.chat_id, user_id=task.user_id
+                    )
+                    if not gh_allowed:
+                        logger.info("GitHub write blocked by security for task=%d", task.id)
+                        await self._api.send_message(task.chat_id, "GitHub-Schreibzugriff durch Security blockiert.")
+                        github_args = None
+                if github_args:
+                    try:
+                        github_cfg = config.section("github")
+                        result_data = await _github_api(method, endpoint, body or None, github_cfg)
+                        import json as _json
+                        result_preview = _json.dumps(result_data, ensure_ascii=False, indent=2)[:1200]
+                        await self._api.send_message(task.chat_id, f"GitHub `{method} {endpoint}`:\n```\n{result_preview}\n```")
+                    except KeyError:
+                        logger.error("GitHub config missing — set github.personal_access_token in settings.json")
+                        await self._api.send_message(task.chat_id, "GitHub-Zugriff fehlgeschlagen: Token fehlt.")
+                    except Exception as e:
+                        logger.warning("GitHub API failed for task=%d: %s", task.id, e)
+                        await self._api.send_message(task.chat_id, f"GitHub-Fehler: {e}")
 
             await self._conn.execute(
                 """INSERT INTO bot_messages (telegram_message_id, chat_id, task_id, text, sent_at)

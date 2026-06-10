@@ -116,5 +116,23 @@
   "elevenlabs": {
     "api_key": "YOUR_ELEVENLABS_API_KEY",
     "voice_id": "YOUR_VOICE_ID"
+  },
+  "email": {
+    "_comment_smtp": "SMTP for sending. Proton Mail: smtp.protonmail.ch:587 (STARTTLS) or Bridge at host:1025 (smtp_tls: false).",
+    "smtp_host": "YOUR_SMTP_HOST",
+    "smtp_port": 587,
+    "smtp_user": "YOUR_EMAIL_ADDRESS",
+    "smtp_password": "YOUR_SMTP_PASSWORD",
+    "smtp_tls": true,
+    "from_address": "YOUR_FROM_ADDRESS",
+    "_comment_imap": "IMAP for reading. Proton Mail: imap.protonmail.ch:993 or Bridge at host:1143.",
+    "imap_host": "YOUR_IMAP_HOST",
+    "imap_port": 993,
+    "imap_user": "YOUR_EMAIL_ADDRESS",
+    "imap_password": "YOUR_IMAP_PASSWORD"
+  },
+  "github": {
+    "_comment": "Personal access token with repo scope for read; repo+write for mutations.",
+    "personal_access_token": "YOUR_GITHUB_PAT"
   }
 }
