@@ -48,6 +48,15 @@
     .setup-box h2 { font-size: 20px; margin-bottom: 4px; }
     .setup-box .sub { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
     .setup-section { border-top: 1px solid var(--border); margin-top: 20px; padding-top: 16px; }
+    details.cfg-section { border: 1px solid var(--border); border-radius: 6px; margin-bottom: 10px; }
+    details.cfg-section summary { padding: 12px 16px; cursor: pointer; font-size: 13px; font-weight: 600; list-style: none; display: flex; align-items: center; gap: 8px; user-select: none; }
+    details.cfg-section summary::before { content: '▶'; font-size: 10px; color: var(--muted); transition: transform .15s; }
+    details.cfg-section[open] summary::before { transform: rotate(90deg); }
+    details.cfg-section summary:hover { background: rgba(255,255,255,.03); border-radius: 6px; }
+    .cfg-body { padding: 16px; border-top: 1px solid var(--border); display: grid; grid-template-columns: 1fr 1fr; gap: 0 20px; }
+    .cfg-body .field { grid-column: span 1; }
+    .cfg-body .field.wide { grid-column: span 2; }
+    .cfg-body .field textarea { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 8px; border-radius: 4px; font-size: 12px; font-family: monospace; resize: vertical; box-sizing: border-box; }
     .setup-section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin-bottom: 14px; }
     .field { margin-bottom: 14px; }
     .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
@@ -544,7 +553,7 @@
 </div>
 
 <div class="section" id="tab-settings">
-  <div class="card" style="max-width:860px">
+  <div style="max-width:760px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
       <h2 style="margin:0;font-size:16px">Configuration</h2>
       <div style="display:flex;gap:8px;align-items:center">
@@ -553,11 +562,133 @@
         <button class="btn" onclick="saveSettings()">Save & Apply</button>
       </div>
     </div>
-    <textarea id="settingsEditor"
-      style="width:100%;min-height:600px;background:#0d1117;border:1px solid var(--border);color:#e6edf3;border-radius:4px;padding:14px;font-family:monospace;font-size:13px;line-height:1.6;resize:vertical;box-sizing:border-box"
-      spellcheck="false"></textarea>
-    <div style="margin-top:8px;font-size:11px;color:var(--muted)">
-      Changes apply immediately without restart. Reload page if auth token changes.
+
+    <details class="cfg-section" open>
+      <summary>Telegram</summary>
+      <div class="cfg-body">
+        <div class="field"><label>Bot Token</label><input type="password" id="s_tg_token" placeholder="123456:ABC..."></div>
+        <div class="field"><label>Admin Chat IDs</label><input type="text" id="s_tg_admin_ids" placeholder="123456789, 987654321"><div class="hint">Comma-separated</div></div>
+        <div class="field wide"><label>Reaction Map (JSON)</label><textarea id="s_tg_reaction_map" rows="3"></textarea></div>
+      </div>
+    </details>
+
+    <details class="cfg-section">
+      <summary>AI Provider</summary>
+      <div class="cfg-body">
+        <div class="field"><label>Provider</label><select id="s_llm_provider"><option value="api">api (key)</option><option value="cli">cli (subscription)</option></select></div>
+        <div class="field"><label>API Key</label><input type="password" id="s_llm_api_key"></div>
+        <div class="field"><label>CLI Binary</label><input type="text" id="s_llm_cli_binary" placeholder="/usr/local/bin/claude"></div>
+        <div class="field"><label>Default Model</label><input type="text" id="s_llm_model" placeholder="claude-sonnet-4-6"></div>
+        <div class="field"><label>Max Tokens</label><input type="number" id="s_llm_max_tokens"></div>
+        <div class="field"><label>Max Context Tokens</label><input type="number" id="s_llm_max_ctx"></div>
+        <div class="field"><label>Context Warn Threshold</label><input type="number" id="s_llm_ctx_warn" step="0.01" min="0" max="1"></div>
+        <div class="field"><label>Context Compact Threshold</label><input type="number" id="s_llm_ctx_compact" step="0.01" min="0" max="1"></div>
+      </div>
+    </details>
+
+    <details class="cfg-section">
+      <summary>Agents</summary>
+      <div class="cfg-body">
+        <div class="field"><label>Max Parallel</label><input type="number" id="s_ag_parallel"></div>
+        <div class="field"><label>Task Timeout (s)</label><input type="number" id="s_ag_task_timeout"></div>
+        <div class="field"><label>PO Timeout (s)</label><input type="number" id="s_ag_po_timeout"></div>
+        <div class="field"><label>Max Retries</label><input type="number" id="s_ag_retries"></div>
+        <div class="field wide"><label>Model Tiers (JSON)</label><textarea id="s_ag_tiers" rows="3"></textarea><div class="hint">{"fast":"...", "balanced":"...", "best":"..."}</div></div>
+        <div class="field wide"><label>Per-Agent Models (JSON)</label><textarea id="s_ag_models" rows="6"></textarea></div>
+      </div>
+    </details>
+
+    <details class="cfg-section">
+      <summary>Web UI</summary>
+      <div class="cfg-body">
+        <div class="field"><label>Auth Token</label><input type="password" id="s_web_token"></div>
+        <div class="field"><label>Port</label><input type="number" id="s_web_port"></div>
+        <div class="field"><label>Host</label><input type="text" id="s_web_host" placeholder="0.0.0.0"></div>
+        <div class="field"><label>Trusted Proxy</label><select id="s_web_proxy"><option value="false">false</option><option value="true">true (CF/nginx)</option></select></div>
+      </div>
+    </details>
+
+    <details class="cfg-section">
+      <summary>Security</summary>
+      <div class="cfg-body">
+        <div class="field"><label>Enabled</label><select id="s_sec_enabled"><option value="false">false</option><option value="true">true</option></select></div>
+        <div class="field"><label>Approval Timeout (s)</label><input type="number" id="s_sec_timeout"></div>
+        <div class="field wide"><label>Rules (JSON array)</label><textarea id="s_sec_rules" rows="5"></textarea></div>
+      </div>
+    </details>
+
+    <details class="cfg-section">
+      <summary>Spending</summary>
+      <div class="cfg-body">
+        <div class="field"><label>Max Daily USD (blank=unlimited)</label><input type="number" id="s_sp_daily" step="0.01" placeholder="null"></div>
+        <div class="field"><label>Max Monthly USD</label><input type="number" id="s_sp_monthly" step="0.01" placeholder="null"></div>
+        <div class="field"><label>Per-User Daily USD</label><input type="number" id="s_sp_per_user" step="0.01" placeholder="null"></div>
+        <div class="field"><label>On Limit Exceeded</label><select id="s_sp_on_limit"><option value="reject">reject</option><option value="warn">warn</option></select></div>
+        <div class="field wide"><label>Model Pricing (JSON)</label><textarea id="s_sp_pricing" rows="5"></textarea></div>
+      </div>
+    </details>
+
+    <details class="cfg-section">
+      <summary>TTS & Voice (ElevenLabs)</summary>
+      <div class="cfg-body">
+        <div class="field"><label>Provider</label><select id="s_tts_provider"><option value="elevenlabs">elevenlabs</option><option value="gtts">gtts (offline)</option></select></div>
+        <div class="field"><label>API Key</label><input type="password" id="s_tts_key"><div class="hint">Also used for STT transcription</div></div>
+        <div class="field"><label>Voice ID</label><input type="text" id="s_tts_voice"></div>
+        <div class="field"><label>Model</label><input type="text" id="s_tts_model" placeholder="eleven_multilingual_v2"></div>
+      </div>
+    </details>
+
+    <details class="cfg-section">
+      <summary>Email</summary>
+      <div class="cfg-body">
+        <div class="field"><label>SMTP Host</label><input type="text" id="s_em_smtp_host"></div>
+        <div class="field"><label>SMTP Port</label><input type="number" id="s_em_smtp_port"></div>
+        <div class="field"><label>SMTP User</label><input type="text" id="s_em_smtp_user"></div>
+        <div class="field"><label>SMTP Password</label><input type="password" id="s_em_smtp_pw"></div>
+        <div class="field"><label>From Address</label><input type="text" id="s_em_from"></div>
+        <div class="field"><label>SMTP TLS</label><select id="s_em_tls"><option value="true">true</option><option value="false">false</option></select></div>
+        <div class="field"><label>IMAP Host</label><input type="text" id="s_em_imap_host"></div>
+        <div class="field"><label>IMAP Port</label><input type="number" id="s_em_imap_port"></div>
+        <div class="field"><label>IMAP User</label><input type="text" id="s_em_imap_user"></div>
+        <div class="field"><label>IMAP Password</label><input type="password" id="s_em_imap_pw"></div>
+      </div>
+    </details>
+
+    <details class="cfg-section">
+      <summary>GitHub</summary>
+      <div class="cfg-body">
+        <div class="field"><label>Token (GH_TOKEN)</label><input type="password" id="s_gh_token"></div>
+        <div class="field"><label>gh Binary</label><input type="text" id="s_gh_binary" placeholder="gh"></div>
+      </div>
+    </details>
+
+    <details class="cfg-section">
+      <summary>Supervisor</summary>
+      <div class="cfg-body">
+        <div class="field"><label>Health Check Interval (s)</label><input type="number" id="s_sv_health"></div>
+        <div class="field"><label>Max Restart Attempts</label><input type="number" id="s_sv_restarts"></div>
+        <div class="field wide"><label>Restart Backoff (JSON array, e.g. [5,15,60])</label><input type="text" id="s_sv_backoff"></div>
+      </div>
+    </details>
+
+    <details class="cfg-section">
+      <summary>Logging</summary>
+      <div class="cfg-body">
+        <div class="field"><label>Log Directory</label><input type="text" id="s_log_dir" placeholder="/data/logs"></div>
+        <div class="field"><label>Log Level</label><select id="s_log_level"><option>DEBUG</option><option>INFO</option><option>WARNING</option><option>ERROR</option></select></div>
+      </div>
+    </details>
+
+    <details class="cfg-section">
+      <summary>MCP</summary>
+      <div class="cfg-body">
+        <div class="field"><label>Enabled</label><select id="s_mcp_enabled"><option value="false">false</option><option value="true">true</option></select></div>
+        <div class="field wide"><label>Servers (JSON array)</label><textarea id="s_mcp_servers" rows="5"></textarea></div>
+      </div>
+    </details>
+
+    <div style="margin-top:12px;font-size:11px;color:var(--muted)">
+      Changes apply immediately. Reload page if auth token or port changes.
     </div>
   </div>
 </div>
@@ -1271,42 +1402,92 @@ async function deleteKnowledge(id) {
   loadKnowledge();
 }
 
+function _sv(id) { const e = document.getElementById(id); return e ? e.value.trim() : ''; }
+function _sn(id) { const v = _sv(id); return v === '' ? null : Number(v); }
+function _sb(id) { return _sv(id) === 'true'; }
+function _sj(id) { const v = _sv(id); try { return v ? JSON.parse(v) : null; } catch(e) { throw new Error(id + ': ' + e.message); } }
+function _sa(id) { return _sv(id).split(',').map(s=>parseInt(s.trim())).filter(n=>!isNaN(n)); }
+function _set(id, v) { const e = document.getElementById(id); if (e && v != null) e.value = v; }
+function _setj(id, v) { _set(id, v != null ? JSON.stringify(v, null, 2) : ''); }
+function _setb(id, v) { const e = document.getElementById(id); if (e) e.value = v ? 'true' : 'false'; }
+
 async function loadSettings() {
-  const ta = document.getElementById('settingsEditor');
   const msg = document.getElementById('settingsMsg');
   try {
     const data = await api('/api/config');
-    ta.value = JSON.stringify(data.config, null, 2);
+    const c = data.config;
+    const tg = c.telegram || {}, llm = c.llm || {}, ag = c.agents || {};
+    const web = c.web || {}, sec = c.security || {}, sp = c.spending || {};
+    const tts = c.tts || {}, em = c.email || {}, gh = c.github || {};
+    const sv = c.supervisor || {}, log = c.logging || {}, mcp = c.mcp || {};
+
+    _set('s_tg_token', tg.token); _set('s_tg_admin_ids', (tg.admin_chat_ids||[]).join(', '));
+    _setj('s_tg_reaction_map', tg.reaction_map || {});
+    _set('s_llm_provider', llm.provider); _set('s_llm_api_key', llm.api_key);
+    _set('s_llm_cli_binary', llm.cli_binary); _set('s_llm_model', llm.model);
+    _set('s_llm_max_tokens', llm.max_tokens); _set('s_llm_max_ctx', llm.max_context_tokens);
+    _set('s_llm_ctx_warn', llm.context_warn_threshold); _set('s_llm_ctx_compact', llm.context_compact_threshold);
+    _set('s_ag_parallel', ag.max_parallel); _set('s_ag_task_timeout', ag.task_timeout_seconds);
+    _set('s_ag_po_timeout', ag.po_timeout_seconds); _set('s_ag_retries', ag.max_retries);
+    _setj('s_ag_tiers', ag.model_tiers); _setj('s_ag_models', ag.models);
+    _set('s_web_token', web.auth_token); _set('s_web_port', web.port); _set('s_web_host', web.host);
+    _setb('s_web_proxy', web.trusted_proxy);
+    _setb('s_sec_enabled', sec.enabled); _set('s_sec_timeout', sec.pending_timeout_seconds);
+    _setj('s_sec_rules', sec.rules || []);
+    _set('s_sp_daily', sp.max_daily_usd); _set('s_sp_monthly', sp.max_monthly_usd);
+    _set('s_sp_per_user', sp.per_user_daily_usd); _set('s_sp_on_limit', sp.on_limit_exceeded || 'reject');
+    _setj('s_sp_pricing', sp.model_pricing || {});
+    _set('s_tts_provider', tts.provider || 'elevenlabs'); _set('s_tts_key', tts.elevenlabs_api_key);
+    _set('s_tts_voice', tts.elevenlabs_voice_id); _set('s_tts_model', tts.elevenlabs_model);
+    _set('s_em_smtp_host', em.smtp_host); _set('s_em_smtp_port', em.smtp_port);
+    _set('s_em_smtp_user', em.smtp_user); _set('s_em_smtp_pw', em.smtp_password);
+    _set('s_em_from', em.from_address); _setb('s_em_tls', em.smtp_tls !== false);
+    _set('s_em_imap_host', em.imap_host); _set('s_em_imap_port', em.imap_port);
+    _set('s_em_imap_user', em.imap_user); _set('s_em_imap_pw', em.imap_password);
+    _set('s_gh_token', gh.token); _set('s_gh_binary', gh.gh_binary || 'gh');
+    _set('s_sv_health', sv.health_check_interval); _set('s_sv_restarts', sv.max_restart_attempts);
+    _set('s_sv_backoff', JSON.stringify(sv.restart_backoff_seconds || []));
+    _set('s_log_dir', log.dir); _set('s_log_level', log.level || 'INFO');
+    _setb('s_mcp_enabled', mcp.enabled); _setj('s_mcp_servers', mcp.servers || []);
     msg.style.display = 'none';
   } catch (e) {
-    msg.textContent = 'Load failed: ' + e;
-    msg.style.color = 'var(--red)';
-    msg.style.display = 'inline';
+    msg.textContent = 'Load failed: ' + e; msg.style.color = 'var(--red)'; msg.style.display = 'inline';
   }
 }
 
 async function saveSettings() {
-  const ta = document.getElementById('settingsEditor');
   const msg = document.getElementById('settingsMsg');
   let cfg;
   try {
-    cfg = JSON.parse(ta.value);
+    const tiers = _sj('s_ag_tiers'), models = _sj('s_ag_models');
+    const secRules = _sj('s_sec_rules'), pricing = _sj('s_sp_pricing');
+    const reactionMap = _sj('s_tg_reaction_map'), mcpServers = _sj('s_mcp_servers');
+    const backoff = _sj('s_sv_backoff');
+    const adminIds = _sa('s_tg_admin_ids');
+    cfg = {
+      telegram: { token: _sv('s_tg_token'), admin_chat_ids: adminIds, allowed_updates: ['message','edited_message','message_reaction'], reaction_map: reactionMap || {} },
+      llm: { provider: _sv('s_llm_provider'), api_key: _sv('s_llm_api_key'), cli_binary: _sv('s_llm_cli_binary'), model: _sv('s_llm_model'), max_tokens: _sn('s_llm_max_tokens'), max_context_tokens: _sn('s_llm_max_ctx'), context_warn_threshold: _sn('s_llm_ctx_warn'), context_compact_threshold: _sn('s_llm_ctx_compact') },
+      agents: { max_parallel: _sn('s_ag_parallel'), task_timeout_seconds: _sn('s_ag_task_timeout'), po_timeout_seconds: _sn('s_ag_po_timeout'), max_retries: _sn('s_ag_retries'), model_tiers: tiers, models: models },
+      web: { auth_token: _sv('s_web_token'), port: _sn('s_web_port'), host: _sv('s_web_host') || '0.0.0.0', trusted_proxy: _sb('s_web_proxy') },
+      users: { default_role: 'blocked', admin_ids: adminIds },
+      security: { enabled: _sb('s_sec_enabled'), pending_timeout_seconds: _sn('s_sec_timeout'), rules: secRules || [] },
+      spending: { max_daily_usd: _sn('s_sp_daily'), max_monthly_usd: _sn('s_sp_monthly'), per_user_daily_usd: _sn('s_sp_per_user'), on_limit_exceeded: _sv('s_sp_on_limit') || 'reject', model_pricing: pricing || {} },
+      tts: { provider: _sv('s_tts_provider') || 'elevenlabs', elevenlabs_api_key: _sv('s_tts_key'), elevenlabs_voice_id: _sv('s_tts_voice'), elevenlabs_model: _sv('s_tts_model') || 'eleven_multilingual_v2' },
+      email: { smtp_host: _sv('s_em_smtp_host'), smtp_port: _sn('s_em_smtp_port'), smtp_user: _sv('s_em_smtp_user'), smtp_password: _sv('s_em_smtp_pw'), from_address: _sv('s_em_from'), smtp_tls: _sb('s_em_tls'), imap_host: _sv('s_em_imap_host'), imap_port: _sn('s_em_imap_port'), imap_user: _sv('s_em_imap_user'), imap_password: _sv('s_em_imap_pw') },
+      github: { token: _sv('s_gh_token'), gh_binary: _sv('s_gh_binary') || 'gh' },
+      supervisor: { health_check_interval: _sn('s_sv_health'), max_restart_attempts: _sn('s_sv_restarts'), restart_backoff_seconds: backoff || [5,15,60] },
+      logging: { dir: _sv('s_log_dir') || '/data/logs', level: _sv('s_log_level') || 'INFO' },
+      mcp: { enabled: _sb('s_mcp_enabled'), servers: mcpServers || [] },
+    };
   } catch (e) {
-    msg.textContent = 'Invalid JSON: ' + e.message;
-    msg.style.color = 'var(--red)';
-    msg.style.display = 'inline';
-    return;
+    msg.textContent = 'Invalid JSON: ' + e.message; msg.style.color = 'var(--red)'; msg.style.display = 'inline'; return;
   }
   try {
     await api('/api/config/save', { method: 'POST', body: { config: cfg } });
-    msg.textContent = 'Saved ✓';
-    msg.style.color = 'var(--green)';
-    msg.style.display = 'inline';
+    msg.textContent = 'Saved ✓'; msg.style.color = 'var(--green)'; msg.style.display = 'inline';
     setTimeout(() => { msg.style.display = 'none'; }, 3000);
   } catch (e) {
-    msg.textContent = 'Save failed: ' + e;
-    msg.style.color = 'var(--red)';
-    msg.style.display = 'inline';
+    msg.textContent = 'Save failed: ' + e; msg.style.color = 'var(--red)'; msg.style.display = 'inline';
   }
 }
 </script>
