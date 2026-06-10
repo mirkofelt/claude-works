@@ -147,11 +147,15 @@ class CliProvider(LLMProvider):
             "--model", model,
             "--system-prompt", full_system,
         ]
+        import os
+        projects_dir = os.environ.get("PROJECTS_DIR", "/data/projects")
+        os.makedirs(projects_dir, exist_ok=True)
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            cwd=projects_dir,
         )
         stdout, stderr = await proc.communicate(input=user_msg.encode())
 
