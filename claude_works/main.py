@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 import secrets
 import time
 import os
@@ -34,11 +35,32 @@ TYPING_INTERVAL = 4.0
 PID_FILE = "/data/claude-works.pid"
 
 
+def _md_to_telegram_html(text: str) -> str:
+    """Convert Markdown subset to Telegram HTML. Escapes & < > in text nodes."""
+    def esc(s: str) -> str:
+        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    parts = re.split(r"```(?:[^\n`]*)\n?([\s\S]*?)```", text)
+    result = []
+    for i, part in enumerate(parts):
+        if i % 2 == 1:
+            result.append(f"<pre>{esc(part.strip())}</pre>")
+        else:
+            segs = re.split(r"`([^`\n]+)`", part)
+            for j, seg in enumerate(segs):
+                if j % 2 == 1:
+                    result.append(f"<code>{esc(seg)}</code>")
+                else:
+                    s = esc(seg)
+                    s = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", s, flags=re.DOTALL)
+                    result.append(s)
+    return "".join(result)
+
+
 def _parse_buttons(text: str) -> "tuple[str, list[list[dict]] | None]":
     """Extract [BUTTONS: ...] tag from text. Returns (clean_text, inline_keyboard or None).
     Format: [BUTTONS: label1|data1, label2|data2, ...]
     Buttons are laid out in rows of max 3."""
-    import re
     m = re.search(r'\[BUTTONS:\s*([^\]]+)\]', text)
     if not m:
         return text, None
@@ -628,7 +650,12 @@ class Daemon:
                 return
             clean_result, keyboard = _parse_buttons(result)
             reply_markup = {"inline_keyboard": keyboard} if keyboard is not None else None
-            sent = await self._api.send_message(task.chat_id, clean_result, reply_markup=reply_markup)
+            html_result = _md_to_telegram_html(clean_result)
+            try:
+                sent = await self._api.send_message(task.chat_id, html_result, parse_mode="HTML", reply_markup=reply_markup)
+            except Exception:
+                logger.warning("HTML send failed for task=%d, retrying as plain text", task.id)
+                sent = await self._api.send_message(task.chat_id, clean_result, reply_markup=reply_markup)
             await self._conn.execute(
                 """INSERT INTO bot_messages (telegram_message_id, chat_id, task_id, text, sent_at)
                    VALUES (?, ?, ?, ?, ?)""",

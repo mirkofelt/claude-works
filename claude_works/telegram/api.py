@@ -50,7 +50,7 @@ class TelegramAPI:
         self,
         chat_id: int,
         text: str,
-        parse_mode: str | None = "Markdown",
+        parse_mode: str | None = None,
         reply_to_message_id: int | None = None,
         reply_markup: dict | None = None,
     ) -> dict[str, Any]:
