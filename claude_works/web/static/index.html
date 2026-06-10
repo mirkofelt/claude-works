@@ -217,6 +217,11 @@
         <label>API Key</label>
         <input type="password" id="cfgApiKey" >
       </div>
+      <div class="field" id="cliBinaryField" style="display:none">
+        <label>CLI Binary Path</label>
+        <input type="text" id="cfgCliBinary" value="/usr/local/bin/claude">
+        <div class="hint">Absolute path to the claude binary inside the container.</div>
+      </div>
     </div>
 
     <div class="setup-section">
@@ -845,6 +850,7 @@ async function checkSetupMode() {
 function toggleApiKey() {
   const p = document.getElementById('cfgProvider').value;
   document.getElementById('apiKeyField').style.display = p === 'api' ? 'block' : 'none';
+  document.getElementById('cliBinaryField').style.display = p === 'cli' ? 'block' : 'none';
 }
 
 function genWebToken() {
@@ -863,6 +869,7 @@ async function doSetup() {
   const adminRaw = document.getElementById('cfgAdminIds').value.trim();
   const provider = document.getElementById('cfgProvider').value;
   const apiKey = document.getElementById('cfgApiKey').value.trim();
+  const cliBinary = document.getElementById('cfgCliBinary').value.trim();
   const webToken = document.getElementById('cfgWebToken').value.trim();
 
   if (!setupToken) { showSetupErr('Setup token required — check server logs.'); return; }
@@ -870,13 +877,14 @@ async function doSetup() {
   if (!adminRaw) { showSetupErr('At least one admin chat ID required.'); return; }
   if (!webToken) { showSetupErr('Web auth token required.'); return; }
   if (provider === 'api' && !apiKey) { showSetupErr('API key required.'); return; }
+  if (provider === 'cli' && !cliBinary) { showSetupErr('CLI binary path required.'); return; }
 
   const adminIds = adminRaw.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
   if (!adminIds.length) { showSetupErr('Invalid admin chat IDs — enter numeric Telegram IDs.'); return; }
 
   const cfg = {
     telegram: { token: tgToken, admin_chat_ids: adminIds, allowed_updates: ['message', 'edited_message', 'message_reaction'], reaction_map: {} },
-    llm: { provider, api_key: provider === 'api' ? apiKey : '', model: 'claude-sonnet-4-6', max_tokens: 8192, max_context_tokens: 150000, context_warn_threshold: 0.8, context_compact_threshold: 0.9, usage_poll_interval_seconds: 300 },
+    llm: { provider, api_key: provider === 'api' ? apiKey : '', cli_binary: provider === 'cli' ? cliBinary : '', model: 'claude-sonnet-4-6', max_tokens: 8192, max_context_tokens: 150000, context_warn_threshold: 0.8, context_compact_threshold: 0.9, usage_poll_interval_seconds: 300 },
     web: { port: 8080, host: '0.0.0.0', auth_token: webToken },
     users: { default_role: 'blocked', admin_ids: adminIds },
     agents: { max_parallel: 4, task_timeout_seconds: 600, po_timeout_seconds: 3600, max_retries: 3, model_tiers: { fast: 'claude-haiku-4-5-20251001', balanced: 'claude-sonnet-4-6', best: 'claude-opus-4-8' }, models: { default: 'balanced', controller: 'fast', chief: 'balanced', po: 'balanced', generalist: 'balanced', researcher: 'balanced', memory: 'fast', compactor: 'fast', mechanic: 'balanced', coder: { default: 'balanced', architect: 'balanced', developer: 'balanced', tester: 'fast', qa: 'balanced' } } },
