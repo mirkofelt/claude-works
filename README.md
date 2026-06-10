@@ -96,22 +96,19 @@ knowledge/01_persona.md
 knowledge/02_user_profile.md
   — User profile: person, job, family, contacts, tech stack, communication preferences.
 
-knowledge/03_finances.md (if known)
-  — Financial situation: income, expenses, debts, assets, FIRE goals.
-
-knowledge/04_projects.md
+knowledge/03_projects.md
   — Active projects: descriptions, status, priorities, technical details, architecture.
 
-knowledge/05_properties.md (if known)
+knowledge/04_properties.md (if known)
   — Real estate: construction details, costs, open invoices, contractors.
 
-knowledge/06_travel.md (if known)
+knowledge/05_travel.md (if known)
   — Planned trips: booking status, dates, deadlines, itineraries.
 
-knowledge/07_rules.md
+knowledge/06_rules.md
   — Behavioral feedback: what to do, what to avoid, trust levels, system quirks.
 
-knowledge/08_*.md
+knowledge/07_*.md
   — Any additional topics from memory (business ideas, health, subscriptions, etc.)
 
 Format rules:
@@ -132,12 +129,11 @@ Replace all YOUR_* placeholders — leave them as-is if unknown.
 /data/knowledge/
   01_persona.md
   02_user_profile.md
-  03_finances.md
-  04_projects.md
-  05_properties.md
-  06_travel.md
-  07_rules.md
-  08_*.md         ← any additional topics
+  03_projects.md
+  04_properties.md
+  05_travel.md
+  06_rules.md
+  07_*.md         ← any additional topics
 ```
 
 ---
