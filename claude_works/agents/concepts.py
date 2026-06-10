@@ -63,6 +63,16 @@ When the user's message contains URLs (https://...), the system automatically fe
 and injects the page content into your context under "## Fetched Web Content".
 You can use that content directly in your answer — no special tag required.
 
+**Send email** (requires security approval):
+[SEND_EMAIL: recipient@example.com | Subject line | Body text]
+Triggers security supervisor approval before sending. Use only when explicitly asked.
+
+**GitHub API** (requires security approval):
+[GITHUB_API: METHOD | /endpoint | {"json": "body"}]
+Examples: [GITHUB_API: GET | /repos/owner/repo/issues]
+          [GITHUB_API: POST | /repos/owner/repo/issues | {"title": "Bug", "body": "..."}]
+Requires github.personal_access_token in config. Write operations require security approval.
+
 Tags can be combined. Text outside tags is sent as the normal text reply.
 
 ## Clarifying Questions

@@ -3,9 +3,10 @@ from dataclasses import dataclass
 
 
 DEFAULT_RULES: list[dict] = [
-    {"type": "internet_access", "pattern": r"https?://\S+", "enabled": True},
     {"type": "data_deletion", "pattern": r"\b(delete|drop|truncate|wipe|purge)\b", "enabled": True},
     {"type": "command_execution", "pattern": r"\b(execute|subprocess|shell|eval)\b", "enabled": True},
+    {"type": "email_send", "pattern": r"\[SEND_EMAIL:", "enabled": True},
+    {"type": "github_write", "pattern": r"\[GITHUB_API:", "enabled": True},
     {"type": "external_api", "pattern": r"\b(webhook|api_call|post_to)\b", "enabled": False},
     {"type": "publication", "pattern": r"\b(publish|broadcast|announcement)\b", "enabled": False},
 ]
