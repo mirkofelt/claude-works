@@ -141,9 +141,12 @@
 <body>
 
 <header>
-  <img src="icon.png" alt="">
-  <span>Claude Works</span>
+  <a href="index.html" style="display:flex;align-items:center;gap:.75rem;text-decoration:none;">
+    <img src="icon.png" alt="" style="width:32px;height:32px;border-radius:50%;">
+    <span style="font-weight:600;font-size:1.1rem;color:#e6edf3;">Claude Works</span>
+  </a>
   <nav>
+    <a href="index.html">Home</a>
     <a href="setup.html">Setup</a>
     <a href="architecture.html">Architecture</a>
     <a href="requirements.html">Requirements</a>
@@ -176,11 +179,11 @@
   </div>
   <div class="feature">
     <h3>Web UI dashboard</h3>
-    <p>Dark dashboard on port 8080. Eight tabs: Tasks, Messages, Users, Memory, Approvals, Kanban, Tokens, Logs.</p>
+    <p>Dark dashboard on port 8080. Nine tabs: Tasks, Messages, Users, Memory, Approvals, Kanban, Tokens, Logs, Knowledge.</p>
   </div>
   <div class="feature">
     <h3>Setup wizard</h3>
-    <p>INITIALIZE mode on first boot. Web UI setup overlay with single-use token. No file editing required.</p>
+    <p>INITIALIZE mode on first boot. Clean gate page (logo + one-time token) → config form. All settings in <code>config.db</code>. No file editing required.</p>
   </div>
   <div class="feature">
     <h3>Self-healing supervisor</h3>
@@ -207,8 +210,9 @@ cd claude-works
 docker compose up -d</pre>
   <p class="note">
     On first start the daemon enters <strong>INITIALIZE</strong> mode.
-    Open <code>http://localhost:8080</code>, enter the one-time setup token printed to stdout,
-    and fill in the configuration form. All settings are stored in <code>config.db</code>.
+    Open <code>http://localhost:8080</code> — a clean setup page appears.
+    Enter the one-time token from stdout, fill in the config form, and save.
+    All settings are stored in <code>config.db</code>. No files to edit.
   </p>
 </div>
 

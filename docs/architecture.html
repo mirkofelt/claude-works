@@ -152,12 +152,10 @@ class ModeManager:
     def as_dict(self) -&gt; dict: ...
 
 async def detect_startup_mode() -&gt; tuple[DaemonMode, str | None]:
-    # 1. db.init_config() → load daemon_config row → _config_valid() → RUN (config DB takes priority)
-    # 2. config.load() (settings.json) — FileNotFoundError → INITIALIZE
-    # 3. _config_valid() fails on file config → INITIALIZE
-    # 4. db.init() (data DB) + DB exists → MIGRATE (schema mismatch; data DB separate from config DB)
-    # 5. no valid config anywhere → INITIALIZE (fresh install)
-    # 6. all OK → RUN
+    # 1. db.init_config() → load daemon_config row → _config_valid() → RUN
+    # 2. config row missing or invalid → INITIALIZE (fresh install / reset)
+    # 3. db.init() (data DB) + schema mismatch → MIGRATE
+    # 4. all OK → RUN
 </code></pre>
 <hr />
 <h2>Module Breakdown</h2>
@@ -602,7 +600,7 @@ class MechanicAgent(BaseAgent):
 <tr>
 <td>POST</td>
 <td><code>/api/config/reload</code></td>
-<td>Reload settings.json from disk immediately</td>
+<td>Reload config from database immediately</td>
 </tr>
 <tr>
 <td>GET</td>
@@ -657,7 +655,7 @@ class MechanicAgent(BaseAgent):
 }
 </code></pre>
 <p>Bucket size: 3600s for ≤24h, 21600s for &gt;24h.</p>
-<p><strong>Web UI tabs:</strong> Tasks · Messages · Users · Memory · Approvals · Kanban · Tokens · Logs</p>
+<p><strong>Web UI tabs:</strong> Tasks · Messages · Users · Memory · Approvals · Kanban · Tokens · Logs · Knowledge</p>
 <h3><code>claude_works/config_store.py</code> — DB Config Store</h3>
 <p>Three async helpers for the <code>daemon_config</code> table:</p>
 <ul>
@@ -674,7 +672,6 @@ class MechanicAgent(BaseAgent):
 <h2>Data Storage</h2>
 <p>All user-owned state lives under <code>/data</code>. The container image is immutable; nothing user-specific is stored inside it.</p>
 <pre><code>/data/
-├── settings.json          # main config
 ├── config.db              # daemon config DB (CONFIG_DB_FILE override)
 ├── claude-works.db               # operational DB (DB_FILE override)
 ├── persona.md            # optional ChiefAgent persona
@@ -698,7 +695,7 @@ class MechanicAgent(BaseAgent):
 <tbody>
 <tr>
 <td><code>daemon_config</code></td>
-<td>Single-row config store (id=1, settings_json TEXT, updated_at); takes priority over settings.json on startup</td>
+<td>Single-row config store (id=1, settings_json TEXT, updated_at); sole config source — written by setup wizard, hot-reloaded every 5s</td>
 </tr>
 </tbody>
 </table>
@@ -759,7 +756,7 @@ class MechanicAgent(BaseAgent):
 </table>
 <p><strong>Indexes:</strong> <code>kanban_tasks(lane)</code>, <code>kanban_tasks(lane, agent_class)</code>, <code>kanban_tasks(user_id, lane)</code>, <code>token_usage(timestamp)</code>, <code>token_usage(agent_class, timestamp)</code>, <code>knowledge(type)</code>, <code>knowledge(user_id, updated_at)</code></p>
 <hr />
-<h2>Configuration (<code>settings.json</code>)</h2>
+<h2>Configuration (<code>config.db</code>)</h2>
 <pre><code class="language-json">{
   &quot;telegram&quot;:  { &quot;token&quot;, &quot;allowed_updates&quot;, &quot;admin_chat_ids&quot;, &quot;reaction_map&quot; },
   &quot;llm&quot;:       {
@@ -806,20 +803,20 @@ class MechanicAgent(BaseAgent):
 <p><code>llm.provider</code>: <code>"api"</code> (default). Values: <code>"api"</code> | <code>"cli"</code>.</p>
 <p><strong>Per-agent model selection</strong> (<code>agents.models</code> + <code>agents.model_tiers</code>): each agent class and CodeTeam stage resolves its model via <code>get_agent_model(agent_class, stage?)</code> in <code>config.py</code>.</p>
 <p>Lookup order:
-1. <code>agents.models.&lt;agent_class&gt;[.&lt;stage&gt;]</code> — explicit override in settings.json
+1. <code>agents.models.&lt;agent_class&gt;[.&lt;stage&gt;]</code> — explicit override in config.db
 2. <code>_AGENT_CLASS_TIERS</code> / <code>_CODER_STAGE_TIERS</code> — per-class tier assignment in code
-3. <code>agents.model_tiers.&lt;tier&gt;</code> — tier → model ID mapping in settings.json
+3. <code>agents.model_tiers.&lt;tier&gt;</code> — tier → model ID mapping in config.db
 4. <code>_TIER_DEFAULTS</code> — hardcoded tier fallbacks (fast/balanced/best)</p>
-<p><strong>Tier aliases</strong> (<code>fast</code> / <code>balanced</code> / <code>best</code>): model values at any level can be tier names or direct model IDs. Update <code>agents.model_tiers.best</code> in settings.json when a new top-tier model releases — all <code>best</code>-assigned agents upgrade automatically without code changes.</p>
+<p><strong>Tier aliases</strong> (<code>fast</code> / <code>balanced</code> / <code>best</code>): model values at any level can be tier names or direct model IDs. Update <code>agents.model_tiers.best</code> in config.db when a new top-tier model releases — all <code>best</code>-assigned agents upgrade automatically without code changes.</p>
 <pre><code class="language-json">&quot;model_tiers&quot;: {&quot;fast&quot;: &quot;...&quot;, &quot;balanced&quot;: &quot;...&quot;, &quot;best&quot;: &quot;&lt;new-model-id&gt;&quot;},
 &quot;models&quot;: {&quot;chief&quot;: &quot;best&quot;, &quot;controller&quot;: &quot;fast&quot;, &quot;coder&quot;: {&quot;tester&quot;: &quot;fast&quot;}}
 </code></pre>
 <p><code>coder</code> supports nested dict for stage-level overrides (architect/developer/tester/qa). All other classes take a string (tier alias or direct ID). No restart required.</p>
-<p>See <code>settings.example.json</code> for full structure with all fields and placeholders.</p>
-<p><strong>Hot-reload:</strong> Settings are watched automatically (mtime check every 5s). Any change to <code>settings.json</code> takes effect immediately — no restart required. Changes to agent models, spending limits, reaction map, security rules, etc. apply to the next API call after reload. Only startup-wired values (Telegram token, DB path, web port) require restart.</p>
-<p>Manual reload triggers:
-- Telegram command <code>/reload_config</code> (admin only)
-- <code>POST /api/config/reload</code> (Web API)</p>
+<p>See <code>settings.example.json</code> for field reference (actual config lives in <code>config.db</code> — written by setup wizard, never edited by hand).</p>
+<p><strong>Hot-reload:</strong> Daemon polls <code>config.db</code> every 5 seconds (<code>updated_at</code> comparison). Any change via the Web UI takes effect automatically — no restart required. Changes to agent models, spending limits, reaction map, security rules, etc. apply to the next API call after reload. Only startup-wired values (Telegram token, DB path, web port) require restart.</p>
+<p>Manual reload triggers:<br>
+– Telegram command <code>/reload_config</code> (admin only)<br>
+– <code>POST /api/config/reload</code> (Web API)</p>
 <hr />
 <h2>Message Flow</h2>
 <pre><code>Telegram → TelegramPoller._poll()

@@ -115,13 +115,13 @@ footer { border-top: 1px solid var(--border); padding: 1.5rem 2rem; text-align: 
 <ul>
 <li>Python, asyncio, no blocking I/O in main loop</li>
 <li>SQLite for persistence</li>
-<li>Settings from <code>settings.json</code> (no hardcoding)</li>
+<li>Settings stored in <code>config.db</code> (no hardcoding; written by setup wizard)</li>
 </ul>
 <h3>NF2 — Deployment</h3>
 <ul>
 <li>Runs as Docker container or standalone process</li>
-<li>Config via <code>settings.json</code>; env var <code>SETTINGS_FILE</code> overrides path</li>
-<li>Setup wizard in Web UI for first-run configuration (INITIALIZE mode)</li>
+<li>Config stored in <code>config.db</code>; env var <code>CONFIG_DB_FILE</code> overrides path</li>
+<li>Setup gate page (logo + one-time token) on first boot → config form → INITIALIZE → RUN</li>
 </ul>
 <h3>NF3 — Security</h3>
 <ul>
