@@ -225,5 +225,7 @@ def get_provider(cfg: dict) -> LLMProvider:
         binary = cfg.get("cli_binary", "")
         if not binary:
             raise ValueError("llm.cli_binary is required when provider is 'cli'")
+        if not re.match(r'^[a-zA-Z0-9_./-]+$', binary):
+            raise ValueError(f"llm.cli_binary contains invalid characters: {binary!r}")
         return CliProvider(cli_binary=binary)
     raise ValueError(f"Unknown LLM provider: {provider_type!r}")

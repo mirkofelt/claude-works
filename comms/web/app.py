@@ -1,4 +1,5 @@
 import hashlib
+import hmac
 import os
 from pathlib import Path
 from typing import Any
@@ -17,7 +18,13 @@ from ..mode import DaemonMode
 from ..logging_setup import log_path
 
 app = FastAPI(title="Comms", docs_url=None, redoc_url=None)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[],  # no cross-origin access; UI is served same-origin
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["X-Auth-Token", "Content-Type"],
+)
 
 _static_dir = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=_static_dir), name="static")
@@ -39,9 +46,11 @@ def set_setup_token(token: str) -> None:
 def _verify_token(request: Request) -> None:
     cfg = config.section("web")
     raw_token = cfg.get("auth_token", "")
+    if not raw_token:
+        raise HTTPException(status_code=503, detail="Auth not configured")
     expected = hashlib.sha256(raw_token.encode()).hexdigest()
-    token = request.headers.get("X-Auth-Token") or request.cookies.get("auth")
-    if token != expected:
+    token = request.headers.get("X-Auth-Token") or request.cookies.get("auth") or ""
+    if not hmac.compare_digest(token, expected):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 

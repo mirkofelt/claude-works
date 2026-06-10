@@ -92,10 +92,12 @@ class CommsDaemon:
         if mode == DaemonMode.INITIALIZE:
             setup_token = secrets.token_hex(16)
             _set_web_setup_token(setup_token)
-            logger.warning("=" * 60)
-            logger.warning("SETUP TOKEN: %s", setup_token)
-            logger.warning("Open the web UI and enter this token to configure.")
-            logger.warning("=" * 60)
+            # Print to stdout only — never to the log file (which is served via /api/logs)
+            print("=" * 60, flush=True)
+            print(f"SETUP TOKEN: {setup_token}", flush=True)
+            print("Open the web UI and enter this token to configure.", flush=True)
+            print("=" * 60, flush=True)
+            logger.info("Daemon in INITIALIZE mode — setup token printed to stdout")
             self._running = True
             asyncio.create_task(self._init_poll_loop(), name="init-poll")
             return
