@@ -23,10 +23,13 @@ if [ -f "$DATA_DIR/init.sh" ]; then
 fi
 
 # Start Tor daemon in background (provides SOCKS5 proxy at 127.0.0.1:9050)
+# --User root required because container runs as root
 if command -v tor >/dev/null 2>&1; then
     mkdir -p /var/lib/tor /run/tor
-    chown -R debian-tor:debian-tor /var/lib/tor /run/tor 2>/dev/null || true
-    tor --RunAsDaemon 1 --PidFile /run/tor/tor.pid --Log "warn stderr" >> "$LOG_DIR/tor.log" 2>&1 || \
+    tor --RunAsDaemon 1 --User root \
+        --DataDirectory /var/lib/tor \
+        --PidFile /run/tor/tor.pid \
+        --Log "warn file $LOG_DIR/tor.log" >> "$INIT_LOG" 2>&1 || \
         echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] tor failed to start (non-fatal)" >> "$INIT_LOG"
 fi
 
