@@ -1,5 +1,5 @@
 """
-Supervisor: starts and monitors the Comms daemon.
+Supervisor: starts and monitors the claude-works daemon.
 Lightweight — no business logic. Spawn, check health, restart on failure, alert on repeated failure.
 """
 import asyncio
@@ -77,7 +77,7 @@ class Supervisor:
             return 3
 
     def start_daemon(self) -> None:
-        logger.info("Starting Comms daemon (attempt %d)", self._restart_count + 1)
+        logger.info("Starting claude-works daemon (attempt %d)", self._restart_count + 1)
         self._proc = subprocess.Popen(
             DAEMON_CMD,
             env=os.environ.copy(),
@@ -102,7 +102,7 @@ class Supervisor:
                 self._restart_count += 1
 
                 if self._restart_count > self._max_restarts():
-                    msg = f"Comms daemon failed {self._restart_count} times. Manual intervention required."
+                    msg = f"claude-works daemon failed {self._restart_count} times. Manual intervention required."
                     logger.error(msg)
                     _send_telegram_alert(f"⛔ {msg}")
                     self._running = False
@@ -110,14 +110,14 @@ class Supervisor:
 
                 backoff = self._get_backoff()
                 logger.info("Restarting in %ds...", backoff)
-                _send_telegram_alert(f"⚠️ Comms daemon restarting (attempt {self._restart_count})")
+                _send_telegram_alert(f"⚠️ claude-works daemon restarting (attempt {self._restart_count})")
                 await asyncio.sleep(backoff)
                 self.start_daemon()
                 continue
 
             if not _check_health():
                 logger.warning("Health check failed — daemon may be stuck")
-                _send_telegram_alert("⚠️ Comms health check failed")
+                _send_telegram_alert("⚠️ claude-works health check failed")
 
         if self._proc and self._proc.poll() is None:
             self._proc.terminate()

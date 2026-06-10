@@ -527,4 +527,4 @@ async def index():
     if os.path.exists(index_path):
         with open(index_path) as f:
             return f.read()
-    return "<h1>Comms</h1><p>UI not built yet.</p>"
+    return "<h1>Claude Works</h1><p>UI not built yet.</p>"

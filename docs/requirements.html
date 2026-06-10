@@ -1,49 +1,32 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Requirements — Claude Works</title>
   <link rel="icon" type="image/png" href="icon.png">
   <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-:root {
-  --bg: #0d1117; --surface: #161b22; --border: #21262d;
-  --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff; --accent2: #79c0ff;
-}
-body { background: var(--bg); color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  line-height: 1.7; }
-a { color: var(--accent); text-decoration: none; }
-a:hover { text-decoration: underline; }
-header { border-bottom: 1px solid var(--border); padding: 1rem 2rem;
-  display: flex; align-items: center; gap: .75rem; }
+:root { --bg: #0d1117; --surface: #161b22; --border: #21262d; --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff; --accent2: #79c0ff; }
+body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; line-height: 1.7; }
+a { color: var(--accent); text-decoration: none; } a:hover { text-decoration: underline; }
+header { border-bottom: 1px solid var(--border); padding: 1rem 2rem; display: flex; align-items: center; gap: .75rem; }
 header nav { margin-left: auto; display: flex; gap: 1.5rem; font-size: .9rem; }
-header nav a { color: var(--muted); }
-header nav a:hover { color: var(--text); text-decoration: none; }
-header nav a.ext { color: var(--accent); }
+header nav a { color: var(--muted); } header nav a:hover { color: var(--text); text-decoration: none; } header nav a.ext { color: var(--accent); }
 .content { max-width: 860px; margin: 0 auto; padding: 3rem 2rem 5rem; }
 h1 { font-size: 2rem; font-weight: 700; margin-bottom: 1.5rem; letter-spacing: -.02em; }
-h2 { font-size: 1.35rem; font-weight: 600; margin: 2.5rem 0 .75rem;
-  padding-bottom: .4rem; border-bottom: 1px solid var(--border); }
+h2 { font-size: 1.35rem; font-weight: 600; margin: 2.5rem 0 .75rem; padding-bottom: .4rem; border-bottom: 1px solid var(--border); }
 h3 { font-size: 1.05rem; font-weight: 600; margin: 1.5rem 0 .5rem; color: var(--accent2); }
 h4 { font-size: .95rem; font-weight: 600; margin: 1.2rem 0 .4rem; color: var(--muted); }
-p { margin-bottom: .75rem; }
-ul, ol { margin: .5rem 0 .75rem 1.5rem; }
-li { margin-bottom: .25rem; }
-code { background: var(--surface); border: 1px solid var(--border);
-  border-radius: 4px; padding: .1em .4em; font-size: .875em; font-family: "SF Mono", Consolas, monospace; }
-pre { background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
-  padding: 1.25rem 1.5rem; overflow-x: auto; margin: 1rem 0; }
+p { margin-bottom: .75rem; } ul, ol { margin: .5rem 0 .75rem 1.5rem; } li { margin-bottom: .25rem; }
+code { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: .1em .4em; font-size: .875em; font-family: "SF Mono", Consolas, monospace; }
+pre { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem 1.5rem; overflow-x: auto; margin: 1rem 0; }
 pre code { background: none; border: none; padding: 0; font-size: .85rem; }
 table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .9rem; }
-th { background: var(--surface); padding: .6rem 1rem; text-align: left;
-  border: 1px solid var(--border); font-weight: 600; color: var(--muted); }
+th { background: var(--surface); padding: .6rem 1rem; text-align: left; border: 1px solid var(--border); font-weight: 600; color: var(--muted); }
 td { padding: .55rem 1rem; border: 1px solid var(--border); }
 tr:nth-child(even) td { background: rgba(255,255,255,.02); }
 hr { border: none; border-top: 1px solid var(--border); margin: 2rem 0; }
-footer { border-top: 1px solid var(--border); padding: 1.5rem 2rem;
-  text-align: center; font-size: .85rem; color: var(--muted); }
+footer { border-top: 1px solid var(--border); padding: 1.5rem 2rem; text-align: center; font-size: .85rem; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -63,9 +46,9 @@ footer { border-top: 1px solid var(--border); padding: 1.5rem 2rem;
 </header>
 
 <div class="content">
-<h1>Comms — Requirements</h1>
+<h1>Claude Works — Requirements</h1>
 <h2>Purpose</h2>
-<p>Comms is a personal AI assistant running as a self-hosted Docker container. It receives messages via Telegram, processes them through a multi-layer agent architecture, and responds. It is designed for autonomous operation with low operational overhead and predictable costs.</p>
+<p>Claude Works is a personal AI assistant running as a self-hosted Docker container. It receives messages via Telegram, processes them through a multi-layer agent architecture, and responds. It is designed for autonomous operation with low operational overhead and predictable costs.</p>
 <hr />
 <h2>Functional Requirements</h2>
 <h3>F1 — Communication</h3>

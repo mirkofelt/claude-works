@@ -1,10 +1,10 @@
-# Comms — Architecture
+# Claude Works — Architecture
 
 ## Process Structure
 
 ```
 supervisor/supervisor.py     ← watchdog process (separate)
-└── claude_works/main.py            ← CommsDaemon (mode state machine)
+└── claude_works/main.py            ← Daemon (mode state machine)
     ├── ModeManager           ← daemon mode lifecycle (STARTUP→INITIALIZE|MIGRATE|RUN↔REPAIR)
     ├── TelegramPoller        ← long-poll loop (RUN mode only)
     ├── AgentCoordinator      ← multi-layer agent orchestration (RUN mode only)
@@ -20,13 +20,13 @@ supervisor/supervisor.py     ← watchdog process (separate)
     └── uvicorn (FastAPI)     ← Web UI + REST API (available in ALL modes)
 ```
 
-The supervisor is optional. CommsDaemon runs standalone via `python -m claude_works.main`.
+The supervisor is optional. Daemon runs standalone via `python -m claude_works.main`.
 
 ---
 
 ## Daemon Modes
 
-CommsDaemon runs a state machine with five modes:
+Daemon runs a state machine with five modes:
 
 | Mode | Trigger | Web UI | Poller | Coordinator |
 |------|---------|--------|--------|-------------|
@@ -97,7 +97,7 @@ async def detect_startup_mode() -> tuple[DaemonMode, str | None]:
 
 ## Module Breakdown
 
-### `claude_works/main.py` — CommsDaemon
+### `claude_works/main.py` — Daemon
 
 Central coordinator. Owns all subsystems, wires them together.
 
@@ -236,7 +236,7 @@ Child tasks are inserted directly into `ASSIGNED` lane via `board.push_child()`,
 
 #### `mechanic.py` — MechanicAgent
 
-Handles `MechanicContext.MIGRATE` (schema/config migration) and `MechanicContext.REPAIR` (runtime error recovery). Invoked by CommsDaemon, not by AgentCoordinator.
+Handles `MechanicContext.MIGRATE` (schema/config migration) and `MechanicContext.REPAIR` (runtime error recovery). Invoked by Daemon, not by AgentCoordinator.
 
 ```python
 class MechanicContext(str, Enum):
@@ -386,7 +386,7 @@ Approval gating for critical agent outputs. Disabled by default (`security.enabl
 | `publication` | `\b(publish\|broadcast\|announcement)\b` | disabled |
 
 **Approval flow:**
-1. Agent produces result → `CommsDaemon._on_agent_result()` calls `security.check()`
+1. Agent produces result → `Daemon._on_agent_result()` calls `security.check()`
 2. Rules match → `PendingApproval` created, admins notified via Telegram
 3. Admin approves via `/approve N` (Telegram) or Web UI → `asyncio.Event` set
 4. Timeout (default 300s) → auto-deny
@@ -394,7 +394,7 @@ Approval gating for critical agent outputs. Disabled by default (`security.enabl
 
 ### `claude_works/web/`
 
-FastAPI app served by uvicorn (same process as CommsDaemon, separate asyncio task).
+FastAPI app served by uvicorn (same process as Daemon, separate asyncio task).
 
 **Auth:** `X-Auth-Token` header or `auth` cookie — SHA256 of `web.auth_token` from settings.
 
@@ -458,7 +458,7 @@ Three async helpers for the `daemon_config` table:
 
 ### `supervisor/supervisor.py`
 
-External watchdog process. Polls `/health` endpoint every N seconds. On failure: restart CommsDaemon with exponential backoff. After `max_restart_attempts` failures: Telegram alert to admins.
+External watchdog process. Polls `/health` endpoint every N seconds. On failure: restart Daemon with exponential backoff. After `max_restart_attempts` failures: Telegram alert to admins.
 
 ---
 
@@ -591,7 +591,7 @@ Manual reload triggers:
 
 ```
 Telegram → TelegramPoller._poll()
-         → CommsDaemon._on_update()
+         → Daemon._on_update()
          → _handle_message()
              → upsert_user / auth check
              → react 👀 (receipt)

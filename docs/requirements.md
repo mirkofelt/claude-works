@@ -1,8 +1,8 @@
-# Comms — Requirements
+# Claude Works — Requirements
 
 ## Purpose
 
-Comms is a personal AI assistant running as a self-hosted Docker container. It receives messages via Telegram, processes them through a multi-layer agent architecture, and responds. It is designed for autonomous operation with low operational overhead and predictable costs.
+Claude Works is a personal AI assistant running as a self-hosted Docker container. It receives messages via Telegram, processes them through a multi-layer agent architecture, and responds. It is designed for autonomous operation with low operational overhead and predictable costs.
 
 ---
 

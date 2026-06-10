@@ -33,7 +33,7 @@ TYPING_INTERVAL = 4.0
 PID_FILE = "/data/claude-works.pid"
 
 
-class CommsDaemon:
+class Daemon:
     def __init__(self) -> None:
         self._conn: Any = None
         self._api: TelegramAPI | None = None
@@ -142,7 +142,7 @@ class CommsDaemon:
         asyncio.create_task(self._usage_poll_loop(), name="usage-poller")
 
         self._running = True
-        logger.info("Comms daemon started in RUN mode")
+        logger.info("claude-works daemon started in RUN mode")
 
     async def stop(self) -> None:
         if self._stop_called:
@@ -169,7 +169,7 @@ class CommsDaemon:
             await self._conn.close()
         if os.path.exists(PID_FILE):
             os.unlink(PID_FILE)
-        logger.info("Comms daemon stopped")
+        logger.info("claude-works daemon stopped")
 
     async def run_forever(self) -> None:
         await self.start()
@@ -648,7 +648,7 @@ class CommsDaemon:
 
 async def run() -> None:
     _setup_logging()
-    daemon = CommsDaemon()
+    daemon = Daemon()
 
     loop = asyncio.get_event_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
