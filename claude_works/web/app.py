@@ -1,10 +1,13 @@
 import hashlib
 import hmac
 import os
+import threading
+import time
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Depends, Header, Request
+from fastapi import FastAPI, HTTPException, Depends, Header, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,7 +20,7 @@ from ..kanban.models import Lane
 from ..mode import DaemonMode
 from ..logging_setup import log_path
 
-app = FastAPI(title="Comms", docs_url=None, redoc_url=None)
+app = FastAPI(title="Claude Works", docs_url=None, redoc_url=None)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[],  # no cross-origin access; UI is served same-origin
@@ -33,6 +36,58 @@ _daemon_ref: Any = None
 _setup_token: str | None = None
 
 
+# ---------------------------------------------------------------------------
+# Rate limiting (in-process sliding window, no external dep)
+# ---------------------------------------------------------------------------
+
+class _SlidingWindow:
+    """Thread-safe sliding window counter per key (typically client IP)."""
+
+    def __init__(self, limit: int, window: int) -> None:
+        self._limit = limit
+        self._window = window
+        self._log: dict[str, list[float]] = defaultdict(list)
+        self._lock = threading.Lock()
+
+    def hit(self, key: str) -> bool:
+        """Record a hit. Returns True if within limit, False if exceeded."""
+        now = time.monotonic()
+        cutoff = now - self._window
+        with self._lock:
+            log = self._log[key]
+            pruned = [t for t in log if t > cutoff]
+            if len(pruned) >= self._limit:
+                self._log[key] = pruned
+                return False
+            pruned.append(now)
+            self._log[key] = pruned
+            return True
+
+
+# 120 API requests / 60 s per IP (general DoS protection)
+_api_limiter = _SlidingWindow(limit=120, window=60)
+# 10 failed auth attempts / 300 s per IP (brute-force lockout)
+_auth_fail_limiter = _SlidingWindow(limit=10, window=300)
+
+
+def _client_ip(request: Request) -> str:
+    """Return real client IP, honouring Cloudflare / reverse-proxy headers when trusted_proxy is set."""
+    cfg = config.section("web") if config._settings else {}
+    if cfg.get("trusted_proxy"):
+        cf = request.headers.get("CF-Connecting-IP")
+        if cf:
+            return cf.strip()
+        fwd = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        if fwd:
+            return fwd
+    return request.client.host if request.client else "unknown"
+
+
+def _is_https(request: Request) -> bool:
+    proto = request.headers.get("X-Forwarded-Proto", request.url.scheme)
+    return proto == "https"
+
+
 def set_daemon(daemon: Any) -> None:
     global _daemon_ref
     _daemon_ref = daemon
@@ -44,6 +99,9 @@ def set_setup_token(token: str) -> None:
 
 
 def _verify_token(request: Request) -> None:
+    ip = _client_ip(request)
+    if not _api_limiter.hit(ip):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded — slow down")
     cfg = config.section("web")
     raw_token = cfg.get("auth_token", "")
     if not raw_token:
@@ -51,11 +109,49 @@ def _verify_token(request: Request) -> None:
     expected = hashlib.sha256(raw_token.encode()).hexdigest()
     token = request.headers.get("X-Auth-Token") or request.cookies.get("auth") or ""
     if not hmac.compare_digest(token, expected):
+        if not _auth_fail_limiter.hit(ip):
+            raise HTTPException(status_code=429, detail="Too many failed auth attempts — locked out for 5 minutes")
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
 async def _get_conn():
     return await db.get_conn()
+
+
+@app.post("/api/auth")
+async def login(request: Request, response: Response):
+    """Exchange raw auth token for a session cookie with correct security flags."""
+    ip = _client_ip(request)
+    if not _api_limiter.hit(ip):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    body = await request.json()
+    token = body.get("token", "")
+    cfg = config.section("web") if config._settings else {}
+    raw_token = cfg.get("auth_token", "")
+    if not raw_token:
+        raise HTTPException(status_code=503, detail="Auth not configured")
+    expected = hashlib.sha256(raw_token.encode()).hexdigest()
+    candidate = hashlib.sha256(token.encode()).hexdigest()
+    if not hmac.compare_digest(candidate, expected):
+        if not _auth_fail_limiter.hit(ip):
+            raise HTTPException(status_code=429, detail="Too many failed attempts — locked out for 5 minutes")
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    secure = _is_https(request)
+    response.set_cookie(
+        key="auth",
+        value=expected,
+        httponly=True,
+        secure=secure,
+        samesite="strict",
+        max_age=86400 * 30,
+    )
+    return {"ok": True}
+
+
+@app.post("/api/auth/logout")
+async def logout(response: Response):
+    response.delete_cookie(key="auth", samesite="strict")
+    return {"ok": True}
 
 
 @app.get("/health")

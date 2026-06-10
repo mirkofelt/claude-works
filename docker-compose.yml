@@ -12,3 +12,7 @@ services:
 
 volumes:
   claude-works-data:
+
+networks:
+  claude-works-net:
+    driver: bridge

@@ -1,0 +1,33 @@
+# Internet-facing deployment via Cloudflare Tunnel.
+#
+# Prerequisites:
+#   1. Create a Cloudflare Tunnel at dash.cloudflare.com → Zero Trust → Networks → Tunnels
+#   2. Copy the tunnel token and set CLOUDFLARE_TUNNEL_TOKEN in your environment
+#      (or replace ${CLOUDFLARE_TUNNEL_TOKEN} below with the actual token)
+#   3. In the Cloudflare dashboard, add a Public Hostname pointing to http://claude-works:8080
+#   4. Optional but recommended: add a Cloudflare Access policy on that hostname
+#      (Zero Trust → Access → Applications) so only your identity can reach it
+#   5. Set web.trusted_proxy: true in your config so rate limiting uses real IPs
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.cloudflare.yml up -d
+
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - claude-works
+    networks:
+      - claude-works-net
+
+  claude-works:
+    networks:
+      - claude-works-net
+
+networks:
+  claude-works-net:
+    driver: bridge

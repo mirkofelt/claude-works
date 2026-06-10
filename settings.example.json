@@ -62,7 +62,9 @@
   "web": {
     "port": 8080,
     "host": "0.0.0.0",
-    "auth_token": "YOUR_AUTH_TOKEN_HERE"
+    "auth_token": "YOUR_AUTH_TOKEN_HERE",
+    "_comment_trusted_proxy": "Set to true when running behind Cloudflare Tunnel or nginx reverse proxy. Enables CF-Connecting-IP / X-Forwarded-For for real client IP (needed for accurate rate limiting).",
+    "trusted_proxy": false
   },
   "users": {
     "default_role": "blocked",
