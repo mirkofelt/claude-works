@@ -14,7 +14,7 @@ from .concepts import SYSTEM_PROMPT, CAVEMAN_ADDENDUM
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_PERSONA_FILE = "/data/persona.txt"
+_DEFAULT_PERSONA_FILE = "/data/persona.md"
 
 _CHIEF_ADDENDUM = """
 

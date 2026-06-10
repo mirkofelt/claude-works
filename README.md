@@ -48,12 +48,11 @@ Everything user-owned lives under `/data`. The container image is read-only; no 
 
 ```
 /data/
-├── settings.json          # main config (required)
-├── config.db              # daemon config DB (auto-created)
-├── claude-works.db               # operational DB (auto-created)
-├── persona.txt            # optional: ChiefAgent persona
+├── config.db              # daemon config DB — managed via Web UI setup wizard
+├── claude-works.db        # operational DB (auto-created)
+├── persona.md             # optional: ChiefAgent persona
 ├── logs/
-│   ├── claude-works.log          # rotating application log
+│   ├── claude-works.log   # rotating application log
 │   └── init.log           # container startup log (see below)
 ├── requirements.local.txt # optional: extra pip packages, installed at each startup
 └── init.sh                # optional: custom shell commands run at each startup

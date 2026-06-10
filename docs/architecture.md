@@ -216,7 +216,7 @@ Stateless LLM router. Reads BACKLOG, classifies each task, calls `board.assign(t
 
 Handles CHIEF-class tasks with persona awareness.
 
-- `load_persona()` — reads `PERSONA_FILE` env (default `/data/persona.txt`), falls back to `""`
+- `load_persona()` — reads `PERSONA_FILE` env (default `/data/persona.md`), falls back to `""`
 - `reload_persona()` — hot-reload without restart (triggered by `/reload_persona` command)
 - `run_loop(on_result)` — picks up tasks assigned to `AgentClass.CHIEF`, runs via `GeneralistAgent` with chief prompt + persona
 
@@ -471,7 +471,7 @@ All user-owned state lives under `/data`. The container image is immutable; noth
 ├── settings.json          # main config
 ├── config.db              # daemon config DB (CONFIG_DB_FILE override)
 ├── claude-works.db               # operational DB (DB_FILE override)
-├── persona.txt            # optional ChiefAgent persona
+├── persona.md            # optional ChiefAgent persona
 ├── logs/
 │   ├── claude-works.log          # rotating application log
 │   └── init.log           # container startup log (requirements.local.txt, init.sh output)
