@@ -169,7 +169,7 @@ class CliProvider(LLMProvider):
                 raise RateLimitError(
                     f"LLM CLI rate limited: {stderr_text[:200]}", retry_after=retry_after
                 )
-            raise RuntimeError(f"LLM CLI exited {proc.returncode}: {stderr.decode()[:500]}")
+            raise RuntimeError(f"LLM CLI exited {proc.returncode}: stderr={stderr.decode()[:300]} stdout={stdout.decode()[:300]}")
 
         data = json.loads(stdout.decode())
         if data.get("type") == "error" or data.get("subtype") == "error":
