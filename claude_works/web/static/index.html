@@ -613,6 +613,7 @@
       <div class="cfg-body">
         <div class="field"><label>Enabled</label><select id="s_sec_enabled"><option value="false">false</option><option value="true">true</option></select></div>
         <div class="field"><label>Approval Timeout (s)</label><input type="number" id="s_sec_timeout"></div>
+        <div class="field"><label>Tor SOCKS5 Proxy</label><input type="text" id="s_sec_tor" placeholder="socks5://127.0.0.1:9050"><div class="hint">URL fetches go through Tor by default</div></div>
         <div class="field wide"><label>Rules (JSON array)</label><textarea id="s_sec_rules" rows="5"></textarea></div>
       </div>
     </details>
@@ -1433,6 +1434,7 @@ async function loadSettings() {
     _set('s_web_token', web.auth_token); _set('s_web_port', web.port); _set('s_web_host', web.host);
     _setb('s_web_proxy', web.trusted_proxy);
     _setb('s_sec_enabled', sec.enabled); _set('s_sec_timeout', sec.pending_timeout_seconds);
+    _set('s_sec_tor', sec.tor_socks_proxy || '');
     _setj('s_sec_rules', sec.rules || []);
     _set('s_sp_daily', sp.max_daily_usd); _set('s_sp_monthly', sp.max_monthly_usd);
     _set('s_sp_per_user', sp.per_user_daily_usd); _set('s_sp_on_limit', sp.on_limit_exceeded || 'reject');
@@ -1470,7 +1472,7 @@ async function saveSettings() {
       agents: { max_parallel: _sn('s_ag_parallel'), task_timeout_seconds: _sn('s_ag_task_timeout'), po_timeout_seconds: _sn('s_ag_po_timeout'), max_retries: _sn('s_ag_retries'), model_tiers: tiers, models: models },
       web: { auth_token: _sv('s_web_token'), port: _sn('s_web_port'), host: _sv('s_web_host') || '0.0.0.0', trusted_proxy: _sb('s_web_proxy') },
       users: { default_role: 'blocked', admin_ids: adminIds },
-      security: { enabled: _sb('s_sec_enabled'), pending_timeout_seconds: _sn('s_sec_timeout'), rules: secRules || [] },
+      security: { enabled: _sb('s_sec_enabled'), pending_timeout_seconds: _sn('s_sec_timeout'), tor_socks_proxy: _sv('s_sec_tor') || 'socks5://127.0.0.1:9050', rules: secRules || [] },
       spending: { max_daily_usd: _sn('s_sp_daily'), max_monthly_usd: _sn('s_sp_monthly'), per_user_daily_usd: _sn('s_sp_per_user'), on_limit_exceeded: _sv('s_sp_on_limit') || 'reject', model_pricing: pricing || {} },
       tts: { provider: _sv('s_tts_provider') || 'elevenlabs', elevenlabs_api_key: _sv('s_tts_key'), elevenlabs_voice_id: _sv('s_tts_voice'), elevenlabs_model: _sv('s_tts_model') || 'eleven_multilingual_v2' },
       email: { smtp_host: _sv('s_em_smtp_host'), smtp_port: _sn('s_em_smtp_port'), smtp_user: _sv('s_em_smtp_user'), smtp_password: _sv('s_em_smtp_pw'), from_address: _sv('s_em_from'), smtp_tls: _sb('s_em_tls'), imap_host: _sv('s_em_imap_host'), imap_port: _sn('s_em_imap_port'), imap_user: _sv('s_em_imap_user'), imap_password: _sv('s_em_imap_pw') },

@@ -83,6 +83,23 @@ async def detect_startup_mode() -> tuple[DaemonMode, str | None]:
         updated_at_row = None
 
     if not db_cfg:
+        # Try to seed from /data/settings.json (zero-touch deployment)
+        seed_path = os.environ.get("SETTINGS_SEED_FILE", "/data/settings.json")
+        if os.path.exists(seed_path):
+            try:
+                import json as _json
+                from .config_store import save_config as _save_cfg
+                with open(seed_path, encoding="utf-8") as f:
+                    seed_cfg = _json.load(f)
+                conn2 = await db.init_config()
+                await _save_cfg(conn2, seed_cfg)
+                await conn2.close()
+                db_cfg = seed_cfg
+                logger.info("Config seeded from %s", seed_path)
+            except Exception as exc:
+                logger.warning("Failed to seed config from %s: %s", seed_path, exc)
+
+    if not db_cfg:
         return DaemonMode.INITIALIZE, "No config in DB — run setup wizard"
 
     err = _config_valid(db_cfg)
