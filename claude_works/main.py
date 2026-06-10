@@ -1,6 +1,8 @@
 import asyncio
+import hashlib
 import logging
 import re
+import urllib.parse
 from .tasks.transcriber import transcribe as _transcribe_audio
 import secrets
 import time
@@ -99,11 +101,15 @@ def _parse_buttons(text: str) -> "tuple[str, list[list[dict]] | None]":
 _URL_RE = re.compile(r'https?://[^\s<>"\']+')
 _MAX_FETCH_URLS = 3
 _MAX_FETCH_CHARS = 4000
+_TOR_SOCKS_DEFAULT = "socks5://127.0.0.1:9050"
 
 
-async def _fetch_url_content(url: str) -> str | None:
+async def _fetch_url_content(url: str, proxy: str | None = None) -> str | None:
     try:
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+        client_kwargs: dict = {"timeout": 15.0, "follow_redirects": True}
+        if proxy:
+            client_kwargs["proxy"] = proxy
+        async with httpx.AsyncClient(**client_kwargs) as client:
             resp = await client.get(url, headers={"User-Agent": "Mozilla/5.0 (compatible; claude-works/1.0)"})
             resp.raise_for_status()
             ct = resp.headers.get("content-type", "")
@@ -117,7 +123,7 @@ async def _fetch_url_content(url: str) -> str | None:
         text = re.sub(r'\s+', ' ', text).strip()
         return text[:_MAX_FETCH_CHARS] if text else None
     except Exception as e:
-        logger.debug("URL fetch failed (%s): %s", url, e)
+        logger.debug("URL fetch failed proxy=%s (%s): %s", proxy, url, e)
         return None
 
 
@@ -144,6 +150,7 @@ class Daemon:
         self._usage_near_limit_notified = False
         self._stop_called = False
         self._user_backgrounds: dict[int, str] = {}
+        self._pending_direct_fetches: dict[str, dict] = {}
 
     # ──────────────────────────────────────────────────────────
     # Lifecycle
@@ -547,14 +554,41 @@ class Daemon:
 
         urls = _URL_RE.findall(content)
         if urls:
-            fetched_sections = []
+            tor_proxy = config.section("security").get("tor_socks_proxy", _TOR_SOCKS_DEFAULT)
+            fetched_sections: list[str] = []
+            urls_blocked: list[str] = []
             for url in urls[:_MAX_FETCH_URLS]:
-                page_text = await _fetch_url_content(url)
-                if page_text:
+                page_text = await _fetch_url_content(url, proxy=tor_proxy)
+                if page_text is not None:
                     fetched_sections.append(f"[Content of {url}]\n{page_text}")
-                    logger.debug("Fetched URL for context: %s (%d chars)", url, len(page_text))
+                    logger.debug("Fetched URL via Tor: %s (%d chars)", url, len(page_text))
+                else:
+                    urls_blocked.append(url)
+                    logger.info("URL blocked Tor or Tor unavailable: %s", url)
             if fetched_sections:
                 content = content + "\n\n## Fetched Web Content\n" + "\n\n---\n\n".join(fetched_sections)
+            if urls_blocked:
+                fetch_hash = hashlib.sha256(
+                    f"{chat_id}:{telegram_id}:{','.join(urls_blocked)}:{time.time()}".encode()
+                ).hexdigest()[:8]
+                self._pending_direct_fetches[fetch_hash] = {
+                    "chat_id": chat_id,
+                    "user_id": telegram_id,
+                    "content": content,
+                    "urls": urls_blocked,
+                    "expires_at": time.time() + 300,
+                }
+                domains = ", ".join(urllib.parse.urlparse(u).netloc for u in urls_blocked)
+                await self._api.send_message(
+                    chat_id,
+                    f"🔒 Tor-Zugriff fehlgeschlagen: <code>{domains}</code>\nDirektzugriff erlauben?",
+                    parse_mode="HTML",
+                    reply_markup={"inline_keyboard": [[
+                        {"text": "✅ Ja", "callback_data": f"direct:{fetch_hash}"},
+                        {"text": "❌ Überspringen", "callback_data": f"deny:{fetch_hash}"},
+                    ]]}
+                )
+                return
 
         task = KanbanTask(
             id=None,
@@ -596,6 +630,38 @@ class Daemon:
         data = cq.get("data", "")
         if not telegram_id or not chat_id or not data:
             return
+
+        # Expire old pending fetches
+        now = time.time()
+        self._pending_direct_fetches = {
+            k: v for k, v in self._pending_direct_fetches.items() if v["expires_at"] > now
+        }
+
+        if data.startswith("direct:") or data.startswith("deny:"):
+            await self._api.answer_callback_query(callback_query_id)
+            fetch_hash = data.split(":", 1)[1]
+            pending = self._pending_direct_fetches.pop(fetch_hash, None)
+            if not pending or time.time() > pending["expires_at"]:
+                await self._api.send_message(chat_id, "Anfrage abgelaufen.")
+                return
+            content = pending["content"]
+            if data.startswith("direct:"):
+                for url in pending["urls"]:
+                    page_text = await _fetch_url_content(url)  # direct, no proxy
+                    if page_text:
+                        content = content + f"\n\n---\n\n[Content of {url}]\n{page_text}"
+                        logger.info("Direct URL fetch approved by user: %s", url)
+            task = KanbanTask(
+                id=None,
+                chat_id=pending["chat_id"],
+                user_id=pending["user_id"],
+                content=content,
+                priority=0,
+            )
+            await self._board.push(task)
+            self._start_typing(pending["chat_id"])
+            return
+
         await self._api.answer_callback_query(callback_query_id)
         fake_msg = {
             "message_id": cq.get("message", {}).get("message_id", 0),
