@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from httpx import AsyncClient, ASGITransport
 
-from claude_works.db import CREATE_TABLES
+from claude_works.db import CREATE_TABLES, CONFIG_TABLES
 from claude_works.mode import DaemonMode
 from claude_works.web.app import app
 
@@ -22,6 +22,7 @@ async def _make_conn() -> aiosqlite.Connection:
     conn = await aiosqlite.connect(":memory:")
     conn.row_factory = aiosqlite.Row
     await conn.executescript(CREATE_TABLES)
+    await conn.executescript(CONFIG_TABLES)
     await conn.commit()
     return conn
 
@@ -195,7 +196,7 @@ async def test_save_setup_happy_path(client, initialize_daemon):
 
     with patch("claude_works.web.app._daemon_ref", initialize_daemon), \
          patch("claude_works.web.app._setup_token", "tok"), \
-         patch("claude_works.web.app.db.init", mock_init):
+         patch("claude_works.web.app.db.init_config", mock_init):
         async with client as c:
             r = await c.post("/api/setup/save", json=_valid_cfg, headers={"X-Setup-Token": "tok"})
 
@@ -213,7 +214,7 @@ async def test_save_setup_invalidates_token(client, initialize_daemon):
 
     with patch("claude_works.web.app._daemon_ref", initialize_daemon), \
          patch("claude_works.web.app._setup_token", "tok"), \
-         patch("claude_works.web.app.db.init", mock_init):
+         patch("claude_works.web.app.db.init_config", mock_init):
         async with client as c:
             await c.post("/api/setup/save", json=_valid_cfg, headers={"X-Setup-Token": "tok"})
         assert web_app._setup_token is None
