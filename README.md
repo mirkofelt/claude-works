@@ -165,19 +165,13 @@ Replace all YOUR_* placeholders — leave them as-is if unknown.
 
 ## Features
 
-- **Multi-agent architecture** — ControllerAgent routes by type; specialist pool (generalist / researcher / coder / memory) + ChiefAgent
-- **Output patterns** — agents produce structured output: `[VOICE:]`, `[MAP:]`, `[BUTTONS:]`, `[SEND_EMAIL:]`, `[READ_EMAIL:]`, `[GITHUB_API:]`
-- **Tor routing** — URL fetches go through Tor by default; fallback to direct with user confirmation
-- **Security Officer** — LLM-based content review before outbound actions (email, GitHub writes, TTS)
-- **Proactive error recovery** — ControllerAgent retries failed tasks via LLM-guided routing
-- **Hot-reload prompts** — edit files in `/data/prompts/`, changes apply within 5 seconds
-- **Knowledge base** — FTS5 full-text search; auto-import from `/data/knowledge/` on start
-- **Token telemetry** — per-agent tracking, spending limits, visible in Web UI
-- **Settings UI** — all config editable in the Web UI without restart
-- **Kanban task lifecycle** — backlog → assigned → in_progress → review → done/failed
-- **User auth** — role-based (admin/user/blocked), new users auto-blocked
-- **MCP support** — configurable MCP servers
-- **Supervisor process** — health-check loop, auto-restart with backoff
+- **Multi-agent** — specialist pool (generalist, researcher, coder, memory) + ChiefAgent + ProductOwner for complex tasks
+- **Output patterns** — `[VOICE:]` TTS, `[MAP:]` location, `[BUTTONS:]` inline keyboard, `[SEND_EMAIL:]`, `[READ_EMAIL:]`, `[GITHUB_API:]`
+- **Security Officer** — LLM reviews all outbound content for data leaks before sending
+- **Tor routing** — URL fetches via Tor by default; asks user if blocked
+- **Hot-reload** — edit `/data/prompts/*.md`, active within 5 seconds; no restart needed
+- **Knowledge base** — auto-import from `/data/knowledge/` on start; FTS5 search
+- **Web UI** — dark dashboard, all config editable live (Settings tab)
 
 ---
 
