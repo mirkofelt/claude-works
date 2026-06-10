@@ -288,9 +288,25 @@ async def get_kanban_counts():
 
 @app.post("/api/config/reload", dependencies=[Depends(_verify_token)])
 async def reload_config():
+    from ..config_store import load_config as _load_db_cfg
     try:
-        config.reload()
-        return {"ok": True, "message": "Config reloaded"}
+        conn = await db.init_config()
+        cfg = await _load_db_cfg(conn)
+        row = None
+        if cfg:
+            async with conn.execute(
+                "SELECT updated_at FROM daemon_config WHERE id=1"
+            ) as cur:
+                row = await cur.fetchone()
+        await conn.close()
+        if not cfg:
+            raise HTTPException(status_code=404, detail="No config in DB")
+        config.set(cfg)
+        if row:
+            config._config_updated_at = row["updated_at"]
+        return {"ok": True, "message": "Config reloaded from DB"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

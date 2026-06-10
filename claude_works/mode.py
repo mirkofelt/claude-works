@@ -57,10 +57,10 @@ def _config_valid(cfg: dict) -> str | None:
 
 
 async def detect_startup_mode() -> tuple[DaemonMode, str | None]:
-    """Probe config + DB. Returns (mode, optional_reason).
+    """Probe config DB + data DB. Returns (mode, optional_reason).
 
-    Side effect: loads config if successful (so the rest of startup can use it).
-    Tries DB-stored config first, falls back to settings.json file.
+    Side effect: calls config.set() if config is valid so the rest of startup can use it.
+    config.db is the sole config source — settings.json is no longer read.
     """
     from . import config, db
     from .config_store import load_config as load_db_config
@@ -68,32 +68,30 @@ async def detect_startup_mode() -> tuple[DaemonMode, str | None]:
     data_db_path = os.environ.get("DB_FILE", "/data/claude-works.db")
     data_db_exists = os.path.exists(data_db_path)
 
-    # Try config DB first (config.db is separate from data claude-works.db)
+    # Load config from config.db
     try:
         conn = await db.init_config()
         db_cfg = await load_db_config(conn)
-        await conn.close()
+        updated_at_row = None
         if db_cfg:
-            err = _config_valid(db_cfg)
-            if err:
-                return DaemonMode.INITIALIZE, f"DB config invalid: {err}"
-            config._settings = db_cfg
-            return DaemonMode.RUN, None
+            async with conn.execute("SELECT updated_at FROM daemon_config WHERE id=1") as cur:
+                updated_at_row = await cur.fetchone()
+        await conn.close()
     except Exception as exc:
         logger.debug("Config DB init failed: %s", exc)
-        # Not MIGRATE — config DB failure just means fall through to file check
+        db_cfg = None
+        updated_at_row = None
 
-    # Fall back to settings.json file
-    try:
-        config.load()
-    except FileNotFoundError as exc:
-        return DaemonMode.INITIALIZE, f"settings.json not found: {exc}"
-    except Exception as exc:
-        return DaemonMode.INITIALIZE, f"settings.json invalid: {exc}"
+    if not db_cfg:
+        return DaemonMode.INITIALIZE, "No config in DB — run setup wizard"
 
-    err = _config_valid(config.get())
+    err = _config_valid(db_cfg)
     if err:
-        return DaemonMode.INITIALIZE, err
+        return DaemonMode.INITIALIZE, f"Config invalid: {err}"
+
+    config.set(db_cfg)
+    if updated_at_row:
+        config._config_updated_at = updated_at_row["updated_at"]
 
     # Check data DB for schema mismatch
     try:

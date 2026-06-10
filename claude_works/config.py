@@ -1,12 +1,8 @@
-import json
-import os
-from pathlib import Path
 from typing import Any
 
 
 _settings: dict[str, Any] | None = None
-_settings_path: Path | None = None
-_settings_mtime: float = 0.0
+_config_updated_at: int = 0  # DB updated_at timestamp; used for hot-reload detection
 
 # Tier aliases: resolve via agents.model_tiers in settings.json first,
 # fall back to these hardcoded IDs. Update here only when Anthropic
@@ -50,53 +46,16 @@ _MODEL_PRICING_DEFAULTS: dict[str, dict] = {
 }
 
 
-def _find_settings_file() -> Path:
-    candidates = [
-        os.environ.get("SETTINGS_FILE"),
-        "/data/settings.json",
-        Path(__file__).parent.parent / "settings.json",
-    ]
-    for c in candidates:
-        if c and Path(c).exists():
-            return Path(c)
-    raise FileNotFoundError("settings.json not found. Set SETTINGS_FILE env var.")
-
-
-def load(path: Path | None = None) -> dict[str, Any]:
-    global _settings, _settings_path, _settings_mtime
-    _settings_path = path or _find_settings_file()
-    _settings = json.loads(_settings_path.read_text())
-    _settings_mtime = _settings_path.stat().st_mtime
-    return _settings
+def set(cfg: dict[str, Any]) -> None:
+    """Inject config dict (loaded from config.db). Called at startup and on hot-reload."""
+    global _settings
+    _settings = cfg
 
 
 def get() -> dict[str, Any]:
     if _settings is None:
-        load()
-    return _settings  # type: ignore[return-value]
-
-
-def reload() -> dict[str, Any]:
-    global _settings, _settings_mtime
-    if _settings_path is None:
-        return load()
-    _settings = json.loads(_settings_path.read_text())
-    _settings_mtime = _settings_path.stat().st_mtime
+        raise RuntimeError("Config not initialised — call config.set() at startup")
     return _settings
-
-
-def reload_if_changed() -> bool:
-    """Reload settings if file has been modified since last load. Returns True if reloaded."""
-    if _settings_path is None:
-        return False
-    try:
-        mtime = _settings_path.stat().st_mtime
-    except OSError:
-        return False
-    if mtime <= _settings_mtime:
-        return False
-    reload()
-    return True
 
 
 def section(key: str) -> dict[str, Any]:
@@ -117,13 +76,13 @@ def get_agent_model(agent_class: str, stage: str | None = None) -> str:
     """Return model ID for agent_class (and optional CodeTeam stage).
 
     Lookup order:
-      1. agents.models.<agent_class>[.<stage>]  — explicit override in settings.json
+      1. agents.models.<agent_class>[.<stage>]  — explicit override in config.db
       2. _AGENT_CLASS_TIERS / _CODER_STAGE_TIERS  — per-class tier assignment
-      3. agents.model_tiers.<tier>  — tier → model ID mapping in settings.json
+      3. agents.model_tiers.<tier>  — tier → model ID mapping in config.db
       4. _TIER_DEFAULTS  — hardcoded tier fallbacks
 
     Values at any level may be tier aliases ("fast"/"balanced"/"best") or direct model IDs.
-    To upgrade all "best"-tier agents: set agents.model_tiers.best in settings.json.
+    To upgrade all "best"-tier agents: set agents.model_tiers.best in config.db.
     """
     models = section("agents").get("models", {})
     global_default = _resolve_tier(models.get("default", _AGENT_CLASS_TIERS["default"]))

@@ -8,7 +8,6 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - SETTINGS_FILE=/data/settings.json
       - LOG_LEVEL=DEBUG
       - DEV_MODE=true
     command: python -m supervisor.supervisor --dev

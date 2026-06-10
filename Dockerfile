@@ -14,7 +14,6 @@ COPY . .
 RUN chmod +x /app/entrypoint.sh
 
 ENV PYTHONUNBUFFERED=1
-ENV SETTINGS_FILE=/data/settings.json
 
 VOLUME ["/data"]
 EXPOSE 8080

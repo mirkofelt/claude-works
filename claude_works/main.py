@@ -491,9 +491,24 @@ class CommsDaemon:
             if not await is_admin(self._conn, from_id):
                 return
             try:
-                config.reload()
-                await self._api.send_message(chat_id, "Config reloaded.")
-                logger.info("Config reloaded via /reload_config by user=%d", from_id)
+                from .config_store import load_config as _load_db_cfg
+                conn = await db.init_config()
+                cfg = await _load_db_cfg(conn)
+                row = None
+                if cfg:
+                    async with conn.execute(
+                        "SELECT updated_at FROM daemon_config WHERE id=1"
+                    ) as cur:
+                        row = await cur.fetchone()
+                await conn.close()
+                if cfg:
+                    config.set(cfg)
+                    if row:
+                        config._config_updated_at = row["updated_at"]
+                    await self._api.send_message(chat_id, "Config reloaded from DB.")
+                    logger.info("Config reloaded via /reload_config by user=%d", from_id)
+                else:
+                    await self._api.send_message(chat_id, "No config found in DB.")
             except Exception as e:
                 await self._api.send_message(chat_id, f"Reload failed: {e}")
 
@@ -567,11 +582,26 @@ class CommsDaemon:
             pass
 
     async def _config_watcher_loop(self) -> None:
+        """Poll config.db every 5s; reload in-memory config when updated_at changes."""
+        from .config_store import load_config as _load_db_config
         try:
             while self._running:
                 await asyncio.sleep(5.0)
-                if config.reload_if_changed():
-                    logger.info("Config reloaded from disk")
+                try:
+                    conn = await db.init_config()
+                    async with conn.execute(
+                        "SELECT updated_at FROM daemon_config WHERE id=1"
+                    ) as cur:
+                        row = await cur.fetchone()
+                    if row and row["updated_at"] != config._config_updated_at:
+                        cfg = await _load_db_config(conn)
+                        if cfg:
+                            config.set(cfg)
+                            config._config_updated_at = row["updated_at"]
+                            logger.info("Config reloaded from DB")
+                    await conn.close()
+                except Exception as exc:
+                    logger.debug("Config watcher error: %s", exc)
         except asyncio.CancelledError:
             pass
 

@@ -25,23 +25,20 @@ Claude Works — non-blocking, multi-agent Telegram communication system. Standa
 ## Quick Start
 
 ```bash
-cp settings.example.json /data/settings.json
-# fill in telegram.token, llm.api_key, web.auth_token, users.admin_ids
 docker compose up -d
 ```
 
-Web UI: `http://localhost:8080` — auth token from `settings.json → web.auth_token`
-
-Alternatively, start without a config file. The daemon enters INITIALIZE mode and shows a setup wizard in the Web UI. Check server logs for the one-time setup token.
+On first start the daemon enters **INITIALIZE** mode. Open `http://localhost:8080`, enter the one-time setup token printed to stdout, and fill in the configuration form. All settings are stored in `config.db` — no `settings.json` needed.
 
 ## Configuration
 
-All config lives in `/data/settings.json` (override path via `SETTINGS_FILE` env var). See `settings.example.json` for all options.
+All config is stored in `config.db` (the `daemon_config` table). The Web UI setup wizard is the primary way to configure the system. See `settings.example.json` for the full config structure and available keys.
 
 Key sections: `telegram`, `llm`, `agents`, `web`, `users`, `supervisor`, `security`, `mcp`, `logging`
 
+Config hot-reload: the daemon polls `config.db` every 5 seconds. Changes saved via the Web UI take effect without a restart. For an immediate reload: `/reload_config` (Telegram) or `POST /api/config/reload` (Web API).
+
 Environment variables:
-- `SETTINGS_FILE` — path to settings.json (default: `/data/settings.json`)
 - `DB_FILE` — path to operational DB (default: `/data/claude-works.db`)
 - `CONFIG_DB_FILE` — path to config DB (default: `/data/config.db`)
 
