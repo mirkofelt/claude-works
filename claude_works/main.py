@@ -571,8 +571,6 @@ class Daemon:
         )
         await self._conn.commit()
 
-        await self._api.set_message_reaction(chat_id, msg["message_id"], "👀")
-
         pending = self._pending_messages.get(chat_id)
         if pending and should_bundle(pending, incoming):
             logger.debug("Bundling message with pending (chat=%d)", chat_id)
@@ -829,6 +827,8 @@ class Daemon:
 
     async def _on_agent_result(self, task: KanbanTask, result: str | None, error: str | None = None) -> None:
         self._stop_typing(task.chat_id)
+        if task.parent_id is not None:
+            return
         if result:
             allowed = await self._security.check(
                 result, task_id=task.id, chat_id=task.chat_id, user_id=task.user_id
