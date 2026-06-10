@@ -227,6 +227,7 @@
   <button onclick="showTab('messages')">Messages</button>
   <button onclick="showTab('users')">Users</button>
   <button onclick="showTab('memory')">Memory</button>
+  <button onclick="showTab('knowledge')">Knowledge</button>
   <button onclick="showTab('approvals')">Approvals</button>
   <button onclick="showTab('kanban')">Kanban</button>
   <button onclick="showTab('tokens')">Tokens</button>
@@ -298,6 +299,41 @@
     <button class="btn btn-ghost" onclick="loadMemory()">Search</button>
   </div>
   <div class="mem-grid" id="memGrid"><div class="empty">Loading…</div></div>
+</div>
+
+<div class="section" id="tab-knowledge">
+  <div class="toolbar">
+    <input type="text" id="kbQ" placeholder="Search…" style="width:200px" onkeydown="if(event.key==='Enter')loadKnowledge()">
+    <select id="kbType" onchange="loadKnowledge()">
+      <option value="">All types</option>
+      <option value="note">note</option>
+      <option value="fact">fact</option>
+      <option value="procedure">procedure</option>
+      <option value="context">context</option>
+    </select>
+    <button class="btn btn-ghost" onclick="loadKnowledge()">Search</button>
+    <button class="btn btn-primary" onclick="toggleKbForm()">+ Add</button>
+  </div>
+  <div id="kbForm" class="card" style="display:none;margin-bottom:1rem;padding:1rem">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem;margin-bottom:.5rem">
+      <input type="text" id="kbTitle" placeholder="Title" style="padding:.5rem;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px">
+      <input type="text" id="kbTags" placeholder="Tags (comma-separated)" style="padding:.5rem;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px">
+    </div>
+    <div style="margin-bottom:.5rem">
+      <select id="kbEntryType" style="padding:.5rem;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px">
+        <option value="note">note</option>
+        <option value="fact">fact</option>
+        <option value="procedure">procedure</option>
+        <option value="context">context</option>
+      </select>
+    </div>
+    <textarea id="kbContent" placeholder="Content…" rows="4" style="width:100%;padding:.5rem;margin-bottom:.5rem;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px;resize:vertical"></textarea>
+    <div style="display:flex;gap:.5rem">
+      <button class="btn btn-primary" onclick="addKnowledge()">Save</button>
+      <button class="btn btn-ghost" onclick="toggleKbForm()">Cancel</button>
+    </div>
+  </div>
+  <div class="mem-grid" id="kbGrid"><div class="empty">Loading…</div></div>
 </div>
 
 <div class="section" id="tab-approvals">
@@ -389,7 +425,7 @@ let activeTab = 'tasks';
 let timer = null;
 let tokenPeriod = '24h';
 
-const TABS = ['tasks', 'messages', 'users', 'memory', 'approvals', 'kanban', 'tokens', 'logs'];
+const TABS = ['tasks', 'messages', 'users', 'memory', 'knowledge', 'approvals', 'kanban', 'tokens', 'logs'];
 
 const LANE_COLORS = {
   backlog: '#8b949e', assigned: '#58a6ff', in_progress: '#d29922',
@@ -461,6 +497,7 @@ function loadTab(t) {
   else if (t === 'messages') loadMessages();
   else if (t === 'users') loadUsers();
   else if (t === 'memory') loadMemory();
+  else if (t === 'knowledge') loadKnowledge();
   else if (t === 'approvals') loadApprovals();
   else if (t === 'kanban') loadKanban();
   else if (t === 'tokens') loadTokens();
@@ -859,6 +896,60 @@ function showSetupErr(text) {
     else { TOKEN = ''; localStorage.removeItem('comms_token'); }
   }
 })();
+
+async function loadKnowledge() {
+  const q = document.getElementById('kbQ').value.trim();
+  const type = document.getElementById('kbType').value;
+  let url = '/api/knowledge';
+  const params = [];
+  if (q) params.push('q=' + encodeURIComponent(q));
+  if (type) params.push('type=' + encodeURIComponent(type));
+  if (params.length) url += '?' + params.join('&');
+  const items = await api(url);
+  const grid = document.getElementById('kbGrid');
+  if (!items || items.length === 0) { grid.innerHTML = '<div class="empty">No entries</div>'; return; }
+  grid.innerHTML = items.map(e => `
+    <div class="mem-card">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:.4rem">
+        <span style="font-weight:600;color:var(--accent2)">${esc(e.title)}</span>
+        <button class="btn btn-ghost" style="padding:.1rem .4rem;font-size:.75rem" onclick="deleteKnowledge(${e.id})">✕</button>
+      </div>
+      <div style="display:flex;gap:.4rem;margin-bottom:.4rem;flex-wrap:wrap">
+        <span style="font-size:.7rem;background:var(--bg);padding:.15rem .5rem;border-radius:4px;color:var(--muted)">${esc(e.type)}</span>
+        ${(e.tags||[]).map(t => `<span style="font-size:.7rem;background:var(--bg);padding:.15rem .5rem;border-radius:4px;color:var(--accent)">${esc(t)}</span>`).join('')}
+      </div>
+      <div style="font-size:.875rem;white-space:pre-wrap">${esc(e.content)}</div>
+      <div style="font-size:.7rem;color:var(--muted);margin-top:.5rem">${esc(e.source||'')} · ${new Date(e.updated_at*1000).toLocaleString()}</div>
+    </div>`).join('');
+}
+
+function toggleKbForm() {
+  const f = document.getElementById('kbForm');
+  f.style.display = f.style.display === 'none' ? 'block' : 'none';
+}
+
+async function addKnowledge() {
+  const title = document.getElementById('kbTitle').value.trim();
+  const content = document.getElementById('kbContent').value.trim();
+  const type = document.getElementById('kbEntryType').value;
+  const raw = document.getElementById('kbTags').value.trim();
+  const tags = raw ? raw.split(',').map(t => t.trim()).filter(Boolean) : [];
+  if (!title || !content) return;
+  const ok = await api('/api/knowledge', { method: 'POST', body: JSON.stringify({ title, content, type, tags }) });
+  if (ok) {
+    document.getElementById('kbTitle').value = '';
+    document.getElementById('kbContent').value = '';
+    document.getElementById('kbTags').value = '';
+    toggleKbForm();
+    loadKnowledge();
+  }
+}
+
+async function deleteKnowledge(id) {
+  if (!confirm('Delete this entry?')) return;
+  await api('/api/knowledge/' + id, { method: 'DELETE' });
+  loadKnowledge();
+}
 </script>
 </body>
 </html>

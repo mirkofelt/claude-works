@@ -136,6 +136,24 @@ CREATE TABLE IF NOT EXISTS knowledge (
 CREATE INDEX IF NOT EXISTS idx_knowledge_type ON knowledge(type);
 CREATE INDEX IF NOT EXISTS idx_knowledge_user ON knowledge(user_id, updated_at);
 
+CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(
+    title, content, tags,
+    content='knowledge', content_rowid='id'
+);
+
+CREATE TRIGGER IF NOT EXISTS knowledge_ai AFTER INSERT ON knowledge BEGIN
+    INSERT INTO knowledge_fts(rowid, title, content, tags) VALUES (new.id, new.title, new.content, COALESCE(new.tags,''));
+END;
+
+CREATE TRIGGER IF NOT EXISTS knowledge_ad AFTER DELETE ON knowledge BEGIN
+    INSERT INTO knowledge_fts(knowledge_fts, rowid, title, content, tags) VALUES ('delete', old.id, old.title, old.content, COALESCE(old.tags,''));
+END;
+
+CREATE TRIGGER IF NOT EXISTS knowledge_au AFTER UPDATE ON knowledge BEGIN
+    INSERT INTO knowledge_fts(knowledge_fts, rowid, title, content, tags) VALUES ('delete', old.id, old.title, old.content, COALESCE(old.tags,''));
+    INSERT INTO knowledge_fts(rowid, title, content, tags) VALUES (new.id, new.title, new.content, COALESCE(new.tags,''));
+END;
+
 CREATE TABLE IF NOT EXISTS memory (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER,

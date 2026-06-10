@@ -63,6 +63,38 @@ async def get(conn: aiosqlite.Connection, entry_id: int) -> dict | None:
 
 
 async def search(conn: aiosqlite.Connection, query: str, user_id: int | None = None, limit: int = 10) -> list[dict]:
+    """Full-text search via FTS5 with LIKE fallback for short or special queries."""
+    if not query or not query.strip():
+        return await list_all(conn, user_id=user_id, limit=limit)
+
+    # Try FTS5 first (better recall, BM25 ranking)
+    try:
+        fts_query = " OR ".join(f'"{w}"' for w in query.split() if w)
+        if user_id is not None:
+            async with conn.execute(
+                """SELECT k.* FROM knowledge k
+                   JOIN knowledge_fts ON knowledge_fts.rowid = k.id
+                   WHERE knowledge_fts MATCH ?
+                     AND (k.user_id = ? OR k.user_id IS NULL)
+                   ORDER BY rank LIMIT ?""",
+                (fts_query, user_id, limit),
+            ) as cur:
+                rows = await cur.fetchall()
+        else:
+            async with conn.execute(
+                """SELECT k.* FROM knowledge k
+                   JOIN knowledge_fts ON knowledge_fts.rowid = k.id
+                   WHERE knowledge_fts MATCH ?
+                   ORDER BY rank LIMIT ?""",
+                (fts_query, limit),
+            ) as cur:
+                rows = await cur.fetchall()
+        if rows:
+            return [_row_to_dict(r) for r in rows]
+    except Exception:
+        pass  # fall through to LIKE
+
+    # LIKE fallback
     pattern = f"%{query}%"
     if user_id is not None:
         async with conn.execute(
