@@ -1705,9 +1705,14 @@ async function sendAdminChat() {
 
   const pending = document.createElement('div');
   pending.style.cssText = 'font-family:inherit;font-size:13px;line-height:1.6;padding:1px 0;color:#3d444d';
-  pending.innerHTML = '<span style="color:#3d444d">' + _termTs() + '</span> <span style="color:#58a6ff">system:~$</span> <span id="uplinkCursor" style="color:#58a6ff;animation:uplinkBlink 1s step-end infinite">▋</span>';
+  pending.innerHTML = '<span style="color:#3d444d">' + _termTs() + '</span> <span style="color:#58a6ff">system:~$</span> <span style="color:#58a6ff;animation:uplinkBlink 1s step-end infinite">▋</span> <span id="uplinkElapsed" style="color:#3d444d;font-size:11px"></span>';
   history.appendChild(pending);
   history.scrollTop = history.scrollHeight;
+  const _chatStart = Date.now();
+  const _elapsedTimer = setInterval(() => {
+    const el = document.getElementById('uplinkElapsed');
+    if (el) el.textContent = '(' + Math.round((Date.now() - _chatStart) / 1000) + 's)';
+  }, 1000);
 
   const CHAT_TIMEOUT_MS = 120000;
   const abortCtrl = new AbortController();
@@ -1719,10 +1724,12 @@ async function sendAdminChat() {
       signal: abortCtrl.signal,
     });
     clearTimeout(chatTimer);
+    clearInterval(_elapsedTimer);
     pending.remove();
     _appendChatBubble(history, 'assistant', d ? d.reply : '(no response)');
   } catch (e) {
     clearTimeout(chatTimer);
+    clearInterval(_elapsedTimer);
     pending.remove();
     const err = document.createElement('div');
     err.style.cssText = 'font-family:inherit;font-size:13px;color:#f85149;padding:1px 0';
