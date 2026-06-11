@@ -594,13 +594,17 @@ class Daemon:
             is_edited=is_edited,
         )
 
-        await self._conn.execute(
+        cursor = await self._conn.execute(
             """INSERT OR IGNORE INTO messages (telegram_message_id, chat_id, from_user_id, text, voice_file_id, timestamp)
                VALUES (?, ?, ?, ?, ?, ?)""",
             (incoming.telegram_message_id, incoming.chat_id, incoming.from_user_id,
              incoming.text, incoming.voice_file_id, incoming.timestamp),
         )
         await self._conn.commit()
+        if cursor.rowcount == 0:
+            # Duplicate telegram_message_id — already processed (e.g. edited_message re-delivery)
+            logger.debug("Duplicate message_id=%d — skipping", incoming.telegram_message_id)
+            return
 
         pending = self._pending_messages.get(chat_id)
         if pending and should_bundle(pending, incoming):
