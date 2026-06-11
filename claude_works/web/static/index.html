@@ -21,6 +21,10 @@
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; min-height: 100vh; }
+    @keyframes uplinkBlink { 0%,100%{opacity:1} 50%{opacity:0} }
+    #tab-chat #chatHistory::-webkit-scrollbar { width: 4px; }
+    #tab-chat #chatHistory::-webkit-scrollbar-track { background: #0a0e13; }
+    #tab-chat #chatHistory::-webkit-scrollbar-thumb { background: #1c2128; border-radius: 2px; }
 
     /* auth overlay */
     #authOverlay { position: fixed; inset: 0; background: rgba(0,0,0,.85); display: flex; align-items: center; justify-content: center; z-index: 100; }
@@ -563,22 +567,29 @@
 </div>
 
 <div class="section" id="tab-chat">
-  <div style="display:flex;flex-direction:column;height:calc(100vh - 140px)">
-    <div style="padding:10px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:14px;background:var(--surface);flex-shrink:0">
-      <span style="font-family:monospace;font-size:10px;letter-spacing:2px;color:var(--muted)">MODE://</span>
-      <button id="modeBtn-run" onclick="setMode('run')" style="padding:4px 12px;font-size:12px;font-family:monospace;letter-spacing:1px;border-radius:3px;cursor:pointer;transition:all .15s">▶ RUN</button>
-      <button id="modeBtn-repair" onclick="setMode('repair')" style="padding:4px 12px;font-size:12px;font-family:monospace;letter-spacing:1px;border-radius:3px;cursor:pointer;transition:all .15s">⚠ REPAIR</button>
-      <div id="uplinkRepairInfo" style="display:none;margin-left:8px;font-size:12px;color:var(--yellow);font-family:monospace"></div>
-      <span id="modeIndicator" style="margin-left:auto;font-family:monospace;font-size:11px;letter-spacing:1px"></span>
+  <div style="display:flex;flex-direction:column;height:calc(100vh - 140px);font-family:'Fira Code','Cascadia Code','JetBrains Mono',monospace">
+    <!-- terminal header / mode bar -->
+    <div style="background:#0a0e13;border-bottom:1px solid #1c2128;padding:0;display:flex;align-items:stretch;flex-shrink:0;font-family:inherit;font-size:12px;user-select:none">
+      <div style="padding:6px 14px;display:flex;align-items:center;gap:10px;border-right:1px solid #1c2128;color:#58a6ff;letter-spacing:1.5px;font-size:11px">UPLINK</div>
+      <div style="padding:6px 14px;display:flex;align-items:center;gap:6px;border-right:1px solid #1c2128">
+        <button id="modeBtn-run" onclick="setMode('run')" style="padding:2px 10px;font-family:inherit;font-size:11px;letter-spacing:.8px;border-radius:2px;cursor:pointer;border:none;transition:background .12s,color .12s">RUN</button>
+        <button id="modeBtn-repair" onclick="setMode('repair')" style="padding:2px 10px;font-family:inherit;font-size:11px;letter-spacing:.8px;border-radius:2px;cursor:pointer;border:none;transition:background .12s,color .12s">REPAIR</button>
+      </div>
+      <div id="uplinkRepairInfo" style="display:none;padding:6px 14px;align-items:center;color:#d29922;font-size:11px;flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis"></div>
+      <div style="flex:1"></div>
+      <div id="modeIndicator" style="padding:6px 14px;display:flex;align-items:center;font-size:11px;letter-spacing:.8px;border-left:1px solid #1c2128"></div>
     </div>
-    <div id="chatHistory" style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px">
-      <div id="chatPlaceholder" style="color:var(--muted);font-size:13px;text-align:center">Lade Verlauf…</div>
+    <!-- scrollback -->
+    <div id="chatHistory" style="flex:1;overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:2px;background:#0a0e13">
+      <div id="chatPlaceholder" style="color:#3d444d;font-size:12px;font-family:inherit">-- session start --</div>
     </div>
-    <div style="padding:12px;border-top:1px solid var(--border);display:flex;gap:8px">
-      <textarea id="chatInput" placeholder="Message…" rows="2"
-        style="flex:1;padding:8px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px;resize:none;font-family:inherit;font-size:14px"
-        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAdminChat()}"></textarea>
-      <button class="btn" onclick="sendAdminChat()" style="align-self:flex-end;padding:8px 16px">Send</button>
+    <!-- input row -->
+    <div style="background:#0a0e13;border-top:1px solid #1c2128;padding:8px 16px;display:flex;align-items:center;gap:0">
+      <span id="termPrompt" style="color:#3fb950;font-size:13px;white-space:nowrap;padding-right:6px">operator@uplink:~$</span>
+      <input id="chatInput" type="text" autocomplete="off" spellcheck="false"
+        style="flex:1;background:transparent;border:none;outline:none;color:#e6edf3;font-family:inherit;font-size:13px;caret-color:#3fb950"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();sendAdminChat()}"
+        placeholder="">
     </div>
   </div>
 </div>
@@ -790,24 +801,26 @@ async function loadUplink() {
 }
 
 function _renderModeBar() {
-  const modes = { run: { color: 'var(--green)', label: '▶ RUN' }, repair: { color: 'var(--yellow)', label: '⚠ REPAIR' } };
-  Object.entries(modes).forEach(([m, cfg]) => {
+  const MODES = {
+    run:    { color: '#3fb950', bg: '#0f2a15', label: 'RUN' },
+    repair: { color: '#d29922', bg: '#2a1f08', label: 'REPAIR' },
+  };
+  Object.entries(MODES).forEach(([m, cfg]) => {
     const btn = document.getElementById('modeBtn-' + m);
     if (!btn) return;
     const active = m === _uplinkMode;
-    btn.style.background = active ? cfg.color : 'transparent';
-    btn.style.color = active ? 'var(--bg)' : cfg.color;
-    btn.style.border = `1px solid ${cfg.color}`;
+    btn.style.background = active ? cfg.bg : 'transparent';
+    btn.style.color = active ? cfg.color : '#3d444d';
     btn.style.fontWeight = active ? '700' : '400';
+    btn.style.outline = active ? '1px solid ' + cfg.color : '1px solid transparent';
   });
   const ind = document.getElementById('modeIndicator');
   if (ind) {
-    const color = _uplinkMode === 'run' ? 'var(--green)' : 'var(--yellow)';
-    ind.textContent = '● ' + _uplinkMode.toUpperCase();
-    ind.style.color = color;
+    const cfg = MODES[_uplinkMode] || MODES.run;
+    ind.innerHTML = '<span style="color:' + cfg.color + ';animation:uplinkBlink 2s step-end infinite">●</span>&nbsp;<span style="color:' + cfg.color + '">' + cfg.label + '</span>';
   }
   const repairInfo = document.getElementById('uplinkRepairInfo');
-  if (repairInfo) repairInfo.style.display = _uplinkMode === 'repair' ? 'block' : 'none';
+  if (repairInfo) repairInfo.style.display = _uplinkMode === 'repair' ? 'flex' : 'none';
 }
 
 async function setMode(mode) {
@@ -1314,16 +1327,33 @@ async function loadLogs() {
   } catch (e) { pre.textContent = 'Error: ' + e; }
 }
 
+function _termTs() {
+  const d = new Date();
+  return '[' + d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0') + ':' + d.getSeconds().toString().padStart(2,'0') + ']';
+}
+
 function _appendChatBubble(container, role, text) {
-  const bubble = document.createElement('div');
-  if (role === 'user') {
-    bubble.style.cssText = 'align-self:flex-end;max-width:75%;padding:8px 12px;background:#1f4068;border-radius:8px;font-size:14px;white-space:pre-wrap;word-break:break-word';
-  } else {
-    bubble.style.cssText = 'align-self:flex-start;max-width:75%;padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;font-size:14px;white-space:pre-wrap;word-break:break-word';
-  }
-  bubble.textContent = text;
-  container.appendChild(bubble);
-  return bubble;
+  const LINE = 'font-family:inherit;font-size:13px;white-space:pre-wrap;word-break:break-word;line-height:1.6;padding:1px 0';
+  const ts = _termTs();
+  const lines = String(text).split('\n');
+  let first = null;
+  lines.forEach((l, i) => {
+    const div = document.createElement('div');
+    div.style.cssText = LINE;
+    if (i === 0) {
+      if (role === 'user') {
+        div.innerHTML = '<span style="color:#3d444d">' + ts + '</span> <span style="color:#3fb950">operator@uplink:~$</span> <span style="color:#e6edf3">' + esc(l) + '</span>';
+      } else {
+        div.innerHTML = '<span style="color:#3d444d">' + ts + '</span> <span style="color:#58a6ff">system:~$</span> <span style="color:#cdd9e5">' + esc(l) + '</span>';
+      }
+      first = div;
+    } else {
+      const indent = role === 'user' ? '#e6edf3' : '#cdd9e5';
+      div.innerHTML = '<span style="color:transparent">' + ts + ' &gt; </span><span style="color:' + indent + '">' + esc(l) + '</span>';
+    }
+    container.appendChild(div);
+  });
+  return first;
 }
 
 async function loadAdminChatHistory() {
@@ -1335,8 +1365,8 @@ async function loadAdminChatHistory() {
   if (placeholder) placeholder.remove();
   if (d.messages.length === 0) {
     const empty = document.createElement('div');
-    empty.style.cssText = 'color:var(--muted);font-size:13px;text-align:center';
-    empty.textContent = 'Noch kein Verlauf.';
+    empty.style.cssText = 'color:#3d444d;font-size:12px;font-family:inherit';
+    empty.textContent = '-- no history --';
     history.appendChild(empty);
   } else {
     d.messages.forEach(m => _appendChatBubble(history, m.role, m.content));
@@ -1359,19 +1389,22 @@ async function sendAdminChat() {
 
   _appendChatBubble(history, 'user', text);
 
-  const thinkingBubble = document.createElement('div');
-  thinkingBubble.style.cssText = 'align-self:flex-start;max-width:75%;padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;font-size:14px;color:var(--muted)';
-  thinkingBubble.innerHTML = '<span class="typing-dot">•</span><span class="typing-dot">•</span><span class="typing-dot">•</span>';
-  history.appendChild(thinkingBubble);
+  const pending = document.createElement('div');
+  pending.style.cssText = 'font-family:inherit;font-size:13px;line-height:1.6;padding:1px 0;color:#3d444d';
+  pending.innerHTML = '<span style="color:#3d444d">' + _termTs() + '</span> <span style="color:#58a6ff">system:~$</span> <span id="uplinkCursor" style="color:#58a6ff;animation:uplinkBlink 1s step-end infinite">▋</span>';
+  history.appendChild(pending);
   history.scrollTop = history.scrollHeight;
 
   try {
     const d = await api('/api/admin/chat', { method: 'POST', body: JSON.stringify({ message: text }) });
-    thinkingBubble.style.color = 'var(--text)';
-    thinkingBubble.textContent = d ? d.reply : 'Error: no response';
+    pending.remove();
+    _appendChatBubble(history, 'assistant', d ? d.reply : '(no response)');
   } catch (e) {
-    thinkingBubble.style.color = 'var(--red)';
-    thinkingBubble.textContent = 'Error: ' + e;
+    pending.remove();
+    const err = document.createElement('div');
+    err.style.cssText = 'font-family:inherit;font-size:13px;color:#f85149;padding:1px 0';
+    err.textContent = _termTs() + ' system:~$ ERROR: ' + e;
+    history.appendChild(err);
   }
 
   history.scrollTop = history.scrollHeight;
