@@ -1785,7 +1785,7 @@ function drawUsageChart(usageData, isCli) {
     ctx.strokeStyle = s.color; ctx.lineWidth = 2;
     ctx.setLineDash(s.dash);
     ctx.beginPath();
-    s.pts.forEach((p, i) => { i === 0 ? ctx.moveTo(toX(p.t), toY(p.v)) : ctx.lineTo(toX(p.t), toY(p.v)); });
+    s.pts.forEach((p, i) => { (i === 0 || p.t - s.pts[i - 1].t > 3600) ? ctx.moveTo(toX(p.t), toY(p.v)) : ctx.lineTo(toX(p.t), toY(p.v)); });
     ctx.stroke(); ctx.setLineDash([]);
     // endpoint dot
     const last = s.pts[s.pts.length - 1];
