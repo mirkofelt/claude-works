@@ -1033,7 +1033,13 @@ class Daemon:
             )
             await self._conn.commit()
         elif error:
-            logger.debug("Agent error for task=%s (recovery will handle user notification): %s", task.id, error)
+            if "CLI_AUTH_REQUIRED" in error:
+                await self._api.send_message(
+                    task.chat_id,
+                    "Claude CLI nicht eingeloggt. Sende /reauth um dich zu authentifizieren."
+                )
+            else:
+                logger.debug("Agent error for task=%s (recovery will handle user notification): %s", task.id, error)
 
     async def _on_task_requeued(self, task: KanbanTask) -> None:
         self._stop_typing(task.chat_id)

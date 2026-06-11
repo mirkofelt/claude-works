@@ -161,6 +161,7 @@ class CliProvider(LLMProvider):
 
         if proc.returncode != 0:
             stderr_text = stderr.decode()
+            stdout_text = stdout.decode()
             if re.search(r"rate.?limit|429|too many requests", stderr_text, re.IGNORECASE):
                 retry_after = None
                 m = re.search(r"retry.after[:\s]+(\d+)", stderr_text, re.IGNORECASE)
@@ -169,7 +170,15 @@ class CliProvider(LLMProvider):
                 raise RateLimitError(
                     f"LLM CLI rate limited: {stderr_text[:200]}", retry_after=retry_after
                 )
-            raise RuntimeError(f"LLM CLI exited {proc.returncode}: stderr={stderr.decode()[:300]} stdout={stdout.decode()[:300]}")
+            # Try to extract human-readable result from JSON stdout
+            cli_result = None
+            try:
+                cli_result = json.loads(stdout_text).get("result", "")
+            except Exception:
+                pass
+            if cli_result and re.search(r"not logged in|login|auth", cli_result, re.IGNORECASE):
+                raise RuntimeError(f"CLI_AUTH_REQUIRED: {cli_result}")
+            raise RuntimeError(f"LLM CLI exited {proc.returncode}: stderr={stderr_text[:200]} stdout={stdout_text[:200]}")
 
         data = json.loads(stdout.decode())
         if data.get("type") == "error" or data.get("subtype") == "error":
