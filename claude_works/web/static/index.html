@@ -531,6 +531,23 @@
       <button class="btn btn-ghost" onclick="setTokenPeriod('30d')" id="tp-30d">30d</button>
     </div>
   </div>
+  <!-- live limit gauge — only shown when limit data available -->
+  <div id="limitGaugeCard" class="card" style="margin-bottom:16px;display:none;padding:14px 16px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <span style="font-size:.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Billing Period Limit</span>
+      <span id="limitResetIn" style="font-size:.75rem;color:var(--muted)"></span>
+    </div>
+    <div style="display:flex;align-items:center;gap:12px">
+      <div style="flex:1;background:var(--border);border-radius:3px;height:8px;overflow:hidden">
+        <div id="limitBar" style="height:100%;border-radius:3px;transition:width .4s,background .4s;width:0%"></div>
+      </div>
+      <span id="limitPct" style="font-size:13px;font-weight:600;min-width:40px;text-align:right"></span>
+    </div>
+    <div style="display:flex;justify-content:space-between;margin-top:4px">
+      <span id="limitUsed" style="font-size:.7rem;color:var(--muted)"></span>
+      <span id="limitTotal" style="font-size:.7rem;color:var(--muted)"></span>
+    </div>
+  </div>
   <div class="card" style="margin-bottom:16px">
     <div class="chart-wrap">
       <canvas id="tokenChart"></canvas>
@@ -546,7 +563,10 @@
     </div>
   </div>
   <div class="card" id="usageChartCard" style="margin-bottom:16px;display:none">
-    <div style="font-size:.75rem;color:var(--muted);padding:8px 12px 0">Claude Code usage (billing period)</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px 0">
+      <span style="font-size:.75rem;color:var(--muted)">Token limit consumption (billing period)</span>
+      <span id="usagePctLabel" style="font-size:.75rem;font-weight:600"></span>
+    </div>
     <div class="chart-wrap">
       <canvas id="usageChart"></canvas>
     </div>
@@ -1164,9 +1184,36 @@ function setTokenPeriod(p) {
   loadTokens();
 }
 
+async function loadLimitGauge() {
+  const d = await api('/api/usage');
+  const card = document.getElementById('limitGaugeCard');
+  if (!d || d.tokens_used == null || d.tokens_limit == null || d.tokens_limit === 0) {
+    if (card) card.style.display = 'none';
+    return;
+  }
+  card.style.display = '';
+  const pct = Math.min(100, Math.round((d.tokens_used / d.tokens_limit) * 100));
+  const bar = document.getElementById('limitBar');
+  const barColor = pct >= 90 ? 'var(--red)' : pct >= 70 ? 'var(--yellow)' : 'var(--green)';
+  if (bar) { bar.style.width = pct + '%'; bar.style.background = barColor; }
+  const pctEl = document.getElementById('limitPct');
+  if (pctEl) { pctEl.textContent = pct + '%'; pctEl.style.color = barColor; }
+  const usedEl = document.getElementById('limitUsed');
+  if (usedEl) usedEl.textContent = fmt(d.tokens_used) + ' used';
+  const totalEl = document.getElementById('limitTotal');
+  if (totalEl) totalEl.textContent = fmt(d.tokens_limit) + ' limit';
+  const resetEl = document.getElementById('limitResetIn');
+  if (resetEl && d.reset_in_seconds != null) {
+    const h = Math.floor(d.reset_in_seconds / 3600);
+    const days = Math.floor(h / 24);
+    resetEl.textContent = 'resets in ' + (days > 0 ? days + 'd ' + (h % 24) + 'h' : h + 'h');
+  }
+}
+
 async function loadTokens() {
   const data = await api('/api/tokens?period=' + tokenPeriod);
   if (!data) return;
+  loadLimitGauge();
 
   const b = document.getElementById('tokenBody');
   const classes = Object.keys(data.stats || {});
@@ -1428,46 +1475,57 @@ function drawUsageChart(usageData) {
     ctx.fillText('limit', PAD.left + 4, y - 3);
   }
 
-  // line
   const tMin = pts[0].sampled_at, tMax = pts[pts.length - 1].sampled_at || tMin + 1;
   const tRange = tMax - tMin || 1;
   const toX = t => PAD.left + ((t - tMin) / tRange) * cW;
   const toY = v => PAD.top + cH * (1 - Math.min(v, maxVal) / maxVal);
 
-  ctx.strokeStyle = '#58a6ff'; ctx.lineWidth = 2;
+  const last = pts[pts.length - 1];
+  const lastPct = limit ? last.tokens_used / limit : null;
+  const lineColor = lastPct != null ? (lastPct >= 0.9 ? '#f85149' : lastPct >= 0.7 ? '#d29922' : '#58a6ff') : '#58a6ff';
+
+  // area fill
   ctx.beginPath();
-  pts.forEach((d, i) => {
-    const x = toX(d.sampled_at), y = toY(d.tokens_used);
-    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-  });
+  ctx.moveTo(toX(pts[0].sampled_at), PAD.top + cH);
+  pts.forEach(d => ctx.lineTo(toX(d.sampled_at), toY(d.tokens_used)));
+  ctx.lineTo(toX(last.sampled_at), PAD.top + cH);
+  ctx.closePath();
+  ctx.fillStyle = lineColor.replace('#', 'rgba(').replace(/^rgba\((..)(..)(..)/, (_, r, g, b) =>
+    `rgba(${parseInt(r,16)},${parseInt(g,16)},${parseInt(b,16)}`) + ',0.12)';
+  // simple fallback fill
+  ctx.fillStyle = lastPct >= 0.9 ? 'rgba(248,81,73,0.1)' : lastPct >= 0.7 ? 'rgba(210,153,34,0.1)' : 'rgba(88,166,255,0.1)';
+  ctx.fill();
+
+  // line
+  ctx.strokeStyle = lineColor; ctx.lineWidth = 2;
+  ctx.beginPath();
+  pts.forEach((d, i) => { i === 0 ? ctx.moveTo(toX(d.sampled_at), toY(d.tokens_used)) : ctx.lineTo(toX(d.sampled_at), toY(d.tokens_used)); });
   ctx.stroke();
 
-  // dots
-  ctx.fillStyle = '#58a6ff';
-  pts.forEach(d => {
-    ctx.beginPath();
-    ctx.arc(toX(d.sampled_at), toY(d.tokens_used), 3, 0, Math.PI * 2);
-    ctx.fill();
-  });
+  // endpoint dot
+  ctx.beginPath(); ctx.arc(toX(last.sampled_at), toY(last.tokens_used), 4, 0, Math.PI * 2);
+  ctx.fillStyle = lineColor; ctx.fill();
 
   // x labels
   ctx.fillStyle = '#8b949e'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
   const labelStep = Math.max(1, Math.floor(pts.length / 6));
   pts.forEach((d, i) => {
     if (i % labelStep !== 0 && i !== pts.length - 1) return;
-    const x = toX(d.sampled_at);
     const dt = new Date(d.sampled_at * 1000);
     const lbl = pts.length <= 25
       ? dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       : dt.toLocaleDateString([], { month: 'short', day: 'numeric' });
-    ctx.fillText(lbl, x, H - 8);
+    ctx.fillText(lbl, toX(d.sampled_at), H - 8);
   });
 
-  // current value label
-  const last = pts[pts.length - 1];
-  const pct = limit ? ` (${Math.round(last.tokens_used / limit * 100)}%)` : '';
-  ctx.fillStyle = '#58a6ff'; ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'right';
-  ctx.fillText(fmt(last.tokens_used) + pct, W - PAD.right, PAD.top - 4);
+  // header pct label
+  if (lastPct != null) {
+    const pctEl = document.getElementById('usagePctLabel');
+    if (pctEl) {
+      pctEl.textContent = Math.round(lastPct * 100) + '% used';
+      pctEl.style.color = lineColor;
+    }
+  }
 }
 
 async function loadLogs() {

@@ -825,9 +825,11 @@ async def get_tokens(period: str = "24h"):
     cli_usage_ts = []
     llm_cfg = config.section("llm")
     if llm_cfg.get("provider") == "cli":
+        # always span full billing period (30d) regardless of selected period
+        billing_since = int(time.time()) - 2592000
         async with conn.execute(
             "SELECT sampled_at, tokens_used, tokens_limit FROM usage_snapshots WHERE sampled_at >= ? ORDER BY sampled_at ASC",
-            (since,),
+            (billing_since,),
         ) as cur:
             cli_rows = await cur.fetchall()
         cli_usage_ts = [
