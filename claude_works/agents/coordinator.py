@@ -210,7 +210,10 @@ class AgentCoordinator:
         started = time.time()
 
         try:
-            await self._board.start(task.id, agent_run_id)
+            started = await self._board.start(task.id, agent_run_id)
+            if not started:
+                logger.warning("Specialist %s task %d already claimed — skipping", agent_class.value, task.id)
+                return
 
             content = await _inject_knowledge(task.content, task.user_id)
             result = await asyncio.wait_for(agent.run(content), timeout=timeout)

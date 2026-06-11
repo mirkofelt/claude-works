@@ -276,6 +276,7 @@ class Daemon:
 
         self._board = KanbanBoard(self._conn)
         self._token_tracker = TokenTracker(self._conn)
+        await self._reset_stale_tasks()
 
         self._coordinator = AgentCoordinator(
             board=self._board,
@@ -305,6 +306,33 @@ class Daemon:
 
         self._running = True
         logger.info("claude-works daemon started in RUN mode")
+
+    async def _reset_stale_tasks(self) -> None:
+        """Reset tasks interrupted by previous crash/restart so they're retried cleanly."""
+        from .kanban.models import Lane
+        stale_lanes = (Lane.ASSIGNED.value, Lane.IN_PROGRESS.value, Lane.REVIEW.value)
+        placeholders = ",".join("?" * len(stale_lanes))
+        # Reset root tasks to BACKLOG
+        async with self._conn.execute(
+            f"""UPDATE kanban_tasks SET lane = ?, agent_class = NULL, agent_id = NULL,
+                started_at = NULL, assigned_at = NULL
+                WHERE lane IN ({placeholders}) AND parent_id IS NULL""",
+            (Lane.BACKLOG.value, *stale_lanes),
+        ) as cur:
+            root_reset = cur.rowcount
+        await self._conn.commit()
+        # Remove orphaned child tasks — their parent will re-decompose
+        async with self._conn.execute(
+            f"DELETE FROM kanban_tasks WHERE lane IN ({placeholders}) AND parent_id IS NOT NULL",
+            stale_lanes,
+        ) as cur:
+            children_removed = cur.rowcount
+        await self._conn.commit()
+        if root_reset or children_removed:
+            logger.info(
+                "Startup cleanup: %d root tasks → BACKLOG, %d orphaned children removed",
+                root_reset, children_removed,
+            )
 
     async def stop(self) -> None:
         if self._stop_called:

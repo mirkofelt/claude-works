@@ -119,7 +119,10 @@ class ProductOwnerAgent:
         agent_id = f"po-{self.id}"
 
         try:
-            await self._board.start(task.id, agent_id)
+            started = await self._board.start(task.id, agent_id)
+            if not started:
+                logger.warning("PO task %d already claimed — skipping", task.id)
+                return
 
             subtasks_spec = await self._decompose(task)
             logger.info("PO task=%d → %d subtasks", task.id, len(subtasks_spec))

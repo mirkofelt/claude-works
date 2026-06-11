@@ -85,7 +85,10 @@ class ChiefAgent:
         timeout = cfg.get("task_timeout_seconds", 600)
         agent_id = f"chief-{self.id}"
         try:
-            await self._board.start(task.id, agent_id)
+            started = await self._board.start(task.id, agent_id)
+            if not started:
+                logger.warning("Chief task %d already claimed — skipping", task.id)
+                return
             result = await asyncio.wait_for(agent.run(task.content), timeout=timeout)
             await self._board.complete(task.id, result)
             await on_result(task, result, None)
