@@ -76,21 +76,35 @@ async def add(
     return entry_id  # type: ignore[return-value]
 
 
-async def update(conn: aiosqlite.Connection, entry_id: int, *, content: str, tags: list[str] | None = None) -> bool:
+async def update(
+    conn: aiosqlite.Connection,
+    entry_id: int,
+    *,
+    title: str | None = None,
+    content: str | None = None,
+    type: str | None = None,
+    tags: list[str] | None = None,
+) -> bool:
     now = int(time.time())
-    tags_json = json.dumps(tags) if tags is not None else None
-    if tags_json is not None:
-        async with conn.execute(
-            "UPDATE knowledge SET content = ?, tags = ?, updated_at = ? WHERE id = ?",
-            (content, tags_json, now, entry_id),
-        ) as cur:
-            updated = cur.rowcount
-    else:
-        async with conn.execute(
-            "UPDATE knowledge SET content = ?, updated_at = ? WHERE id = ?",
-            (content, now, entry_id),
-        ) as cur:
-            updated = cur.rowcount
+    sets: list[str] = ["updated_at = ?"]
+    params: list = [now]
+    if title is not None:
+        sets.append("title = ?")
+        params.append(title)
+    if content is not None:
+        sets.append("content = ?")
+        params.append(content)
+    if type is not None:
+        sets.append("type = ?")
+        params.append(type)
+    if tags is not None:
+        sets.append("tags = ?")
+        params.append(json.dumps(tags))
+    params.append(entry_id)
+    async with conn.execute(
+        f"UPDATE knowledge SET {', '.join(sets)} WHERE id = ?", params
+    ) as cur:
+        updated = cur.rowcount
     await conn.commit()
     return updated > 0
 

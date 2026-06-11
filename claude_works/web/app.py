@@ -534,6 +534,27 @@ async def add_knowledge(body: dict):
     return {"id": entry_id}
 
 
+@app.put("/api/knowledge/{entry_id}", dependencies=[Depends(_verify_token)])
+async def update_knowledge(entry_id: int, body: dict):
+    conn = await _get_conn()
+    raw_tags = body.get("tags")
+    tags = raw_tags if isinstance(raw_tags, list) else (
+        [t.strip() for t in raw_tags.split(",") if t.strip()] if isinstance(raw_tags, str) else None
+    )
+    ok = await knowledge_store.update(
+        conn,
+        entry_id,
+        title=body.get("title") or None,
+        content=body.get("content") or None,
+        type=body.get("type") or None,
+        tags=tags,
+    )
+    await conn.close()
+    if not ok:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    return {"ok": True}
+
+
 @app.delete("/api/knowledge/{entry_id}", dependencies=[Depends(_verify_token)])
 async def delete_knowledge(entry_id: int):
     conn = await _get_conn()

@@ -167,6 +167,13 @@
     .typing-dot { display:inline-block; animation:typing-blink 1.2s infinite; margin:0 1px; font-size:18px; line-height:1 }
     .typing-dot:nth-child(2) { animation-delay:.2s }
     .typing-dot:nth-child(3) { animation-delay:.4s }
+    /* kb entry modal */
+    #kbModal { position:fixed;inset:0;background:rgba(0,0,0,.8);display:none;align-items:center;justify-content:center;z-index:150;padding:24px; }
+    #kbModal.open { display:flex; }
+    .kb-modal-box { background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:24px;width:100%;max-width:700px;max-height:88vh;display:flex;flex-direction:column;gap:12px;overflow:hidden; }
+    .kb-modal-view { flex:1;overflow-y:auto;white-space:pre-wrap;font-size:13px;color:var(--text);line-height:1.6;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:12px;min-height:100px; }
+    .kb-modal-edit { display:none;flex-direction:column;gap:8px;flex:1;overflow-y:auto; }
+    .kb-modal-edit textarea { resize:vertical;min-height:220px;width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:8px;border-radius:4px;font-size:13px;font-family:inherit;line-height:1.5; }
   </style>
 </head>
 <body>
@@ -1485,6 +1492,7 @@ function doGateSubmit() {
 })();
 
 let _kbPage = 1;
+let _kbItems = [];
 
 async function loadKnowledge() {
   const q = document.getElementById('kbQ').value.trim();
@@ -1496,21 +1504,25 @@ async function loadKnowledge() {
   const data = await api('/api/knowledge?' + params.join('&'));
   const b = document.getElementById('kbBody');
   const pager = document.getElementById('kbPager');
-  if (!data || !data.items) { b.innerHTML = '<tr><td colspan="6" class="empty">No entries</td></tr>'; pager.innerHTML=''; return; }
+  if (!data || !data.items) { _kbItems = []; b.innerHTML = '<tr><td colspan="6" class="empty">No entries</td></tr>'; pager.innerHTML=''; return; }
   const {items, total, page, pages} = data;
+  _kbItems = items;
   if (!items.length) { b.innerHTML = '<tr><td colspan="6" class="empty">No entries</td></tr>'; pager.innerHTML=''; return; }
   b.innerHTML = items.map(e => {
-    const preview = e.content.length > 120 ? esc(e.content.slice(0,120)) + '…' : esc(e.content);
+    const preview = e.content.length > 100 ? esc(e.content.slice(0,100)) + '…' : esc(e.content);
     const tags = (e.tags||[]).map(t => `<span style="font-size:.7rem;background:var(--bg);padding:.1rem .35rem;border-radius:3px;color:var(--accent);margin-right:.2rem">${esc(t)}</span>`).join('');
     return `<tr>
       <td><span class="badge b-backlog" style="font-size:.7rem">${esc(e.type)}</span></td>
-      <td style="font-weight:600;color:var(--accent2);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(e.title)}</td>
+      <td style="font-weight:600;color:var(--accent);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer" onclick="openKbEntry(${e.id})" title="Click to open">${esc(e.title)}</td>
       <td style="max-width:140px">${tags}</td>
-      <td style="font-size:.8rem;color:var(--muted);max-width:300px">
-        <span title="${esc(e.content)}" style="cursor:help">${preview}</span>
+      <td style="font-size:.8rem;color:var(--muted);max-width:280px;cursor:pointer" onclick="openKbEntry(${e.id})">
+        <span style="cursor:pointer">${preview}</span>
       </td>
       <td style="color:var(--muted);font-size:.75rem;white-space:nowrap">${new Date(e.updated_at*1000).toLocaleDateString()}</td>
-      <td><button class="btn btn-ghost" style="padding:.1rem .35rem;font-size:.75rem" onclick="deleteKnowledge(${e.id})">✕</button></td>
+      <td style="display:flex;gap:3px">
+        <button class="btn btn-ghost" style="padding:.1rem .35rem;font-size:.75rem" onclick="openKbEntry(${e.id})" title="Edit">✎</button>
+        <button class="btn btn-ghost" style="padding:.1rem .35rem;font-size:.75rem" onclick="deleteKnowledge(${e.id})">✕</button>
+      </td>
     </tr>`;
   }).join('');
   pager.innerHTML = `
@@ -1729,6 +1741,99 @@ async function saveSettings() {
     msg.textContent = 'Save failed: ' + e; msg.style.color = 'var(--red)'; msg.style.display = 'inline';
   }
 }
+
+// ── KB modal ──────────────────────────────────────────────────────────────────
+let _kbCurrentEntry = null;
+
+function openKbEntry(id) {
+  const entry = (_kbItems || []).find(e => e.id === id);
+  if (!entry) return;
+  _kbCurrentEntry = entry;
+  document.getElementById('kbModalTitle').textContent = entry.title;
+  document.getElementById('kbModalType').innerHTML = `<span class="badge b-backlog" style="font-size:.7rem">${esc(entry.type)}</span>`;
+  document.getElementById('kbModalTags').textContent = (entry.tags || []).join(', ') || '';
+  document.getElementById('kbModalView').textContent = entry.content;
+  document.getElementById('kbModalView').style.display = 'block';
+  document.getElementById('kbModalEdit').style.display = 'none';
+  document.getElementById('kbModalEditBtn').style.display = '';
+  document.getElementById('kbModal').classList.add('open');
+}
+
+function closeKbModal() {
+  document.getElementById('kbModal').classList.remove('open');
+  _kbCurrentEntry = null;
+}
+
+function editKbEntry() {
+  if (!_kbCurrentEntry) return;
+  const e = _kbCurrentEntry;
+  document.getElementById('kbModalEditTitle').value = e.title;
+  document.getElementById('kbModalEditTags').value = (e.tags || []).join(', ');
+  document.getElementById('kbModalEditType').value = e.type;
+  document.getElementById('kbModalEditContent').value = e.content;
+  document.getElementById('kbModalView').style.display = 'none';
+  document.getElementById('kbModalEditBtn').style.display = 'none';
+  document.getElementById('kbModalEdit').style.display = 'flex';
+}
+
+function cancelKbEdit() {
+  document.getElementById('kbModalView').style.display = 'block';
+  document.getElementById('kbModalEditBtn').style.display = '';
+  document.getElementById('kbModalEdit').style.display = 'none';
+}
+
+async function saveKbEntry() {
+  if (!_kbCurrentEntry) return;
+  const id = _kbCurrentEntry.id;
+  const title = document.getElementById('kbModalEditTitle').value.trim();
+  const content = document.getElementById('kbModalEditContent').value.trim();
+  const type = document.getElementById('kbModalEditType').value;
+  const rawTags = document.getElementById('kbModalEditTags').value.trim();
+  const tags = rawTags ? rawTags.split(',').map(t => t.trim()).filter(Boolean) : [];
+  if (!title || !content) return;
+  const ok = await api('/api/knowledge/' + id, { method: 'PUT', body: JSON.stringify({ title, content, type, tags }) });
+  if (ok) {
+    closeKbModal();
+    loadKnowledge();
+  }
+}
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeKbModal(); });
 </script>
+
+<div id="kbModal" onclick="if(event.target===this)closeKbModal()">
+  <div class="kb-modal-box">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+      <div>
+        <div id="kbModalTitle" style="font-size:16px;font-weight:600;color:var(--accent)"></div>
+        <div id="kbModalTags" style="font-size:.75rem;color:var(--muted);margin-top:3px"></div>
+      </div>
+      <div style="display:flex;gap:6px;flex-shrink:0">
+        <span id="kbModalType" style="font-size:.7rem;align-self:center"></span>
+        <button class="btn btn-ghost" id="kbModalEditBtn" onclick="editKbEntry()" style="font-size:.8rem;padding:.2rem .6rem">Edit</button>
+        <button class="btn btn-ghost" onclick="closeKbModal()" style="font-size:.8rem;padding:.2rem .5rem">✕</button>
+      </div>
+    </div>
+    <div id="kbModalView" class="kb-modal-view"></div>
+    <div id="kbModalEdit" class="kb-modal-edit">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem">
+        <input type="text" id="kbModalEditTitle" placeholder="Title" style="padding:.5rem;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px">
+        <input type="text" id="kbModalEditTags" placeholder="Tags (comma-separated)" style="padding:.5rem;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px">
+      </div>
+      <select id="kbModalEditType" style="padding:.5rem;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px;align-self:start;width:auto">
+        <option value="note">note</option>
+        <option value="fact">fact</option>
+        <option value="procedure">procedure</option>
+        <option value="context">context</option>
+        <option value="document">document</option>
+      </select>
+      <textarea id="kbModalEditContent" rows="12"></textarea>
+      <div style="display:flex;gap:.5rem">
+        <button class="btn btn-primary" onclick="saveKbEntry()">Save</button>
+        <button class="btn btn-ghost" onclick="cancelKbEdit()">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
 </body>
 </html>
