@@ -1023,9 +1023,11 @@ async function api(path, opts = {}) {
     r = await fetch(path, {
       ...o,
       credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) }
+      headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
+      signal: opts.signal,
     });
-  } catch {
+  } catch (e) {
+    if (e && e.name === 'AbortError') throw e;
     _showOfflineBanner();
     return null;
   }
@@ -1707,15 +1709,25 @@ async function sendAdminChat() {
   history.appendChild(pending);
   history.scrollTop = history.scrollHeight;
 
+  const CHAT_TIMEOUT_MS = 120000;
+  const abortCtrl = new AbortController();
+  const chatTimer = setTimeout(() => abortCtrl.abort(), CHAT_TIMEOUT_MS);
   try {
-    const d = await api('/api/admin/chat', { method: 'POST', body: JSON.stringify({ message: text }) });
+    const d = await api('/api/admin/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: text }),
+      signal: abortCtrl.signal,
+    });
+    clearTimeout(chatTimer);
     pending.remove();
     _appendChatBubble(history, 'assistant', d ? d.reply : '(no response)');
   } catch (e) {
+    clearTimeout(chatTimer);
     pending.remove();
     const err = document.createElement('div');
     err.style.cssText = 'font-family:inherit;font-size:13px;color:#f85149;padding:1px 0';
-    err.textContent = _termTs() + ' system:~$ ERROR: ' + e;
+    const msg = e && e.name === 'AbortError' ? 'Timeout — keine Antwort nach 120s. LLM konfiguriert?' : String(e);
+    err.textContent = _termTs() + ' system:~$ ERROR: ' + msg;
     history.appendChild(err);
   }
 
