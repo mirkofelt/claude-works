@@ -2080,11 +2080,28 @@ Rules:
                 self._usage_state = stats
                 pct_str = f"{stats.usage_pct * 100:.0f}%" if stats.usage_pct is not None else "?"
                 logger.info("Claude Code usage: %s (tokens %s/%s)", pct_str, stats.tokens_used, stats.tokens_limit)
-                if stats.usage_pct is not None or stats.tokens_used is not None:
+                has_data = (
+                    stats.usage_pct is not None
+                    or stats.tokens_used is not None
+                    or stats.session_pct is not None
+                )
+                if has_data:
                     try:
                         await self._conn.execute(
-                            "INSERT INTO usage_snapshots (tokens_used, tokens_limit, usage_pct, sampled_at) VALUES (?, ?, ?, ?)",
-                            (stats.tokens_used, stats.tokens_limit, stats.usage_pct, int(time.time())),
+                            """INSERT INTO usage_snapshots
+                               (tokens_used, tokens_limit, usage_pct,
+                                session_pct, weekly_all_pct, weekly_sonnet_pct,
+                                session_reset_at, weekly_reset_at, sampled_at)
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                            (
+                                stats.tokens_used, stats.tokens_limit,
+                                round(stats.usage_pct * 100, 1) if stats.usage_pct else None,
+                                round(stats.session_pct * 100, 1) if stats.session_pct else None,
+                                round(stats.weekly_all_pct * 100, 1) if stats.weekly_all_pct else None,
+                                round(stats.weekly_sonnet_pct * 100, 1) if stats.weekly_sonnet_pct else None,
+                                stats.session_reset_at, stats.weekly_reset_at,
+                                int(time.time()),
+                            ),
                         )
                         await self._conn.commit()
                     except Exception:

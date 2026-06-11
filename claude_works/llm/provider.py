@@ -245,7 +245,12 @@ class CliProvider(LLMProvider):
             return None
 
         stats = parse_usage_text(text)
-        return stats if (stats.tokens_used is not None or stats.usage_pct is not None) else None
+        has_data = (
+            stats.tokens_used is not None
+            or stats.usage_pct is not None
+            or stats.session_pct is not None
+        )
+        return stats if has_data else None
 
     async def close(self) -> None:
         pass

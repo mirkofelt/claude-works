@@ -387,7 +387,9 @@ async def get_mode():
 async def get_usage():
     if _daemon_ref and _daemon_ref._usage_state is not None:
         return _daemon_ref._usage_state.as_dict()
-    return {"tokens_used": None, "tokens_limit": None, "usage_pct": None, "reset_in_seconds": None}
+    return {"tokens_used": None, "tokens_limit": None, "usage_pct": None, "reset_in_seconds": None,
+            "session_pct": None, "weekly_all_pct": None, "weekly_sonnet_pct": None,
+            "session_reset_at": None, "weekly_reset_at": None}
 
 
 @app.get("/api/tasks/{task_id}/logs", dependencies=[Depends(_verify_token)])
@@ -899,24 +901,30 @@ async def get_tokens(period: str = "24h"):
     ) as cur:
         ts_rows = await cur.fetchall()
 
-    # Cumulative token consumption over billing period (30d) from internal tracker.
-    # Shown as "usage chart" regardless of provider — subscription limits unavailable from Max plan CLI.
+    # Subscription limit snapshots (Claude Max plan: session + weekly percentages)
     llm_cfg = config.section("llm")
     billing_since = int(time.time()) - 2592000
-    bucket_billing = 21600  # 6h buckets over 30 days
     async with conn.execute(
-        """SELECT (timestamp / ?) * ? as bucket,
-                  SUM(input_tokens + output_tokens) as total_tokens
-           FROM token_usage WHERE timestamp >= ?
-           GROUP BY bucket ORDER BY bucket ASC""",
-        (bucket_billing, bucket_billing, billing_since),
+        """SELECT sampled_at, session_pct, weekly_all_pct, weekly_sonnet_pct,
+                  session_reset_at, weekly_reset_at, tokens_used, tokens_limit
+           FROM usage_snapshots WHERE sampled_at >= ?
+           ORDER BY sampled_at ASC""",
+        (billing_since,),
     ) as cur:
-        billing_rows = await cur.fetchall()
-    cumulative = 0
-    cli_usage_ts = []
-    for r in billing_rows:
-        cumulative += (r["total_tokens"] or 0)
-        cli_usage_ts.append({"sampled_at": r["bucket"], "tokens_used": cumulative, "tokens_limit": None})
+        snap_rows = await cur.fetchall()
+    cli_usage_ts = [
+        {
+            "sampled_at": r["sampled_at"],
+            "session_pct": r["session_pct"],
+            "weekly_all_pct": r["weekly_all_pct"],
+            "weekly_sonnet_pct": r["weekly_sonnet_pct"],
+            "session_reset_at": r["session_reset_at"],
+            "weekly_reset_at": r["weekly_reset_at"],
+            "tokens_used": r["tokens_used"],
+            "tokens_limit": r["tokens_limit"],
+        }
+        for r in snap_rows
+    ]
 
     await conn.close()
 

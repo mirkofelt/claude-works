@@ -1360,28 +1360,58 @@ function setTokenPeriod(p) {
   loadTokens();
 }
 
+function _fmtResetIn(secs) {
+  if (secs == null) return '';
+  const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60);
+  return h > 0 ? h + 'h ' + m + 'm' : m + 'm';
+}
+function _gauge(pct, color) {
+  return `<div style="flex:1;background:var(--border);border-radius:3px;height:6px;overflow:hidden">
+    <div style="height:100%;border-radius:3px;width:${Math.min(100,pct)}%;background:${color}"></div></div>
+    <span style="min-width:36px;text-align:right;font-size:12px;font-weight:600;color:${color}">${pct}%</span>`;
+}
 async function loadLimitGauge() {
   const d = await api('/api/usage');
   const card = document.getElementById('limitGaugeCard');
-  const hasPct = d?.usage_pct != null;
+  const hasSubscription = d?.session_pct != null || d?.weekly_all_pct != null;
   const hasTokens = d?.tokens_used != null && d?.tokens_limit != null && d?.tokens_limit !== 0;
-  if (!d || (!hasPct && !hasTokens)) { if (card) card.style.display = 'none'; return; }
+  if (!d || (!hasSubscription && !hasTokens)) { if (card) card.style.display = 'none'; return; }
   card.style.display = '';
-  const pct = hasTokens ? Math.min(100, Math.round((d.tokens_used / d.tokens_limit) * 100)) : Math.min(100, Math.round(d.usage_pct));
-  const bar = document.getElementById('limitBar');
-  const barColor = pct >= 90 ? 'var(--red)' : pct >= 70 ? 'var(--yellow)' : 'var(--green)';
-  if (bar) { bar.style.width = pct + '%'; bar.style.background = barColor; }
-  const pctEl = document.getElementById('limitPct');
-  if (pctEl) { pctEl.textContent = pct + '%'; pctEl.style.color = barColor; }
-  const usedEl = document.getElementById('limitUsed');
-  if (usedEl) usedEl.textContent = hasTokens ? fmt(d.tokens_used) + ' used' : pct + '% used';
-  const totalEl = document.getElementById('limitTotal');
-  if (totalEl) totalEl.textContent = hasTokens ? fmt(d.tokens_limit) + ' limit' : '';
-  const resetEl = document.getElementById('limitResetIn');
-  if (resetEl && d.reset_in_seconds != null) {
-    const h = Math.floor(d.reset_in_seconds / 3600);
-    const days = Math.floor(h / 24);
-    resetEl.textContent = 'resets in ' + (days > 0 ? days + 'd ' + (h % 24) + 'h' : h + 'h');
+
+  if (hasSubscription) {
+    const now = Math.floor(Date.now() / 1000);
+    const sesReset = d.session_reset_at ? Math.max(0, d.session_reset_at - now) : null;
+    const wkReset = d.weekly_reset_at ? Math.max(0, d.weekly_reset_at - now) : null;
+    const rows = [];
+    if (d.session_pct != null) {
+      const c = d.session_pct >= 90 ? 'var(--red)' : d.session_pct >= 70 ? 'var(--yellow)' : 'var(--green)';
+      rows.push(`<div style="margin-bottom:8px"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px"><span style="font-size:11px;color:var(--muted)">Session</span><span style="font-size:11px;color:var(--muted)">${sesReset != null ? 'resets in ' + _fmtResetIn(sesReset) : ''}</span></div><div style="display:flex;align-items:center;gap:8px">${_gauge(d.session_pct, c)}</div></div>`);
+    }
+    if (d.weekly_all_pct != null) {
+      const c = d.weekly_all_pct >= 90 ? 'var(--red)' : d.weekly_all_pct >= 70 ? 'var(--yellow)' : 'var(--green)';
+      rows.push(`<div style="margin-bottom:8px"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px"><span style="font-size:11px;color:var(--muted)">Week (all models)</span><span style="font-size:11px;color:var(--muted)">${wkReset != null ? 'resets in ' + _fmtResetIn(wkReset) : ''}</span></div><div style="display:flex;align-items:center;gap:8px">${_gauge(d.weekly_all_pct, c)}</div></div>`);
+    }
+    if (d.weekly_sonnet_pct != null) {
+      const c = d.weekly_sonnet_pct >= 90 ? 'var(--red)' : d.weekly_sonnet_pct >= 70 ? 'var(--yellow)' : 'var(--green)';
+      rows.push(`<div><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px"><span style="font-size:11px;color:var(--muted)">Week (Sonnet only)</span></div><div style="display:flex;align-items:center;gap:8px">${_gauge(d.weekly_sonnet_pct, c)}</div></div>`);
+    }
+    // Replace card innards
+    const inner = card.querySelector('div');
+    if (inner) inner.innerHTML = '<div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:12px">Billing Limits</div>' + rows.join('');
+  } else {
+    // Legacy token-count gauge
+    const pct = Math.min(100, Math.round((d.tokens_used / d.tokens_limit) * 100));
+    const barColor = pct >= 90 ? 'var(--red)' : pct >= 70 ? 'var(--yellow)' : 'var(--green)';
+    const bar = document.getElementById('limitBar');
+    if (bar) { bar.style.width = pct + '%'; bar.style.background = barColor; }
+    const pctEl = document.getElementById('limitPct');
+    if (pctEl) { pctEl.textContent = pct + '%'; pctEl.style.color = barColor; }
+    const usedEl = document.getElementById('limitUsed');
+    if (usedEl) usedEl.textContent = fmt(d.tokens_used) + ' used';
+    const totalEl = document.getElementById('limitTotal');
+    if (totalEl) totalEl.textContent = fmt(d.tokens_limit) + ' limit';
+    const resetEl = document.getElementById('limitResetIn');
+    if (resetEl && d.reset_in_seconds != null) resetEl.textContent = 'resets in ' + _fmtResetIn(d.reset_in_seconds);
   }
 }
 
@@ -1663,10 +1693,18 @@ function drawUsageChart(usageData, isCli) {
   const ctx = _setupCanvas(canvas, W, H);
   ctx.clearRect(0, 0, W, H);
 
-  const pts = usageData.filter(d => d.tokens_used != null);
+  // Normalize: subscription pct format → tokens_used=pct, limit=100
+  const isSubscription = usageData.some(d => d.session_pct != null || d.weekly_all_pct != null);
+  const mapped = isSubscription
+    ? usageData.filter(d => d.session_pct != null).map(d => ({
+        ...d, tokens_used: d.session_pct, tokens_limit: 100,
+        _weekly: d.weekly_all_pct,
+      }))
+    : usageData.filter(d => d.tokens_used != null);
+  const pts = mapped;
   if (!pts.length) {
     ctx.fillStyle = '#3d444d'; ctx.font = '12px sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText('No activity yet — data appears after first agent call', W / 2, H / 2);
+    ctx.fillText('No usage snapshots yet — polls every 5 min', W / 2, H / 2);
     const pctEl = document.getElementById('usagePctLabel');
     if (pctEl) { pctEl.textContent = 'no data yet'; pctEl.style.color = 'var(--muted)'; }
     return;
@@ -1674,7 +1712,7 @@ function drawUsageChart(usageData, isCli) {
   // duplicate single point so line renders
   if (pts.length === 1) pts.push({ ...pts[0], sampled_at: pts[0].sampled_at + 300 });
 
-  const limit = usageData.find(d => d.tokens_limit)?.tokens_limit || null;
+  const limit = isSubscription ? 100 : (usageData.find(d => d.tokens_limit)?.tokens_limit || null);
   const maxVal = limit || Math.max(...pts.map(d => d.tokens_used || 0)) || 1;
   const PAD = { top: 20, bottom: 32, left: 60, right: 12 };
   const cW = W - PAD.left - PAD.right;
@@ -1687,7 +1725,7 @@ function drawUsageChart(usageData, isCli) {
     const y = PAD.top + cH * (1 - r);
     ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(W - PAD.right, y); ctx.stroke();
     ctx.fillStyle = '#8b949e'; ctx.font = '10px sans-serif'; ctx.textAlign = 'right';
-    ctx.fillText(fmt(Math.round(maxVal * r)), PAD.left - 4, y + 3);
+    ctx.fillText(isSubscription ? Math.round(maxVal * r) + '%' : fmt(Math.round(maxVal * r)), PAD.left - 4, y + 3);
   });
 
   // limit line
@@ -1744,11 +1782,25 @@ function drawUsageChart(usageData, isCli) {
     ctx.fillText(lbl, toX(d.sampled_at), H - 8);
   });
 
+  // weekly line (subscription mode only)
+  if (isSubscription) {
+    const wkPts = pts.filter(d => d._weekly != null);
+    if (wkPts.length > 1) {
+      ctx.strokeStyle = '#d29922'; ctx.lineWidth = 1.5;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      wkPts.forEach((d, i) => { i === 0 ? ctx.moveTo(toX(d.sampled_at), toY(d._weekly)) : ctx.lineTo(toX(d.sampled_at), toY(d._weekly)); });
+      ctx.stroke(); ctx.setLineDash([]);
+    }
+  }
+
   // header pct label
-  if (lastPct != null) {
+  if (lastPct != null || isSubscription) {
     const pctEl = document.getElementById('usagePctLabel');
     if (pctEl) {
-      pctEl.textContent = Math.round(lastPct * 100) + '% used';
+      const sesLabel = isSubscription ? `Session ${last.tokens_used}%` : `${Math.round(lastPct * 100)}% used`;
+      const wkLabel = isSubscription && last._weekly != null ? ` · Week ${last._weekly}%` : '';
+      pctEl.textContent = sesLabel + wkLabel;
       pctEl.style.color = lineColor;
     }
   }
