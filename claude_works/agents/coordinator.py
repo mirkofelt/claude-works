@@ -233,6 +233,11 @@ class AgentCoordinator:
                 logger.warning("Specialist %s task %d already claimed — skipping", agent_class.value, task.id)
                 return
 
+            if not task.content or not task.content.strip():
+                logger.warning("Specialist: task %d has empty content — failing immediately", task.id)
+                await self._board.fail(task.id, "Empty task content")
+                return
+
             content = await _inject_knowledge(task.content, task.user_id)
             sys_mode = _get_config().get("system", {}).get("mode", "run")
             if sys_mode != "run":
