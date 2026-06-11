@@ -372,6 +372,8 @@ class Daemon:
         self._typing_tasks: dict[int, asyncio.Task] = {}
         self._chat_task_ids: set[int] = set()
         self._chat_reply_to: dict[int, int] = {}
+        self._active_chat_content: dict[int, str] = {}
+        self._pending_chat_queue: dict[int, list] = {}
         self._running = False
         self._mode_mgr = ModeManager()
         self._mechanic: MechanicAgent | None = None
@@ -1095,9 +1097,18 @@ Rules:
                 pass
         else:
             if chat_id in self._typing_tasks:
-                # Chat agent already active for this chat — don't spawn concurrent chat call
-                await self._api.send_message(chat_id, "⏳ Bin noch dabei — gleich fertig.")
+                self._pending_chat_queue.setdefault(chat_id, []).append(
+                    (telegram_id, content, incoming.telegram_message_id)
+                )
+                current = self._active_chat_content.get(chat_id, "")
+                snippet = (current[:60] + "…") if len(current) > 60 else current
+                snippet = snippet.replace("\n", " ")
+                await self._api.send_message(
+                    chat_id,
+                    f"⏳ Noch beschäftigt mit: „{snippet}“\nDeine Nachricht kommt danach dran.",
+                )
             else:
+                self._active_chat_content[chat_id] = content
                 asyncio.create_task(
                     self._handle_chat(chat_id, telegram_id, content, incoming.telegram_message_id),
                     name=f"chat-{chat_id}",
@@ -1436,6 +1447,7 @@ Rules:
         if task.id in self._chat_task_ids:
             self._chat_task_ids.discard(task.id)
             self._stop_typing(task.chat_id)
+            self._flush_chat_queue(task.chat_id)
         reaction_info = self._pending_reactions.pop(task.id, None) if task.id else None
         if reaction_info:
             try:
@@ -1747,6 +1759,7 @@ Rules:
         if task.id in self._chat_task_ids:
             self._chat_task_ids.discard(task.id)
             self._stop_typing(task.chat_id)
+            self._flush_chat_queue(task.chat_id)
 
     async def _load_mention_only_chats(self) -> None:
         try:
@@ -2018,6 +2031,22 @@ Rules:
                 admin_id,
                 f"New user requesting access: {name or 'unknown'} (ID: {telegram_id})\n/auth {telegram_id}",
             )
+
+    def _flush_chat_queue(self, chat_id: int) -> None:
+        """Spawn next queued chat message, if any."""
+        queue = self._pending_chat_queue.get(chat_id, [])
+        if not queue:
+            self._pending_chat_queue.pop(chat_id, None)
+            self._active_chat_content.pop(chat_id, None)
+            return
+        user_id, content, msg_id = queue.pop(0)
+        if not queue:
+            self._pending_chat_queue.pop(chat_id, None)
+        self._active_chat_content[chat_id] = content
+        asyncio.create_task(
+            self._handle_chat(chat_id, user_id, content, msg_id),
+            name=f"chat-{chat_id}",
+        )
 
     def _start_typing(self, chat_id: int) -> None:
         if chat_id in self._typing_tasks:
