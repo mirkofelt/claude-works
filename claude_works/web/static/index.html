@@ -536,6 +536,15 @@
       <canvas id="tokenChart"></canvas>
     </div>
   </div>
+  <div class="card" id="costChartCard" style="margin-bottom:16px;display:none">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px 0">
+      <span style="font-size:.75rem;color:var(--muted)">Cost over time (USD)</span>
+      <span id="costTotal" style="font-size:.75rem;color:var(--accent);font-weight:600"></span>
+    </div>
+    <div class="chart-wrap">
+      <canvas id="costChart"></canvas>
+    </div>
+  </div>
   <div class="card" id="usageChartCard" style="margin-bottom:16px;display:none">
     <div style="font-size:.75rem;color:var(--muted);padding:8px 12px 0">Claude Code usage (billing period)</div>
     <div class="chart-wrap">
@@ -545,9 +554,9 @@
   <div class="card">
     <table>
       <thead><tr>
-        <th>Class</th><th>Input</th><th>Output</th><th>Cache Read</th><th>Cache Write</th><th>Calls</th><th>Total</th>
+        <th>Class</th><th>Input</th><th>Output</th><th>Cache Read</th><th>Cache Write</th><th>Calls</th><th>Total</th><th>Cost (USD)</th>
       </tr></thead>
-      <tbody id="tokenBody"><tr><td colspan="7" class="empty">No data</td></tr></tbody>
+      <tbody id="tokenBody"><tr><td colspan="8" class="empty">No data</td></tr></tbody>
     </table>
   </div>
 </div>
@@ -1162,17 +1171,18 @@ async function loadTokens() {
   const b = document.getElementById('tokenBody');
   const classes = Object.keys(data.stats || {});
   if (!classes.length) {
-    b.innerHTML = '<tr><td colspan="7" class="empty">No token data for this period</td></tr>';
+    b.innerHTML = '<tr><td colspan="8" class="empty">No token data for this period</td></tr>';
     drawTokenChart([]);
     return;
   }
 
-  let tIn = 0, tOut = 0, tCR = 0, tCW = 0, tCalls = 0;
+  let tIn = 0, tOut = 0, tCR = 0, tCW = 0, tCalls = 0, tCost = 0;
   b.innerHTML = classes.map(cls => {
     const s = data.stats[cls];
     const total = (s.input || 0) + (s.output || 0) + (s.cache_read || 0) + (s.cache_write || 0);
     tIn += s.input || 0; tOut += s.output || 0;
     tCR += s.cache_read || 0; tCW += s.cache_write || 0; tCalls += s.calls || 0;
+    tCost += s.cost_usd || 0;
     return `<tr>
       <td><span class="badge b-${cls}">${cls}</span></td>
       <td class="mono">${fmt(s.input)}</td>
@@ -1181,6 +1191,7 @@ async function loadTokens() {
       <td class="mono">${fmt(s.cache_write)}</td>
       <td class="mono">${s.calls || 0}</td>
       <td class="mono" style="color:var(--accent)">${fmt(total)}</td>
+      <td class="mono" style="color:var(--yellow)">${s.cost_usd ? '$' + s.cost_usd.toFixed(4) : '–'}</td>
     </tr>`;
   }).join('') + `<tr style="background:#1c2128;font-weight:600">
     <td style="color:var(--muted)">Total</td>
@@ -1190,9 +1201,11 @@ async function loadTokens() {
     <td class="mono">${fmt(tCW)}</td>
     <td class="mono">${tCalls}</td>
     <td class="mono" style="color:var(--accent)">${fmt(tIn + tOut + tCR + tCW)}</td>
+    <td class="mono" style="color:var(--yellow)">${tCost ? '$' + tCost.toFixed(4) : '–'}</td>
   </tr>`;
 
   drawTokenChart(data.timeseries || []);
+  drawCostChart(data.timeseries || [], data.total_cost_usd || 0);
   drawUsageChart(data.cli_usage || []);
 }
 
@@ -1292,6 +1305,85 @@ function drawTokenChart(tsData) {
     ctx.textAlign = 'left';
     ctx.fillText(cls, lx + 12, ly + 8);
     lx += 12 + ctx.measureText(cls).width + 14;
+  });
+}
+
+function drawCostChart(tsData, totalCost) {
+  const card = document.getElementById('costChartCard');
+  const totalEl = document.getElementById('costTotal');
+  const hasCost = tsData.some(r => r.cost_usd > 0);
+  if (!hasCost) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  if (totalEl) totalEl.textContent = totalCost ? '$' + totalCost.toFixed(4) + ' total' : '';
+
+  const canvas = document.getElementById('costChart');
+  const W = canvas.offsetWidth || 800;
+  const H = 140;
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+
+  // aggregate cost per bucket
+  const byBucket = {};
+  tsData.forEach(r => { byBucket[r.bucket] = (byBucket[r.bucket] || 0) + (r.cost_usd || 0); });
+  const buckets = Object.keys(byBucket).map(Number).sort((a, b) => a - b);
+  if (!buckets.length) { card.style.display = 'none'; return; }
+
+  // cumulative
+  const cumulative = [];
+  let running = 0;
+  buckets.forEach(b => { running += byBucket[b]; cumulative.push(running); });
+
+  const PAD = { top: 20, bottom: 28, left: 60, right: 12 };
+  const cW = W - PAD.left - PAD.right;
+  const cH = H - PAD.top - PAD.bottom;
+  const maxVal = cumulative[cumulative.length - 1] || 0.001;
+
+  // budget limit from config (optional)
+  const budgetLine = null; // future: read system.monthly_budget_usd from config
+
+  // grid
+  ctx.strokeStyle = '#21262d'; ctx.lineWidth = 1;
+  [0.25, 0.5, 0.75, 1].forEach(r => {
+    const y = PAD.top + cH * (1 - r);
+    ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(W - PAD.right, y); ctx.stroke();
+    ctx.fillStyle = '#8b949e'; ctx.font = '10px sans-serif'; ctx.textAlign = 'right';
+    ctx.fillText('$' + (maxVal * r).toFixed(maxVal < 0.01 ? 6 : 4), PAD.left - 4, y + 3);
+  });
+
+  // area fill
+  const toX = i => PAD.left + (i / (buckets.length - 1 || 1)) * cW;
+  const toY = v => PAD.top + cH * (1 - v / maxVal);
+  ctx.beginPath();
+  ctx.moveTo(toX(0), PAD.top + cH);
+  cumulative.forEach((v, i) => ctx.lineTo(toX(i), toY(v)));
+  ctx.lineTo(toX(cumulative.length - 1), PAD.top + cH);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(210,153,34,0.12)';
+  ctx.fill();
+
+  // line
+  ctx.beginPath();
+  cumulative.forEach((v, i) => { i === 0 ? ctx.moveTo(toX(i), toY(v)) : ctx.lineTo(toX(i), toY(v)); });
+  ctx.strokeStyle = '#d29922'; ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // dots at ends
+  [0, cumulative.length - 1].forEach(i => {
+    ctx.beginPath(); ctx.arc(toX(i), toY(cumulative[i]), 3, 0, Math.PI * 2);
+    ctx.fillStyle = '#d29922'; ctx.fill();
+  });
+
+  // x axis labels
+  ctx.fillStyle = '#8b949e'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
+  const step = Math.max(1, Math.floor(buckets.length / 5));
+  buckets.forEach((b, i) => {
+    if (i % step !== 0 && i !== buckets.length - 1) return;
+    const d = new Date(b * 1000);
+    const lbl = buckets.length <= 25
+      ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    ctx.fillText(lbl, toX(i), H - 8);
   });
 }
 
