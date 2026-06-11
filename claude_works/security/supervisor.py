@@ -95,18 +95,8 @@ class SecuritySupervisor:
         self._save_allowlist()
         logger.warning("Security: all checks permanently disabled by admin")
 
-    async def check_action(
-        self,
-        action_type: str,
-        content: str,
-        task_id: int | None = None,
-        chat_id: int = 0,
-        user_id: int = 0,
-    ) -> bool:
-        if not self.enabled:
-            return True
-        if self._skip_all or action_type in self._always_allowed_actions:
-            return True
+    async def _run_so_check(self, action_type: str, content: str, task_id: int | None) -> bool:
+        """LLM content review — always runs when security is enabled, regardless of allowlist."""
         try:
             model = get_agent_model("controller")
             prompt = f"Action: {action_type}\n\nContent to review:\n{content[:2000]}"
@@ -131,6 +121,20 @@ class SecuritySupervisor:
             logger.error("Security officer review failed for action=%s: %s — blocking", action_type, e)
             return False
 
+    async def check_action(
+        self,
+        action_type: str,
+        content: str,
+        task_id: int | None = None,
+        chat_id: int = 0,
+        user_id: int = 0,
+    ) -> bool:
+        """User allowlist controls whether approval is requested. SO content check always runs."""
+        if not self.enabled:
+            return True
+        # SO always reviews content — allowlist/skip_all only bypass user approval prompts
+        return await self._run_so_check(action_type, content, task_id)
+
     async def check(
         self,
         content: str,
@@ -138,16 +142,24 @@ class SecuritySupervisor:
         chat_id: int = 0,
         user_id: int = 0,
     ) -> bool:
-        if not self.enabled or self._skip_all:
+        """Two-stage check: user approval (skippable via allowlist) + SO content review (always)."""
+        if not self.enabled:
             return True
 
         triggered = check_content(content, self._rules)
         if not triggered:
             return True
-        triggered = [t for t in triggered if t not in self._always_allowed_actions]
-        if not triggered:
-            return True
-        return await self._request_approval(triggered, content, task_id, chat_id, user_id)
+
+        # Stage 1: user approval — skipped if pre-approved
+        if not self._skip_all:
+            need_approval = [t for t in triggered if t not in self._always_allowed_actions]
+            if need_approval:
+                user_ok = await self._request_approval(need_approval, content, task_id, chat_id, user_id)
+                if not user_ok:
+                    return False
+
+        # Stage 2: SO content review — always runs regardless of allowlist
+        return await self._run_so_check("response", content, task_id)
 
     async def _request_approval(
         self,
