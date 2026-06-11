@@ -23,12 +23,21 @@ class TelegramAPI:
         url = self.BASE.format(token=self._token, method=method)
         try:
             resp = await self._client.post(url, json={k: v for k, v in params.items() if v is not None})
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                try:
+                    err_body = resp.json()
+                    description = err_body.get("description", resp.text[:200])
+                except Exception:
+                    description = resp.text[:200]
+                logger.error("TG %s HTTP %d: %s", method, resp.status_code, description)
+                raise RuntimeError(f"Telegram {method} failed ({resp.status_code}): {description}")
             data = resp.json()
             if not data.get("ok"):
                 raise RuntimeError(f"Telegram API error: {data.get('description', 'unknown')}")
             logger.debug("TG <- %s ok", method)
             return data["result"]
+        except RuntimeError:
+            raise
         except Exception as e:
             logger.error("TG %s failed: %s", method, e)
             raise
