@@ -746,11 +746,19 @@ class Daemon:
                 return
 
         if _is_task(content):
+            task_content = content
+            recent = await self._load_chat_history(chat_id, limit=10)
+            if recent:
+                ctx_lines = []
+                for m in recent:
+                    prefix = "User" if m["role"] == "user" else "Bot"
+                    ctx_lines.append(f"{prefix}: {m['content'][:300]}")
+                task_content = "## Recent conversation\n" + "\n".join(ctx_lines) + "\n\n---\n\n" + content
             task = KanbanTask(
                 id=None,
                 chat_id=chat_id,
                 user_id=telegram_id,
-                content=content,
+                content=task_content,
                 priority=1 if content.startswith("!") else 0,
             )
             await self._board.push(task)
@@ -1168,6 +1176,20 @@ class Daemon:
     async def _on_task_requeued(self, task: KanbanTask) -> None:
         self._stop_typing(task.chat_id)
 
+    async def _load_chat_history(self, chat_id: int, limit: int = 30) -> list[dict]:
+        """Load recent conversation from DB as {role, content} pairs, chronological order."""
+        async with self._conn.execute(
+            """SELECT 'user' AS role, text, timestamp AS ts
+               FROM messages WHERE chat_id = ? AND text IS NOT NULL
+               UNION ALL
+               SELECT 'assistant' AS role, text, sent_at AS ts
+               FROM bot_messages WHERE chat_id = ? AND text IS NOT NULL
+               ORDER BY ts DESC LIMIT ?""",
+            (chat_id, chat_id, limit),
+        ) as cur:
+            rows = await cur.fetchall()
+        return [{"role": r["role"], "content": r["text"]} for r in reversed(rows)]
+
     async def _handle_chat(self, chat_id: int, user_id: int, content: str) -> None:
         """Handle a conversational message directly, bypassing kanban."""
         self._start_typing(chat_id)
@@ -1190,6 +1212,10 @@ class Daemon:
                     persona=persona,
                     agent_class="chief",
                 )
+                history = await self._load_chat_history(chat_id)
+                if history:
+                    agent._messages = history
+                    logger.info("Chat %d: restored %d history messages from DB", chat_id, len(history))
                 self._chat_agents[chat_id] = agent
             result = await asyncio.wait_for(agent.run(content), timeout=300.0)
             for _ in range(5):
