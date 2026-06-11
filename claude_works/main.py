@@ -1759,13 +1759,19 @@ Rules:
         await self._conn.commit()
 
     async def _load_chat_history(self, chat_id: int, limit: int = 30) -> list[dict]:
-        """Load recent conversation from DB as {role, content} pairs, chronological order."""
+        """Load recent conversation from DB as {role, content} pairs, chronological order.
+
+        Only includes bot messages from direct-chat tasks (agent_id='chat') to prevent
+        board task results from bleeding into the chat agent's context.
+        """
         async with self._conn.execute(
             """SELECT 'user' AS role, text, timestamp AS ts
                FROM messages WHERE chat_id = ? AND text IS NOT NULL
                UNION ALL
-               SELECT 'assistant' AS role, text, sent_at AS ts
-               FROM bot_messages WHERE chat_id = ? AND text IS NOT NULL
+               SELECT 'assistant' AS role, bm.text, bm.sent_at AS ts
+               FROM bot_messages bm
+               JOIN kanban_tasks kt ON bm.task_id = kt.id
+               WHERE bm.chat_id = ? AND bm.text IS NOT NULL AND kt.agent_id = 'chat'
                ORDER BY ts DESC LIMIT ?""",
             (chat_id, chat_id, limit),
         ) as cur:
