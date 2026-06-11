@@ -45,6 +45,7 @@ if os.path.exists(path):
 perms = settings.setdefault("permissions", {})
 allow = perms.setdefault("allow", [])
 required = [
+    "Read(/data/**)",
     "Write(/data/**)",
     "Edit(/data/**)",
     "Bash(mkdir *)",
@@ -54,7 +55,10 @@ required = [
     "Bash(python3 *)",
     "Bash(pip *)",
     "Bash(pip3 *)",
+    "Bash(npm *)",
+    "Bash(node *)",
     "Bash(curl *)",
+    "Bash(wget *)",
     "Bash(nc *)",
     "Bash(cat *)",
     "Bash(ls *)",
@@ -68,6 +72,19 @@ required = [
     "Bash(touch *)",
     "Bash(tar *)",
     "Bash(unzip *)",
+    "Bash(zip *)",
+    "Bash(head *)",
+    "Bash(tail *)",
+    "Bash(wc *)",
+    "Bash(sort *)",
+    "Bash(awk *)",
+    "Bash(sed *)",
+    "Bash(jq *)",
+    "Bash(sqlite3 *)",
+    "Bash(env *)",
+    "Bash(which *)",
+    "Bash(pwd)",
+    "Bash(date *)",
 ]
 for p in required:
     if p not in allow:
