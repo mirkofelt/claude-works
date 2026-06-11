@@ -29,6 +29,7 @@ from .kanban.models import AgentClass, KanbanTask
 from .telemetry.tokens import TokenTracker
 from .knowledge import store as knowledge_store
 from .agents.coordinator import AgentCoordinator
+from .llm.errors import RateLimitError
 from .agents.mechanic import MechanicAgent, MechanicContext
 from .agents.specialist.generalist import GeneralistAgent
 from .auth.users import upsert_user, is_allowed, is_admin, set_role
@@ -1642,9 +1643,12 @@ Rules:
                 if tts_allowed:
                     try:
                         tts_cfg = config.section("tts")
-                        audio = await _synthesize_tts(tts_text, tts_cfg)
+                        audio, tts_error = await _synthesize_tts(tts_text, tts_cfg)
                         if audio:
                             await self._api.send_voice(task.chat_id, audio)
+                        elif tts_error:
+                            logger.warning("TTS failed for task=%d: %s", task.id, tts_error)
+                            await self._api.send_message(task.chat_id, f"🔇 TTS fehlgeschlagen: {tts_error}")
                     except Exception as e:
                         logger.warning("TTS failed for task=%d: %s", task.id, e)
                 else:
@@ -1945,6 +1949,15 @@ Rules:
             if task_id and self._board:
                 await self._board.fail(task_id, "timeout (300s)")
             await self._api.send_message(chat_id, "Timeout.")
+        except RateLimitError as exc:
+            wait = int(exc.retry_after or 30)
+            if task_id and self._board:
+                try:
+                    await self._board.fail(task_id, f"rate limited ({wait}s)")
+                except Exception:
+                    pass
+            logger.warning("Chat %d rate limited, retry_after=%ds", chat_id, wait)
+            await self._api.send_message(chat_id, f"⏳ API rate limited — please retry in {wait}s.")
         except Exception as exc:
             if task_id and self._board:
                 try:
@@ -1952,6 +1965,7 @@ Rules:
                 except Exception:
                     pass
             logger.exception("Chat handler error for chat=%d", chat_id)
+            await self._api.send_message(chat_id, f"⚠️ Error: {exc}")
             self._chat_exception_count += 1
             if self._chat_exception_count >= 3:
                 self._chat_exception_count = 0

@@ -94,6 +94,10 @@ class APIProvider(LLMProvider):
                     except ValueError:
                         pass
             raise RateLimitError(str(exc), retry_after=retry_after) from exc
+        except _anthropic.APIStatusError as exc:
+            if exc.status_code == 529:
+                raise RateLimitError(f"Anthropic API overloaded (529)", retry_after=30.0) from exc
+            raise
 
         usage = response.usage
         return LLMResponse(
