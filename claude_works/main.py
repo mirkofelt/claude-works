@@ -162,6 +162,14 @@ _MAX_FETCH_URLS = 3
 _MAX_FETCH_CHARS = 4000
 _TOR_SOCKS_DEFAULT = "socks5://127.0.0.1:9050"
 
+
+def _build_git_clone_cmd(repo_url: str, target: str) -> list[str]:
+    """Build git clone command routed through Tor (socks5h = DNS resolved by proxy)."""
+    tor_proxy = config.section("security").get("tor_socks_proxy", _TOR_SOCKS_DEFAULT)
+    # git needs socks5h:// so DNS resolves through Tor, not locally
+    git_proxy = tor_proxy.replace("socks5://", "socks5h://")
+    return ["git", "-c", f"http.proxy={git_proxy}", "clone", "--depth=1", repo_url, target]
+
 _TASK_VERB_RE = re.compile(
     r'\b(schreib|erstell|generier|entwickel|implementier|analysier|recherchier|'
     r'migrier|repari|konvertier|deploy|extrahier|zusammenfass|berechne?|kalkulier|'
@@ -1249,7 +1257,7 @@ class Daemon:
             try:
                 os.makedirs(_PLUGINS_DIR, exist_ok=True)
                 proc = await asyncio.create_subprocess_exec(
-                    "git", "clone", "--depth=1", repo_url, target,
+                    *_build_git_clone_cmd(repo_url, target),
                     stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                 )
                 _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120.0)
@@ -1268,7 +1276,7 @@ class Daemon:
         try:
             os.makedirs(_PLUGINS_DIR, exist_ok=True)
             proc = await asyncio.create_subprocess_exec(
-                "git", "clone", "--depth=1", repo_url, target,
+                *_build_git_clone_cmd(repo_url, target),
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             )
             _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120.0)
