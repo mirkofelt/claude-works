@@ -17,6 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      deployments: write
 
     steps:
       - uses: actions/checkout@v4
@@ -35,3 +36,31 @@ jobs:
           git add docs/*.html
           git diff --cached --quiet || git commit -m "docs: auto-render markdown to HTML [skip ci]"
           git push
+
+      - name: Delete old GitHub Pages deployments
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: deployments } = await github.rest.repos.listDeployments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              environment: 'github-pages',
+              per_page: 100,
+            });
+            const toDelete = deployments.slice(1);
+            for (const d of toDelete) {
+              await github.rest.repos.createDeploymentStatus({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                deployment_id: d.id,
+                state: 'inactive',
+              });
+              await github.rest.repos.deleteDeployment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                deployment_id: d.id,
+              });
+            }
+            if (toDelete.length > 0) {
+              core.info(`Deleted ${toDelete.length} old github-pages deployment(s).`);
+            }

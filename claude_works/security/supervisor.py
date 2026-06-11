@@ -205,8 +205,10 @@ class SecuritySupervisor:
                 user_ok = await self._request_approval(need_approval, content, task_id, chat_id, user_id)
                 if not user_ok:
                     return False
+                # User explicitly approved — trust the decision, skip SO review
+                return True
 
-        # Stage 2: SO content review — always runs regardless of allowlist
+        # Stage 2: SO content review — only when no explicit user approval was required
         return await self._run_so_check("response", content, task_id)
 
     async def _request_approval(

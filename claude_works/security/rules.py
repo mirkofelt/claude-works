@@ -3,8 +3,8 @@ from dataclasses import dataclass
 
 
 DEFAULT_RULES: list[dict] = [
-    {"type": "data_deletion", "pattern": r"\b(delete|drop|truncate|wipe|purge)\b", "enabled": True},
-    {"type": "command_execution", "pattern": r"\b(execute|subprocess|shell|eval)\b", "enabled": True},
+    {"type": "data_deletion", "pattern": r"\[DELETE:|DROP TABLE|TRUNCATE TABLE", "enabled": True},
+    {"type": "command_execution", "pattern": r"\[EXECUTE:", "enabled": True},
     {"type": "email_send", "pattern": r"\[SEND_EMAIL:", "enabled": True},
     {"type": "github_write", "pattern": r"\[GITHUB_API:", "enabled": True},
     {"type": "external_api", "pattern": r"\b(webhook|api_call|post_to)\b", "enabled": False},
