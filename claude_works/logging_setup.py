@@ -7,6 +7,14 @@ from pathlib import Path
 _LOG_FORMAT = "%(asctime)s %(levelname)-8s [%(name)s] %(message)s"
 _DATE_FORMAT = "%Y-%m-%dT%H:%M:%S"
 
+# Loggers that are noisy with low-value messages — suppress to WARNING
+_SUPPRESS_LOGGERS = (
+    "httpx", "httpcore", "hpack", "h2",
+    "aiosqlite", "sqlite3",
+    "uvicorn.access",        # HTTP access log — every GET /api/status etc.
+    "watchfiles",
+)
+
 
 def setup(log_dir: str | None = None, log_level: str | None = None) -> None:
     from . import config as _config
@@ -33,7 +41,7 @@ def setup(log_dir: str | None = None, log_level: str | None = None) -> None:
         encoding="utf-8",
     )
     file_handler.setFormatter(fmt)
-    file_handler.setLevel(logging.DEBUG)
+    file_handler.setLevel(level)  # file matches configured level, not always DEBUG
 
     root = logging.getLogger()
     root.setLevel(logging.DEBUG)
@@ -41,8 +49,7 @@ def setup(log_dir: str | None = None, log_level: str | None = None) -> None:
     root.addHandler(console)
     root.addHandler(file_handler)
 
-    # Suppress chatty third-party loggers
-    for noisy in ("httpx", "httpcore", "hpack", "h2"):
+    for noisy in _SUPPRESS_LOGGERS:
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
     logging.getLogger(__name__).info(
@@ -60,9 +67,9 @@ def uvicorn_log_config() -> dict:
         },
         "handlers": {},
         "loggers": {
-            "uvicorn": {"propagate": True, "level": "INFO"},
-            "uvicorn.error": {"propagate": True, "level": "INFO"},
-            "uvicorn.access": {"propagate": True, "level": "INFO"},
+            "uvicorn": {"propagate": True, "level": "WARNING"},
+            "uvicorn.error": {"propagate": True, "level": "WARNING"},
+            "uvicorn.access": {"propagate": False, "level": "WARNING"},
         },
     }
 
