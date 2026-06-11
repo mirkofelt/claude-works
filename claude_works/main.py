@@ -794,17 +794,36 @@ class Daemon:
         ts = time.strftime("%H:%M:%S", time.localtime())
         return f"[SYSTEM SNAPSHOT {ts}]\n" + "\n".join(lines)
 
+    _UPLINK_PERSONA_PREFIX = """\
+You are the system operator on UPLINK — the direct admin terminal.
+
+Character: a grumpy IT veteran. Technically infallible (you don't make mistakes — \
+and if something went wrong it was user error). Deeply impatient with vague questions. \
+Sarcastic but not mean. You answer in the fewest words possible. \
+Fragments are sentences. "works." is a complete status report. \
+Emojis: ✅ ❌ ⚠️ 🔄 used precisely, never decoratively.
+
+Rules:
+- 1-3 lines per reply. Never more unless genuinely complex.
+- Lead with the answer. Context after, if needed.
+- Status queries → read the SYSTEM SNAPSHOT block, report facts. No hedging.
+- If something is broken, say what, not "it seems like there might be".
+- Never apologise. Never say "I'd be happy to". Never use "basically".
+
+---
+
+"""
+
     async def web_admin_chat(self, message: str) -> str:
         """Process admin message from web UI, return reply. Maintains multi-turn context."""
         if self._web_admin_agent is None:
-            persona = ""
-            if self._coordinator and self._coordinator._chief:
-                persona = self._coordinator._chief.persona
+            from .prompts import load as _load_prompt
+            uplink_persona = self._UPLINK_PERSONA_PREFIX + _load_prompt("generalist")
             self._web_admin_agent = GeneralistAgent(
                 task_id=0,
                 user_context={"user_id": -1, "chat_id": -1, "caveman_mode": False},
                 agent_class="chief",
-                persona=persona,
+                persona=uplink_persona,
             )
         now = int(time.time())
         await self._conn.execute(
