@@ -404,12 +404,40 @@
 </div>
 
 <div class="section" id="tab-users">
+  <div class="toolbar">
+    <button class="btn btn-primary" onclick="toggleUserForm()">+ Add User</button>
+    <button class="btn btn-ghost" onclick="loadUsers()">Refresh</button>
+  </div>
+  <div id="userForm" class="card" style="display:none;margin-bottom:1rem;padding:1rem">
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:.5rem;align-items:end">
+      <div>
+        <label style="font-size:.75rem;color:var(--muted);display:block;margin-bottom:.25rem">Telegram ID</label>
+        <input type="number" id="ufId" placeholder="123456789" style="padding:.5rem;width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px">
+      </div>
+      <div>
+        <label style="font-size:.75rem;color:var(--muted);display:block;margin-bottom:.25rem">Name</label>
+        <input type="text" id="ufName" placeholder="Display name" style="padding:.5rem;width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px">
+      </div>
+      <div>
+        <label style="font-size:.75rem;color:var(--muted);display:block;margin-bottom:.25rem">Role</label>
+        <select id="ufRole" style="padding:.5rem;width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px">
+          <option value="user">user</option>
+          <option value="admin">admin</option>
+          <option value="blocked">blocked</option>
+        </select>
+      </div>
+      <div style="display:flex;gap:.5rem">
+        <button class="btn btn-primary" onclick="addUser()">Add</button>
+        <button class="btn btn-ghost" onclick="toggleUserForm()">Cancel</button>
+      </div>
+    </div>
+  </div>
   <div class="card">
     <table>
       <thead><tr>
-        <th>#</th><th>Telegram ID</th><th>Name</th><th>Role</th><th>Last Seen</th>
+        <th>#</th><th>Telegram ID</th><th>Name</th><th>Role</th><th>Last Seen</th><th></th>
       </tr></thead>
-      <tbody id="userBody"><tr><td colspan="5" class="empty">Loading…</td></tr></tbody>
+      <tbody id="userBody"><tr><td colspan="6" class="empty">Loading…</td></tr></tbody>
     </table>
   </div>
 </div>
@@ -454,7 +482,14 @@
       <button class="btn btn-ghost" onclick="toggleKbForm()">Cancel</button>
     </div>
   </div>
-  <div class="mem-grid" id="kbGrid"><div class="empty">Loading…</div></div>
+  <div class="card">
+    <table id="kbTable">
+      <thead><tr>
+        <th style="width:80px">Type</th><th>Title</th><th>Tags</th><th>Content</th><th style="width:110px">Updated</th><th style="width:36px"></th>
+      </tr></thead>
+      <tbody id="kbBody"><tr><td colspan="6" class="empty">Loading…</td></tr></tbody>
+    </table>
+  </div>
 </div>
 
 <div class="section" id="tab-approvals">
@@ -488,6 +523,16 @@
       <option value="50" selected>50</option>
       <option value="100">100</option>
     </select>
+    <div style="position:relative;display:inline-block">
+      <button class="btn btn-ghost" onclick="toggleKanbanClear(event)">Clear ▾</button>
+      <div id="kanbanClearMenu" style="display:none;position:absolute;right:0;top:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:.25rem 0;z-index:100;min-width:160px;box-shadow:0 4px 12px rgba(0,0,0,.4)">
+        <button onclick="clearKanban('done')" style="width:100%;text-align:left;padding:.4rem .75rem;background:none;border:none;color:var(--text);cursor:pointer;font-size:.875rem">Clear Done</button>
+        <button onclick="clearKanban('failed')" style="width:100%;text-align:left;padding:.4rem .75rem;background:none;border:none;color:var(--text);cursor:pointer;font-size:.875rem">Clear Failed</button>
+        <button onclick="clearKanban(null)" style="width:100%;text-align:left;padding:.4rem .75rem;background:none;border:none;color:var(--text);cursor:pointer;font-size:.875rem">Clear Done + Failed</button>
+        <hr style="border-color:var(--border);margin:.25rem 0">
+        <button onclick="clearKanban('all')" style="width:100%;text-align:left;padding:.4rem .75rem;background:none;border:none;color:#ef4444;cursor:pointer;font-size:.875rem">Clear All…</button>
+      </div>
+    </div>
   </div>
   <div class="card">
     <table>
@@ -879,12 +924,14 @@ async function loadMessages() {
 async function loadUsers() {
   const rows = await api('/api/users');
   const b = document.getElementById('userBody');
-  if (!rows?.length) { b.innerHTML = '<tr><td colspan="5" class="empty">No users</td></tr>'; return; }
+  if (!rows?.length) { b.innerHTML = '<tr><td colspan="6" class="empty">No users</td></tr>'; return; }
   b.innerHTML = rows.map(u => `
     <tr>
       <td class="mono">${u.id}</td>
       <td class="mono">${u.telegram_id}</td>
-      <td>${esc(u.name || '–')}</td>
+      <td>
+        <span id="uname-${u.telegram_id}" ondblclick="editUserName(${u.telegram_id},'${esc(u.name||'')}')" style="cursor:pointer" title="Double-click to edit">${esc(u.name || '–')}</span>
+      </td>
       <td>
         <select class="role-sel" data-id="${u.telegram_id}" onchange="setRole(this)">
           <option value="admin"   ${u.role==='admin'   ?'selected':''}>admin</option>
@@ -893,6 +940,9 @@ async function loadUsers() {
         </select>
       </td>
       <td style="color:var(--muted);font-size:12px">${ts(u.last_seen)}</td>
+      <td>
+        <button class="btn btn-ghost" style="padding:.15rem .4rem;font-size:.75rem;color:#ef4444" onclick="deleteUser(${u.telegram_id},'${esc(u.name||String(u.telegram_id))}')">✕</button>
+      </td>
     </tr>`).join('');
 }
 
@@ -901,6 +951,39 @@ async function setRole(sel) {
     method: 'POST',
     body: JSON.stringify({ role: sel.value })
   });
+}
+
+function toggleUserForm() {
+  const f = document.getElementById('userForm');
+  f.style.display = f.style.display === 'none' ? 'block' : 'none';
+}
+
+async function addUser() {
+  const id = parseInt(document.getElementById('ufId').value);
+  const name = document.getElementById('ufName').value.trim() || null;
+  const role = document.getElementById('ufRole').value;
+  if (!id || isNaN(id)) { alert('Valid Telegram ID required'); return; }
+  const ok = await api('/api/users', { method: 'POST', body: JSON.stringify({ telegram_id: id, name, role }) });
+  if (ok) {
+    document.getElementById('ufId').value = '';
+    document.getElementById('ufName').value = '';
+    toggleUserForm();
+    loadUsers();
+  }
+}
+
+async function deleteUser(telegramId, name) {
+  if (!confirm(`Delete user "${name}" (${telegramId})?`)) return;
+  await api('/api/users/' + telegramId, { method: 'DELETE' });
+  loadUsers();
+}
+
+async function editUserName(telegramId, currentName) {
+  const newName = prompt('Edit name:', currentName);
+  if (newName === null || newName === currentName) return;
+  await api('/api/users/' + telegramId, { method: 'PUT', body: JSON.stringify({ name: newName }) });
+  const el = document.getElementById('uname-' + telegramId);
+  if (el) el.textContent = newName || '–';
 }
 
 async function loadMemory() {
@@ -1402,21 +1485,22 @@ async function loadKnowledge() {
   if (type) params.push('type=' + encodeURIComponent(type));
   if (params.length) url += '?' + params.join('&');
   const items = await api(url);
-  const grid = document.getElementById('kbGrid');
-  if (!items || items.length === 0) { grid.innerHTML = '<div class="empty">No entries</div>'; return; }
-  grid.innerHTML = items.map(e => `
-    <div class="mem-card">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:.4rem">
-        <span style="font-weight:600;color:var(--accent2)">${esc(e.title)}</span>
-        <button class="btn btn-ghost" style="padding:.1rem .4rem;font-size:.75rem" onclick="deleteKnowledge(${e.id})">✕</button>
-      </div>
-      <div style="display:flex;gap:.4rem;margin-bottom:.4rem;flex-wrap:wrap">
-        <span style="font-size:.7rem;background:var(--bg);padding:.15rem .5rem;border-radius:4px;color:var(--muted)">${esc(e.type)}</span>
-        ${(e.tags||[]).map(t => `<span style="font-size:.7rem;background:var(--bg);padding:.15rem .5rem;border-radius:4px;color:var(--accent)">${esc(t)}</span>`).join('')}
-      </div>
-      <div style="font-size:.875rem;white-space:pre-wrap">${esc(e.content)}</div>
-      <div style="font-size:.7rem;color:var(--muted);margin-top:.5rem">${esc(e.source||'')} · ${new Date(e.updated_at*1000).toLocaleString()}</div>
-    </div>`).join('');
+  const b = document.getElementById('kbBody');
+  if (!items || items.length === 0) { b.innerHTML = '<tr><td colspan="6" class="empty">No entries</td></tr>'; return; }
+  b.innerHTML = items.map(e => {
+    const preview = e.content.length > 120 ? esc(e.content.slice(0,120)) + '…' : esc(e.content);
+    const tags = (e.tags||[]).map(t => `<span style="font-size:.7rem;background:var(--bg);padding:.1rem .35rem;border-radius:3px;color:var(--accent);margin-right:.2rem">${esc(t)}</span>`).join('');
+    return `<tr>
+      <td><span class="badge b-backlog" style="font-size:.7rem">${esc(e.type)}</span></td>
+      <td style="font-weight:600;color:var(--accent2);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(e.title)}</td>
+      <td style="max-width:140px">${tags}</td>
+      <td style="font-size:.8rem;color:var(--muted);max-width:300px">
+        <span title="${esc(e.content)}" style="cursor:help">${preview}</span>
+      </td>
+      <td style="color:var(--muted);font-size:.75rem;white-space:nowrap">${new Date(e.updated_at*1000).toLocaleDateString()}</td>
+      <td><button class="btn btn-ghost" style="padding:.1rem .35rem;font-size:.75rem" onclick="deleteKnowledge(${e.id})">✕</button></td>
+    </tr>`;
+  }).join('');
 }
 
 function toggleKbForm() {
@@ -1445,6 +1529,26 @@ async function deleteKnowledge(id) {
   if (!confirm('Delete this entry?')) return;
   await api('/api/knowledge/' + id, { method: 'DELETE' });
   loadKnowledge();
+}
+
+function toggleKanbanClear(e) {
+  e.stopPropagation();
+  const m = document.getElementById('kanbanClearMenu');
+  m.style.display = m.style.display === 'none' ? 'block' : 'none';
+  const close = () => { m.style.display = 'none'; document.removeEventListener('click', close); };
+  setTimeout(() => document.addEventListener('click', close), 0);
+}
+
+async function clearKanban(lane) {
+  document.getElementById('kanbanClearMenu').style.display = 'none';
+  const label = lane === 'all' ? 'ALL kanban tasks' : lane ? `all "${lane}" tasks` : 'all done + failed tasks';
+  if (!confirm(`Clear ${label}? This cannot be undone.`)) return;
+  let url = '/api/kanban';
+  if (lane === 'all') url += '?clear_all=true';
+  else if (lane) url += '?lane=' + lane;
+  await api(url, { method: 'DELETE' });
+  loadKanban();
+  loadKanbanCounts();
 }
 
 const _REACTION_ACTIONS = ['approve','reject','save','prioritize','dismiss','clarify'];

@@ -558,6 +558,52 @@ async def update_user_role(telegram_id: int, body: dict):
     return {"ok": True}
 
 
+@app.post("/api/users", dependencies=[Depends(_verify_token)])
+async def add_user(body: dict):
+    from ..auth.users import upsert_user
+    telegram_id = body.get("telegram_id")
+    name = body.get("name") or None
+    role = body.get("role", "user")
+    if not isinstance(telegram_id, int) or telegram_id <= 0:
+        raise HTTPException(status_code=400, detail="telegram_id required (positive int)")
+    if role not in ("admin", "user", "blocked"):
+        raise HTTPException(status_code=400, detail="Invalid role")
+    conn = await _get_conn()
+    await upsert_user(conn, telegram_id, name)
+    await set_role(conn, telegram_id, role)
+    await conn.close()
+    return {"ok": True}
+
+
+@app.put("/api/users/{telegram_id}", dependencies=[Depends(_verify_token)])
+async def update_user(telegram_id: int, body: dict):
+    conn = await _get_conn()
+    name = body.get("name")
+    role = body.get("role")
+    if name is not None:
+        await conn.execute("UPDATE users SET name = ? WHERE telegram_id = ?", (name, telegram_id))
+        await conn.commit()
+    if role is not None:
+        if role not in ("admin", "user", "blocked"):
+            await conn.close()
+            raise HTTPException(status_code=400, detail="Invalid role")
+        await set_role(conn, telegram_id, role)
+    await conn.close()
+    return {"ok": True}
+
+
+@app.delete("/api/users/{telegram_id}", dependencies=[Depends(_verify_token)])
+async def delete_user(telegram_id: int):
+    conn = await _get_conn()
+    async with conn.execute("DELETE FROM users WHERE telegram_id = ?", (telegram_id,)) as cur:
+        deleted = cur.rowcount
+    await conn.commit()
+    await conn.close()
+    if not deleted:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"ok": True}
+
+
 @app.get("/api/approvals", dependencies=[Depends(_verify_token)])
 async def get_approvals():
     if _daemon_ref:
@@ -614,6 +660,31 @@ async def get_kanban_counts():
         rows = await cur.fetchall()
     await conn.close()
     return {r["lane"]: r["n"] for r in rows}
+
+
+@app.delete("/api/kanban", dependencies=[Depends(_verify_token)])
+async def clear_kanban(lane: str | None = None, clear_all: bool = False):
+    conn = await _get_conn()
+    if clear_all:
+        async with conn.execute("DELETE FROM kanban_tasks") as cur:
+            deleted = cur.rowcount
+    elif lane:
+        try:
+            lane_enum = Lane(lane)
+        except ValueError:
+            await conn.close()
+            raise HTTPException(status_code=400, detail=f"Invalid lane: {lane}")
+        async with conn.execute("DELETE FROM kanban_tasks WHERE lane = ?", (lane_enum.value,)) as cur:
+            deleted = cur.rowcount
+    else:
+        async with conn.execute(
+            "DELETE FROM kanban_tasks WHERE lane IN (?, ?)",
+            (Lane.DONE.value, Lane.FAILED.value),
+        ) as cur:
+            deleted = cur.rowcount
+    await conn.commit()
+    await conn.close()
+    return {"deleted": deleted}
 
 
 @app.get("/api/config", dependencies=[Depends(_verify_token)])
