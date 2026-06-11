@@ -165,4 +165,25 @@ def parse_usage_text(text: str) -> UsageStats:
             except ValueError:
                 pass
 
+    # Legacy: bare percentage "42.5%"
+    if stats.usage_pct is None:
+        m = re.search(r"(\d+\.?\d*)\s*%", text)
+        if m:
+            try:
+                stats.session_pct = float(m.group(1)) / 100.0
+            except ValueError:
+                pass
+
+    # Legacy: relative reset "Resets in 3h 42m", "Reset in 2h", "Resets in 1d 4h 30m"
+    if stats.session_reset_at is None:
+        m = re.search(
+            r"reset[s]?\s+in\s+(?:(\d+)d\s*)?(?:(\d+)h\s*)?(?:(\d+)m)?",
+            text, re.IGNORECASE,
+        )
+        if m and any(m.groups()):
+            d = int(m.group(1) or 0)
+            h = int(m.group(2) or 0)
+            mm = int(m.group(3) or 0)
+            stats.session_reset_at = int(time.time()) + d * 86400 + h * 3600 + mm * 60
+
     return stats

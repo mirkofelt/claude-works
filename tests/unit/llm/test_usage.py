@@ -29,19 +29,24 @@ def test_parse_percentage_only():
 def test_parse_reset_hours_minutes():
     text = "Resets in 3h 42m"
     s = parse_usage_text(text)
-    assert s.reset_in_seconds == 3 * 3600 + 42 * 60
+    expected = 3 * 3600 + 42 * 60
+    assert s.reset_in_seconds is not None
+    assert abs(s.reset_in_seconds - expected) < 5  # allow 5s for execution time
 
 
 def test_parse_reset_hours_only():
     text = "Reset in 2h"
     s = parse_usage_text(text)
-    assert s.reset_in_seconds == 2 * 3600
+    assert s.reset_in_seconds is not None
+    assert abs(s.reset_in_seconds - 2 * 3600) < 5
 
 
 def test_parse_reset_days():
     text = "Resets in 1d 4h 30m"
     s = parse_usage_text(text)
-    assert s.reset_in_seconds == 86400 + 4 * 3600 + 30 * 60
+    expected = 86400 + 4 * 3600 + 30 * 60
+    assert s.reset_in_seconds is not None
+    assert abs(s.reset_in_seconds - expected) < 5
 
 
 def test_parse_empty_returns_none_fields():
@@ -53,24 +58,27 @@ def test_parse_empty_returns_none_fields():
 
 
 def test_is_near_limit_true():
-    s = UsageStats(usage_pct=0.85)
+    s = UsageStats(session_pct=0.85)
     assert s.is_near_limit
 
 
 def test_is_near_limit_false():
-    s = UsageStats(usage_pct=0.5)
+    s = UsageStats(session_pct=0.5)
     assert not s.is_near_limit
 
 
 def test_is_critical():
-    s = UsageStats(usage_pct=0.97)
+    s = UsageStats(session_pct=0.97)
     assert s.is_critical
     assert s.is_near_limit
 
 
 def test_as_dict_rounds_pct():
-    s = UsageStats(tokens_used=250000, tokens_limit=1000000, usage_pct=0.25, reset_in_seconds=3600)
+    import time
+    reset_at = int(time.time()) + 3600
+    s = UsageStats(tokens_used=250000, tokens_limit=1000000, session_reset_at=reset_at)
     d = s.as_dict()
     assert d["usage_pct"] == 25.0
     assert d["tokens_used"] == 250000
-    assert d["reset_in_seconds"] == 3600
+    assert d["reset_in_seconds"] is not None
+    assert abs(d["reset_in_seconds"] - 3600) < 5
