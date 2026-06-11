@@ -371,6 +371,7 @@ class Daemon:
         self._pending_messages: dict[int, IncomingMessage] = {}
         self._typing_tasks: dict[int, asyncio.Task] = {}
         self._chat_task_ids: set[int] = set()
+        self._chat_reply_to: dict[int, int] = {}
         self._running = False
         self._mode_mgr = ModeManager()
         self._mechanic: MechanicAgent | None = None
@@ -1098,7 +1099,7 @@ Rules:
                 await self._api.send_message(chat_id, "⏳ Bin noch dabei — gleich fertig.")
             else:
                 asyncio.create_task(
-                    self._handle_chat(chat_id, telegram_id, content),
+                    self._handle_chat(chat_id, telegram_id, content, incoming.telegram_message_id),
                     name=f"chat-{chat_id}",
                 )
 
@@ -1446,6 +1447,12 @@ Rules:
                 await self._conn.commit()
             except Exception:
                 pass
+        # Resolve reply-to: board tasks use original message from pending_reactions;
+        # chat tasks use the stored reply_to tracked via _chat_reply_to.
+        reply_to_id: int | None = (
+            reaction_info[1] if reaction_info else self._chat_reply_to.pop(task.id, None)
+        )
+
         if task.parent_id is not None:
             return
         if result:
@@ -1536,15 +1543,15 @@ Rules:
                         sent = {"message_id": initial_msg_id}
                     except Exception:
                         try:
-                            sent = await self._api.send_message(task.chat_id, html_result, parse_mode="HTML", reply_markup=reply_markup)
+                            sent = await self._api.send_message(task.chat_id, html_result, parse_mode="HTML", reply_markup=reply_markup, reply_to_message_id=reply_to_id)
                         except Exception:
-                            sent = await self._api.send_message(task.chat_id, clean_result, reply_markup=reply_markup)
+                            sent = await self._api.send_message(task.chat_id, clean_result, reply_markup=reply_markup, reply_to_message_id=reply_to_id)
                 else:
                     try:
-                        sent = await self._api.send_message(task.chat_id, html_result, parse_mode="HTML", reply_markup=reply_markup)
+                        sent = await self._api.send_message(task.chat_id, html_result, parse_mode="HTML", reply_markup=reply_markup, reply_to_message_id=reply_to_id)
                     except Exception:
                         logger.warning("HTML send failed for task=%d, retrying plain", task.id)
-                        sent = await self._api.send_message(task.chat_id, clean_result, reply_markup=reply_markup)
+                        sent = await self._api.send_message(task.chat_id, clean_result, reply_markup=reply_markup, reply_to_message_id=reply_to_id)
             else:
                 if initial_msg_id:
                     try:
@@ -1782,7 +1789,7 @@ Rules:
             rows = await cur.fetchall()
         return [{"role": r["role"], "content": r["text"]} for r in reversed(rows)]
 
-    async def _handle_chat(self, chat_id: int, user_id: int, content: str) -> None:
+    async def _handle_chat(self, chat_id: int, user_id: int, content: str, reply_to_msg_id: int | None = None) -> None:
         """Handle a conversational message directly, bypassing kanban controller."""
         self._start_typing(chat_id)
         task_id: int | None = None
@@ -1816,6 +1823,8 @@ Rules:
                 task_id = await self._board.push_active(proto, agent_id="chat")
                 if task_id:
                     self._chat_task_ids.add(task_id)
+                    if reply_to_msg_id:
+                        self._chat_reply_to[task_id] = reply_to_msg_id
             result = await asyncio.wait_for(agent.run(content), timeout=300.0)
             preliminary_msg_id: int | None = None
             for _ in range(5):
