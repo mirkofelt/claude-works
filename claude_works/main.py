@@ -45,6 +45,8 @@ PID_FILE = "/data/claude-works.pid"
 
 def _md_to_telegram_html(text: str) -> str:
     """Convert Markdown subset to Telegram HTML. Escapes & < > in text nodes."""
+    text = text.replace('\\n', '\n').replace('\\t', '\t')
+
     def esc(s: str) -> str:
         return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
