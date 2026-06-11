@@ -635,6 +635,29 @@ async def deny_action(approval_id: int):
     return {"ok": True}
 
 
+@app.get("/api/security/allowlist", dependencies=[Depends(_verify_token)])
+async def get_allowlist():
+    if not _daemon_ref:
+        return {"always_allowed_actions": [], "skip_all": False}
+    sec = _daemon_ref._security
+    return {
+        "always_allowed_actions": sec.always_allowed_actions,
+        "skip_all": sec.skip_all,
+    }
+
+
+@app.delete("/api/security/allowlist/{action_type}", dependencies=[Depends(_verify_token)])
+async def remove_from_allowlist(action_type: str):
+    if not _daemon_ref:
+        raise HTTPException(status_code=503, detail="Daemon not running")
+    sec = _daemon_ref._security
+    sec._always_allowed_actions.discard(action_type)
+    if action_type == "__all__":
+        sec._skip_all = False
+    sec._save_allowlist()
+    return {"ok": True}
+
+
 @app.get("/api/kanban", dependencies=[Depends(_verify_token)])
 async def get_kanban(lane: str | None = None, limit: int = 100):
     conn = await _get_conn()

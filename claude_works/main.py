@@ -831,6 +831,31 @@ class Daemon:
             self._start_typing(pending["chat_id"])
             return
 
+        if data.startswith("sec_"):
+            await self._api.answer_callback_query(callback_query_id)
+            scope, _, rest = data.partition(":")
+            try:
+                approval_id = int(rest)
+            except ValueError:
+                return
+            if scope == "sec_once":
+                ok = self._security.approve(approval_id, telegram_id)
+                reply = "✅ Einmalig freigegeben."
+            elif scope == "sec_deny":
+                ok = self._security.deny(approval_id, telegram_id)
+                reply = "❌ Abgelehnt."
+            elif scope == "sec_always_action":
+                ok = self._security.approve_always_action(approval_id, telegram_id)
+                reply = "🔄 Aktion dauerhaft freigegeben — zukünftige Anfragen dieser Art werden automatisch genehmigt."
+            elif scope == "sec_always_all":
+                ok = self._security.approve_always_all(approval_id, telegram_id)
+                reply = "🔓 Alle Security-Checks dauerhaft deaktiviert."
+            else:
+                return
+            if ok:
+                await self._api.send_message(chat_id, reply)
+            return
+
         await self._api.answer_callback_query(callback_query_id)
         fake_msg = {
             "message_id": cq.get("message", {}).get("message_id", 0),
