@@ -119,8 +119,9 @@ class CliProvider(LLMProvider):
     Multi-turn history is embedded in the system prompt preamble.
     """
 
-    def __init__(self, cli_binary: str) -> None:
+    def __init__(self, cli_binary: str, allowed_tools: list[str] | None = None) -> None:
         self._binary = cli_binary
+        self._allowed_tools: list[str] = allowed_tools or []
 
     async def complete(
         self,
@@ -147,6 +148,8 @@ class CliProvider(LLMProvider):
             "--model", model,
             "--system-prompt", full_system,
         ]
+        if self._allowed_tools:
+            cmd += ["--allowedTools", ",".join(self._allowed_tools)]
         import os
         import tempfile
         projects_dir = os.environ.get("PROJECTS_DIR", "/data/projects")
@@ -265,5 +268,6 @@ def get_provider(cfg: dict) -> LLMProvider:
         binary = cfg.get("cli_binary") or "claude"
         if not re.match(r'^[a-zA-Z0-9_./-]+$', binary):
             raise ValueError(f"llm.cli_binary contains invalid characters: {binary!r}")
-        return CliProvider(cli_binary=binary)
+        allowed_tools = cfg.get("allowed_tools", ["WebSearch", "WebFetch", "Read", "Grep", "Glob"])
+        return CliProvider(cli_binary=binary, allowed_tools=allowed_tools)
     raise ValueError(f"Unknown LLM provider: {provider_type!r}")
