@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 
 from ..config import get_agent_model, section
 from ..llm.provider import LLMProvider, get_provider
+from ..telemetry import task_log as _tlog
 from ..telemetry.tokens import BudgetExceededError, TokenTracker
 
 logger = logging.getLogger(__name__)
@@ -83,6 +84,7 @@ class BaseAgent(ABC):
             "Agent %s[%s] task=%d model=%s",
             self.agent_class, self.id, self.task_id, model,
         )
+        _tlog.info(self.task_id, f"→ {self.agent_class} calling {model}")
 
         response = await self._get_provider().complete(
             self._messages,
@@ -94,6 +96,11 @@ class BaseAgent(ABC):
 
         self._messages.append({"role": "assistant", "content": response.text})
         self._context_tokens = response.usage.input_tokens + response.usage.output_tokens
+
+        _tlog.info(
+            self.task_id,
+            f"← {self.agent_class} done  in={response.usage.input_tokens} out={response.usage.output_tokens} tokens",
+        )
 
         if self._token_tracker:
             await self._token_tracker.log(

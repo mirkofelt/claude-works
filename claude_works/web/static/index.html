@@ -152,6 +152,22 @@
     .lane-count .lc-num { font-size: 22px; font-weight: 700; line-height: 1; margin-bottom: 4px; }
     .lane-count .lc-lbl { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
 
+    /* task log pane */
+    .task-row { cursor: pointer; }
+    .task-row.selected td { background: rgba(88,166,255,.06) !important; }
+    #taskLogPane { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; margin-top: 12px; display: none; }
+    #taskLogPane.open { display: block; }
+    .tlog-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--muted); }
+    .tlog-body { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12px; padding: 8px 0; max-height: 280px; overflow-y: auto; }
+    .tlog-entry { display: flex; gap: 10px; padding: 2px 14px; line-height: 1.5; }
+    .tlog-entry:hover { background: rgba(255,255,255,.02); }
+    .tlog-ts { color: var(--muted); flex-shrink: 0; }
+    .tlog-lvl { flex-shrink: 0; width: 36px; font-weight: 600; }
+    .tlog-lvl-info { color: #4d5566; }
+    .tlog-lvl-warn { color: var(--yellow); }
+    .tlog-lvl-error { color: var(--red); }
+    .tlog-msg { color: var(--text); word-break: break-all; }
+
     /* token chart */
     .chart-wrap { padding: 12px; }
     canvas#tokenChart { display: block; width: 100%; height: 220px; cursor: crosshair; }
@@ -528,6 +544,13 @@
       <tbody id="kanbanBody"><tr><td colspan="7" class="empty">Loading…</td></tr></tbody>
     </table>
   </div>
+  <div id="taskLogPane">
+    <div class="tlog-header">
+      <span id="taskLogTitle">Task logs</span>
+      <button onclick="closeTaskLog()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:18px;line-height:1;padding:0 4px">×</button>
+    </div>
+    <div class="tlog-body" id="taskLogBody"><div style="padding:24px;text-align:center;color:var(--muted)">No logs yet</div></div>
+  </div>
 </div>
 
 <div class="section" id="tab-tokens">
@@ -879,6 +902,9 @@ let activeTab = 'messages';
 let _chatHistoryLoaded = false;
 let timer = null;
 let tokenPeriod = '24h';
+let selectedTaskId = null;
+let logPollTimer = null;
+let logLastTs = 0;
 
 const TABS = ['messages', 'users', 'knowledge', 'approvals', 'kanban', 'tokens', 'logs', 'chat', 'settings'];
 
@@ -1098,11 +1124,65 @@ async function fetchStatus() {
 }
 
 function showTab(tab) {
+  if (tab !== 'kanban') closeTaskLog();
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
   document.querySelectorAll('nav button').forEach((b, i) => b.classList.toggle('active', TABS[i] === tab));
   document.getElementById('tab-' + tab).classList.add('active');
   activeTab = tab;
   loadTab(tab);
+}
+
+function openTaskLog(id) {
+  if (selectedTaskId === id) { closeTaskLog(); return; }
+  if (logPollTimer) { clearInterval(logPollTimer); logPollTimer = null; }
+  selectedTaskId = id;
+  logLastTs = 0;
+  document.querySelectorAll('.task-row').forEach(r => r.classList.remove('selected'));
+  document.querySelectorAll('.task-row').forEach(r => {
+    if (r.getAttribute('onclick') === 'openTaskLog(' + id + ')') r.classList.add('selected');
+  });
+  document.getElementById('taskLogTitle').textContent = 'Task #' + id + ' — logs';
+  document.getElementById('taskLogBody').innerHTML = '<div style="padding:24px;text-align:center;color:var(--muted)">Loading…</div>';
+  document.getElementById('taskLogPane').classList.add('open');
+  pollTaskLog(id);
+  logPollTimer = setInterval(() => { if (selectedTaskId === id) pollTaskLog(id); }, 2000);
+}
+
+function closeTaskLog() {
+  if (logPollTimer) { clearInterval(logPollTimer); logPollTimer = null; }
+  selectedTaskId = null;
+  logLastTs = 0;
+  document.getElementById('taskLogPane').classList.remove('open');
+  document.querySelectorAll('.task-row').forEach(r => r.classList.remove('selected'));
+}
+
+async function pollTaskLog(id) {
+  const data = await api('/api/tasks/' + id + '/logs?since=' + logLastTs);
+  if (!data || selectedTaskId !== id) return;
+  const entries = data.logs || [];
+  if (!entries.length && logLastTs === 0) {
+    document.getElementById('taskLogBody').innerHTML = '<div style="padding:24px;text-align:center;color:var(--muted)">No logs for this task</div>';
+    return;
+  }
+  if (!entries.length) return;
+  entries.forEach(e => { if (e.ts > logLastTs) logLastTs = e.ts; });
+  const body = document.getElementById('taskLogBody');
+  const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
+  const frag = document.createDocumentFragment();
+  if (logLastTs === entries[entries.length - 1].ts && body.querySelector('.empty-msg')) body.innerHTML = '';
+  entries.forEach(e => {
+    const d = document.createElement('div');
+    d.className = 'tlog-entry';
+    const t = new Date(e.ts * 1000);
+    const hh = String(t.getHours()).padStart(2,'0');
+    const mm = String(t.getMinutes()).padStart(2,'0');
+    const ss = String(t.getSeconds()).padStart(2,'0');
+    d.innerHTML = `<span class="tlog-ts">${hh}:${mm}:${ss}</span><span class="tlog-lvl tlog-lvl-${e.level}">${e.level}</span><span class="tlog-msg">${esc(e.msg)}</span>`;
+    frag.appendChild(d);
+  });
+  if (body.querySelector('div[style]')) body.innerHTML = '';
+  body.appendChild(frag);
+  if (atBottom) body.scrollTop = body.scrollHeight;
 }
 
 function loadTab(t) {
@@ -1260,7 +1340,7 @@ async function loadKanban() {
   const b = document.getElementById('kanbanBody');
   if (!rows?.length) { b.innerHTML = '<tr><td colspan="7" class="empty">No tasks</td></tr>'; return; }
   b.innerHTML = rows.map(t => `
-    <tr>
+    <tr class="task-row${selectedTaskId === t.id ? ' selected' : ''}" onclick="openTaskLog(${t.id})">
       <td class="mono">${t.id}</td>
       <td><span class="badge b-${t.lane}">${t.lane.replace('_', ' ')}</span></td>
       <td>${t.agent_class ? `<span class="badge b-${t.agent_class}">${t.agent_class}</span>` : '–'}</td>
@@ -1283,21 +1363,20 @@ function setTokenPeriod(p) {
 async function loadLimitGauge() {
   const d = await api('/api/usage');
   const card = document.getElementById('limitGaugeCard');
-  if (!d || d.tokens_used == null || d.tokens_limit == null || d.tokens_limit === 0) {
-    if (card) card.style.display = 'none';
-    return;
-  }
+  const hasPct = d?.usage_pct != null;
+  const hasTokens = d?.tokens_used != null && d?.tokens_limit != null && d?.tokens_limit !== 0;
+  if (!d || (!hasPct && !hasTokens)) { if (card) card.style.display = 'none'; return; }
   card.style.display = '';
-  const pct = Math.min(100, Math.round((d.tokens_used / d.tokens_limit) * 100));
+  const pct = hasTokens ? Math.min(100, Math.round((d.tokens_used / d.tokens_limit) * 100)) : Math.min(100, Math.round(d.usage_pct));
   const bar = document.getElementById('limitBar');
   const barColor = pct >= 90 ? 'var(--red)' : pct >= 70 ? 'var(--yellow)' : 'var(--green)';
   if (bar) { bar.style.width = pct + '%'; bar.style.background = barColor; }
   const pctEl = document.getElementById('limitPct');
   if (pctEl) { pctEl.textContent = pct + '%'; pctEl.style.color = barColor; }
   const usedEl = document.getElementById('limitUsed');
-  if (usedEl) usedEl.textContent = fmt(d.tokens_used) + ' used';
+  if (usedEl) usedEl.textContent = hasTokens ? fmt(d.tokens_used) + ' used' : pct + '% used';
   const totalEl = document.getElementById('limitTotal');
-  if (totalEl) totalEl.textContent = fmt(d.tokens_limit) + ' limit';
+  if (totalEl) totalEl.textContent = hasTokens ? fmt(d.tokens_limit) + ' limit' : '';
   const resetEl = document.getElementById('limitResetIn');
   if (resetEl && d.reset_in_seconds != null) {
     const h = Math.floor(d.reset_in_seconds / 3600);

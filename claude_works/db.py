@@ -217,9 +217,19 @@ CREATE TABLE IF NOT EXISTS usage_snapshots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     tokens_used INTEGER,
     tokens_limit INTEGER,
+    usage_pct REAL,
     sampled_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_usage_snapshots_time ON usage_snapshots(sampled_at);
+
+CREATE TABLE IF NOT EXISTS task_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL,
+    ts INTEGER NOT NULL,
+    level TEXT NOT NULL DEFAULT 'info',
+    msg TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_task_logs_task ON task_logs(task_id, ts);
 """
 
 CONFIG_TABLES = """
@@ -242,6 +252,7 @@ CREATE TABLE IF NOT EXISTS security_allowlist (
 
 _MIGRATIONS = [
     "ALTER TABLE token_usage ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0",
+    "ALTER TABLE usage_snapshots ADD COLUMN usage_pct REAL",
 ]
 
 

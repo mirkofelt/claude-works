@@ -390,6 +390,23 @@ async def get_usage():
     return {"tokens_used": None, "tokens_limit": None, "usage_pct": None, "reset_in_seconds": None}
 
 
+@app.get("/api/tasks/{task_id}/logs", dependencies=[Depends(_verify_token)])
+async def get_task_logs(task_id: int, since: int = 0):
+    from ..telemetry.task_log import get_buffer
+    buf = get_buffer(task_id)
+    if buf:
+        entries = [e for e in buf if e["ts"] > since]
+        return {"task_id": task_id, "logs": entries, "source": "memory"}
+    conn = await _db.get_conn()
+    async with conn.execute(
+        "SELECT ts, level, msg FROM task_logs WHERE task_id = ? AND ts > ? ORDER BY ts ASC",
+        (task_id, since),
+    ) as cur:
+        rows = await cur.fetchall()
+    await conn.close()
+    return {"task_id": task_id, "logs": [{"ts": r[0], "level": r[1], "msg": r[2]} for r in rows], "source": "db"}
+
+
 @app.post("/api/repair/trigger", dependencies=[Depends(_verify_token)])
 async def trigger_repair(body: dict):
     if not _daemon_ref:

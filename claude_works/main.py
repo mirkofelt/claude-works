@@ -932,7 +932,9 @@ Rules:
         if self._mode_mgr.mode in (DaemonMode.REPAIR, DaemonMode.MIGRATE):
             if await is_admin(self._conn, telegram_id) and self._mechanic and text:
                 reply = await self._mechanic.followup(text)
-                await self._api.send_message(chat_id, reply[:4096])
+                clean_reply, keyboard = _parse_buttons(reply)
+                reply_markup = {"inline_keyboard": keyboard} if keyboard else None
+                await self._api.send_message(chat_id, clean_reply[:4096], reply_markup=reply_markup)
                 return
             await self._api.send_message(
                 chat_id,
@@ -2053,11 +2055,11 @@ Rules:
                 self._usage_state = stats
                 pct_str = f"{stats.usage_pct * 100:.0f}%" if stats.usage_pct is not None else "?"
                 logger.info("Claude Code usage: %s (tokens %s/%s)", pct_str, stats.tokens_used, stats.tokens_limit)
-                if stats.tokens_used is not None:
+                if stats.usage_pct is not None or stats.tokens_used is not None:
                     try:
                         await self._conn.execute(
-                            "INSERT INTO usage_snapshots (tokens_used, tokens_limit, sampled_at) VALUES (?, ?, ?)",
-                            (stats.tokens_used, stats.tokens_limit, int(time.time())),
+                            "INSERT INTO usage_snapshots (tokens_used, tokens_limit, usage_pct, sampled_at) VALUES (?, ?, ?, ?)",
+                            (stats.tokens_used, stats.tokens_limit, stats.usage_pct, int(time.time())),
                         )
                         await self._conn.commit()
                     except Exception:

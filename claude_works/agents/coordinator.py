@@ -9,6 +9,7 @@ from ..kanban.board import KanbanBoard
 from ..kanban.models import AgentClass, KanbanTask
 from ..llm.errors import RateLimitError
 from ..llm.provider import LLMProvider, get_provider
+from ..telemetry.task_log import TaskLogger
 from ..telemetry.tokens import BudgetExceededError, TokenTracker
 from .chief import ChiefAgent
 from .controller import ControllerAgent
@@ -198,6 +199,8 @@ class AgentCoordinator:
         AgentCls = _SPECIALIST_MAP[agent_class]
         persona = self._chief.persona if self._chief else ""
 
+        tlog = TaskLogger(task.id)
+        tlog.info(f"task {task.id} assigned to {agent_class.value}")
         agent = AgentCls(
             task_id=task.id,
             user_context={
@@ -242,11 +245,13 @@ class AgentCoordinator:
             self._rate_limit_count = 0  # reset on success
             elapsed = time.time() - started
             logger.info("Specialist %s task %d done in %.1fs", agent_class.value, task.id, elapsed)
+            tlog.info(f"task {task.id} done in {elapsed:.1f}s")
             await self._board.complete(task.id, result)
             await self._on_result(task, result, None)
         except asyncio.TimeoutError:
             err = f"Task timed out after {timeout}s"
             logger.error("Specialist %s task %d timed out", agent_class.value, task.id)
+            tlog.error(f"timeout after {timeout}s")
             await self._board.fail(task.id, err)
             await self._on_result(task, None, err)
         except RateLimitError as exc:
@@ -258,15 +263,18 @@ class AgentCoordinator:
                 "Rate limited (hit #%d); cooldown %.0fs; requeuing task %d",
                 self._rate_limit_count, cooldown, task.id,
             )
+            tlog.warn(f"rate limited — requeued (cooldown {cooldown:.0f}s)")
             await self._board.requeue(task.id)
             if self._on_requeue:
                 await self._on_requeue(task)
         except BudgetExceededError as exc:
             err = str(exc)
             logger.warning("Budget exceeded for task %d: %s", task.id, err)
+            tlog.error(f"budget exceeded: {err}")
             await self._board.fail(task.id, err)
             await self._on_result(task, None, err)
         except Exception as exc:
             logger.exception("Specialist %s task %d failed", agent_class.value, task.id)
+            tlog.error(f"failed: {exc}")
             await self._board.fail(task.id, str(exc))
             await self._on_result(task, None, str(exc))
