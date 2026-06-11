@@ -1310,9 +1310,10 @@ class Daemon:
                     logger.warning("Email read failed for task=%d: %s", task.id, e)
                     await self._api.send_message(task.chat_id, f"Email read failed: {e}")
 
-            if github_args:
+            while github_args:
                 method, endpoint, body = github_args
                 is_write = method in ("POST", "PUT", "PATCH", "DELETE")
+                do_exec = True
                 if is_write:
                     gh_content = f"{method} {endpoint}\n\n{body or ''}"
                     gh_allowed = await self._security.check_action(
@@ -1321,8 +1322,8 @@ class Daemon:
                     if not gh_allowed:
                         logger.info("GitHub write blocked by security officer for task=%d", task.id)
                         await self._api.send_message(task.chat_id, "GitHub write blocked by security officer — possible data leak detected.")
-                        github_args = None
-                if github_args:
+                        do_exec = False
+                if do_exec:
                     try:
                         github_cfg = config.section("github")
                         result_data = await _github_api(method, endpoint, body or None, github_cfg)
@@ -1335,6 +1336,7 @@ class Daemon:
                     except Exception as e:
                         logger.warning("GitHub API failed for task=%d: %s", task.id, e)
                         await self._api.send_message(task.chat_id, f"GitHub error: {e}")
+                clean_result, github_args = _extract_github_api_tag(clean_result)
 
             if git_clone_args:
                 repo_url, plugin_name = git_clone_args
@@ -1486,36 +1488,40 @@ class Daemon:
         import json as _json
         tool_results: list[str] = []
 
-        clean, github_args = _extract_github_api_tag(result)
-        if github_args:
+        while True:
+            clean, github_args = _extract_github_api_tag(result)
+            if not github_args:
+                break
             method, endpoint, body = github_args
-            if method == "GET":
-                result = clean
-                try:
-                    # Use httpx directly for reads — avoids gh CLI dependency
-                    github_cfg = config.section("github")
-                    token = github_cfg.get("token", "")
-                    url = f"https://api.github.com{endpoint}"
-                    headers = {
-                        "Accept": "application/vnd.github+json",
-                        "X-GitHub-Api-Version": "2022-11-28",
-                    }
-                    if token:
-                        headers["Authorization"] = f"Bearer {token}"
-                    async with httpx.AsyncClient(timeout=30.0) as hc:
-                        resp = await hc.get(url, headers=headers)
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        data_str = _json.dumps(data, ensure_ascii=False, indent=2)
-                        tool_results.append(f"GitHub GET {endpoint}:\n{data_str[:4000]}")
-                    else:
-                        tool_results.append(f"GitHub GET {endpoint}: HTTP {resp.status_code} — {resp.text[:200]}")
-                except Exception as e:
-                    tool_results.append(f"GitHub GET {endpoint} failed: {e}")
-            # Write ops: leave tag intact for _on_agent_result security check
+            if method != "GET":
+                break  # leave write ops intact for _on_agent_result
+            result = clean
+            try:
+                # Use httpx directly for reads — avoids gh CLI dependency
+                github_cfg = config.section("github")
+                token = github_cfg.get("token", "")
+                url = f"https://api.github.com{endpoint}"
+                headers = {
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                }
+                if token:
+                    headers["Authorization"] = f"Bearer {token}"
+                async with httpx.AsyncClient(timeout=30.0) as hc:
+                    resp = await hc.get(url, headers=headers)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    data_str = _json.dumps(data, ensure_ascii=False, indent=2)
+                    tool_results.append(f"GitHub GET {endpoint}:\n{data_str[:4000]}")
+                else:
+                    tool_results.append(f"GitHub GET {endpoint}: HTTP {resp.status_code} — {resp.text[:200]}")
+            except Exception as e:
+                tool_results.append(f"GitHub GET {endpoint} failed: {e}")
 
-        clean, email_args = _extract_read_email_tag(result)
-        if email_args:
+        while True:
+            clean, email_args = _extract_read_email_tag(result)
+            if not email_args:
+                break
             result = clean
             folder, count = email_args
             try:
@@ -1550,8 +1556,10 @@ class Daemon:
             except Exception as e:
                 tool_results.append(f"GIT_CLONE {repo_url}: error: {e}")
 
-        clean, kb_query = _extract_kb_search_tag(result)
-        if kb_query:
+        while True:
+            clean, kb_query = _extract_kb_search_tag(result)
+            if not kb_query:
+                break
             result = clean
             try:
                 conn = await db.get_conn()
