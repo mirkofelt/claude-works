@@ -63,14 +63,18 @@ All other fields are optional — see `settings.example.json` for the full struc
 
 ### 4. Claude CLI (optional, for subscription users)
 
-Copy the `claude` binary into the container's PATH or use the bundled one:
+The `claude` binary is bundled in the container. Set `llm.provider = "cli"` in the Settings tab, then authenticate:
 
+**Option A — Telegram** (recommended): Send `/reauth` to the bot. It sends an auth URL; open it in your browser, then send the code back via Telegram.
+
+**Option B — Web UI**: Settings → AI Provider → `cli` → "Authenticate with Anthropic →". Opens an auth flow inside the web UI.
+
+**Option C — Shell**:
 ```bash
-# Authenticate (one-time, auth persists in /data/.claude)
 docker compose exec claude-works claude auth login
 ```
 
-Then set `llm.provider = "cli"` in the Settings tab of the Web UI.
+Auth credentials persist in `/data/.claude/` across container restarts.
 
 ---
 
