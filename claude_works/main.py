@@ -748,6 +748,52 @@ class Daemon:
         self._mechanic_task = None
         await self._init_run_components()
 
+    async def _build_status_snapshot(self) -> str:
+        """Build a concise live system status block to inject into admin chat context."""
+        lines = []
+        # Mode
+        sys_mode = config.get().get("system", {}).get("mode", "run").upper()
+        lines.append(f"Mode: {'▶ RUN' if sys_mode == 'RUN' else '⚠ ' + sys_mode}")
+        # Active agents
+        active = self._coordinator.active_count if self._coordinator else 0
+        lines.append(f"Agents: {active} active")
+        # Kanban queue stats
+        try:
+            async with self._conn.execute(
+                "SELECT lane, COUNT(*) as n FROM kanban_tasks GROUP BY lane"
+            ) as cur:
+                rows = await cur.fetchall()
+            stats = {r["lane"]: r["n"] for r in rows}
+            q_parts = []
+            for lane in ("backlog", "assigned", "in_progress", "failed"):
+                n = stats.get(lane, 0)
+                if n:
+                    emoji = "🔴" if lane == "failed" else ("🔄" if lane == "in_progress" else "📥")
+                    q_parts.append(f"{emoji} {lane}={n}")
+            lines.append("Queue: " + (", ".join(q_parts) if q_parts else "✅ empty"))
+        except Exception:
+            lines.append("Queue: unknown")
+        # Tor status
+        try:
+            _, writer = await asyncio.wait_for(
+                asyncio.open_connection("127.0.0.1", 9050), timeout=2.0
+            )
+            writer.close()
+            lines.append("Tor: ✅ up")
+        except Exception:
+            lines.append("Tor: ❌ port 9050 unreachable")
+        # Rate limit
+        if self._coordinator and self._coordinator.is_rate_limited:
+            lines.append("LLM: ⏳ rate limited")
+        else:
+            llm_provider = config.get().get("llm", {}).get("provider", "?")
+            usage_pct = ""
+            if self._usage_state and self._usage_state.usage_pct is not None:
+                usage_pct = f" ({int(self._usage_state.usage_pct * 100)}% limit used)"
+            lines.append(f"LLM: ✅ {llm_provider}{usage_pct}")
+        ts = time.strftime("%H:%M:%S", time.localtime())
+        return f"[SYSTEM SNAPSHOT {ts}]\n" + "\n".join(lines)
+
     async def web_admin_chat(self, message: str) -> str:
         """Process admin message from web UI, return reply. Maintains multi-turn context."""
         if self._web_admin_agent is None:
@@ -766,7 +812,9 @@ class Daemon:
             ("user", message, now),
         )
         await self._conn.commit()
-        reply = await self._web_admin_agent.run(message)
+        snapshot = await self._build_status_snapshot()
+        enriched = f"{snapshot}\n\n---\n\n{message}"
+        reply = await self._web_admin_agent.run(enriched)
         await self._conn.execute(
             "INSERT INTO admin_chat_messages (role, content, sent_at) VALUES (?, ?, ?)",
             ("assistant", reply, int(time.time())),

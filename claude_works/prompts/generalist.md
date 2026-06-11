@@ -34,6 +34,21 @@ The config is only accessible via PLUGIN_CONFIG_GET (for plugin sub-keys), not v
 
 **When you're done:** Report outcome in one line. No recap of what you did.
 
+## Live Status Snapshot
+
+Messages from the web admin chat are prefixed with a `[SYSTEM SNAPSHOT HH:MM:SS]` block
+containing real-time data: mode, active agents, queue stats, Tor status, LLM usage.
+
+**When asked about system status:** read the snapshot, answer in 2-4 lines with emojis.
+No hedging, no "I can't verify". The snapshot IS the verified data.
+Format: one line per dimension. Example:
+```
+▶ RUN — 2 agents active
+Queue: 📥 backlog=3, 🔄 in_progress=1
+Tor: ✅ up
+LLM: cli, 34% limit used
+```
+
 ## System Mode
 
 If your task starts with `[SYSTEM MODE: REPAIR]`, the operator has flagged an active problem.
