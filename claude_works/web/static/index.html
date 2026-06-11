@@ -343,8 +343,7 @@
 </header>
 
 <nav>
-  <button class="active" onclick="showTab('tasks')">Tasks</button>
-  <button onclick="showTab('messages')">Messages</button>
+  <button class="active" onclick="showTab('messages')">Messages</button>
   <button onclick="showTab('users')">Users</button>
   <button onclick="showTab('knowledge')">Knowledge</button>
   <button onclick="showTab('approvals')">Approvals</button>
@@ -357,33 +356,7 @@
 
 <main>
 
-<div class="section active" id="tab-tasks">
-  <div class="toolbar">
-    <select id="taskStatus" onchange="loadTasks()">
-      <option value="">All</option>
-      <option value="pending">Pending</option>
-      <option value="running">Running</option>
-      <option value="done">Done</option>
-      <option value="failed">Failed</option>
-    </select>
-    <select id="taskLimit" onchange="loadTasks()">
-      <option value="20">20</option>
-      <option value="50" selected>50</option>
-      <option value="100">100</option>
-    </select>
-  </div>
-  <div class="card">
-    <table>
-      <thead><tr>
-        <th>#</th><th>Status</th><th>User</th><th>Content</th>
-        <th>Created</th><th>Duration</th><th>Agent</th>
-      </tr></thead>
-      <tbody id="taskBody"><tr><td colspan="7" class="empty">Loading…</td></tr></tbody>
-    </table>
-  </div>
-</div>
-
-<div class="section" id="tab-messages">
+<div class="section active" id="tab-messages">
   <div class="toolbar">
     <input type="number" id="msgChat" placeholder="Chat ID" style="width:130px">
     <select id="msgLimit" onchange="loadMessages()">
@@ -771,12 +744,12 @@
 
 <script>
 let TOKEN = localStorage.getItem('comms_token') || '';
-let activeTab = 'tasks';
+let activeTab = 'messages';
 let _chatHistoryLoaded = false;
 let timer = null;
 let tokenPeriod = '24h';
 
-const TABS = ['tasks', 'messages', 'users', 'knowledge', 'approvals', 'kanban', 'tokens', 'logs', 'chat', 'settings'];
+const TABS = ['messages', 'users', 'knowledge', 'approvals', 'kanban', 'tokens', 'logs', 'chat', 'settings'];
 
 const LANE_COLORS = {
   backlog: '#8b949e', assigned: '#58a6ff', in_progress: '#d29922',
@@ -859,8 +832,7 @@ function showTab(tab) {
 }
 
 function loadTab(t) {
-  if (t === 'tasks') loadTasks();
-  else if (t === 'messages') loadMessages();
+  if (t === 'messages') loadMessages();
   else if (t === 'users') loadUsers();
   else if (t === 'knowledge') loadKnowledge();
   else if (t === 'approvals') loadApprovals();
@@ -891,24 +863,6 @@ const fmt = n => {
        : n >= 1000    ? (n / 1000).toFixed(1) + 'k'
        : String(n);
 };
-
-async function loadTasks() {
-  const st = document.getElementById('taskStatus').value;
-  const lim = document.getElementById('taskLimit').value;
-  const rows = await api('/api/tasks?limit=' + lim + (st ? '&status=' + st : ''));
-  const b = document.getElementById('taskBody');
-  if (!rows?.length) { b.innerHTML = '<tr><td colspan="7" class="empty">No tasks</td></tr>'; return; }
-  b.innerHTML = rows.map(t => `
-    <tr>
-      <td class="mono">${t.id}</td>
-      <td><span class="badge b-${t.status}">${t.status}</span></td>
-      <td class="mono">${t.user_id}</td>
-      <td><span class="trunc" title="${esc(t.content)}">${esc(t.content)}</span></td>
-      <td style="white-space:nowrap;color:var(--muted);font-size:12px">${ts(t.created_at)}</td>
-      <td style="white-space:nowrap">${dur(t.started_at, t.completed_at)}</td>
-      <td class="mono" style="color:var(--muted)">${t.agent_id || '–'}</td>
-    </tr>`).join('');
-}
 
 async function loadMessages() {
   const chat = document.getElementById('msgChat').value;

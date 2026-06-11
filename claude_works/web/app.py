@@ -450,24 +450,6 @@ async def get_repair_report():
     return {"report": report}
 
 
-@app.get("/api/tasks", dependencies=[Depends(_verify_token)])
-async def get_tasks(status: str | None = None, limit: int = 50):
-    conn = await _get_conn()
-    if status:
-        async with conn.execute(
-            "SELECT * FROM tasks WHERE status = ? ORDER BY created_at DESC LIMIT ?",
-            (status, limit),
-        ) as cur:
-            rows = await cur.fetchall()
-    else:
-        async with conn.execute(
-            "SELECT * FROM tasks ORDER BY created_at DESC LIMIT ?", (limit,)
-        ) as cur:
-            rows = await cur.fetchall()
-    await conn.close()
-    return [dict(r) for r in rows]
-
-
 @app.get("/api/messages", dependencies=[Depends(_verify_token)])
 async def get_messages(chat_id: int | None = None, limit: int = 50):
     conn = await _get_conn()
