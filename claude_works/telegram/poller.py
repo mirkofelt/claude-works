@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import sqlite3
 import time
 from typing import Callable, Awaitable
 
@@ -11,7 +12,7 @@ logger = logging.getLogger(__name__)
 UpdateHandler = Callable[[dict], Awaitable[None]]
 
 _ALLOWED_UPDATES = ["message", "edited_message", "message_reaction", "callback_query"]
-_OFFSET_FILE = os.environ.get("TELEGRAM_OFFSET_FILE", "/data/telegram_offset")
+_DB_PATH = os.environ.get("DB_FILE", "/data/claude-works.db")
 
 
 class TelegramPoller:
@@ -25,15 +26,23 @@ class TelegramPoller:
 
     def _load_offset(self) -> int:
         try:
-            with open(_OFFSET_FILE) as f:
-                return int(f.read().strip())
+            with sqlite3.connect(_DB_PATH) as conn:
+                row = conn.execute(
+                    "SELECT value FROM daemon_state WHERE key = 'telegram_offset'"
+                ).fetchone()
+            return int(row[0]) if row else 0
         except Exception:
             return 0
 
     def _persist_offset(self) -> None:
         try:
-            with open(_OFFSET_FILE, "w") as f:
-                f.write(str(self._offset))
+            with sqlite3.connect(_DB_PATH) as conn:
+                conn.execute(
+                    """INSERT OR REPLACE INTO daemon_state (key, value, updated_at)
+                       VALUES ('telegram_offset', ?, ?)""",
+                    (str(self._offset), int(time.time())),
+                )
+                conn.commit()
         except Exception:
             pass
 

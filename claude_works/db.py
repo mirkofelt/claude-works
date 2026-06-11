@@ -194,6 +194,12 @@ CREATE TABLE IF NOT EXISTS admin_chat_messages (
     content TEXT NOT NULL,
     sent_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS daemon_state (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+);
 """
 
 CONFIG_TABLES = """
@@ -203,6 +209,13 @@ PRAGMA synchronous=NORMAL;
 CREATE TABLE IF NOT EXISTS daemon_config (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     settings_json TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS security_allowlist (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    always_allowed_actions TEXT NOT NULL DEFAULT '[]',
+    skip_all INTEGER NOT NULL DEFAULT 0,
     updated_at INTEGER NOT NULL
 );
 """

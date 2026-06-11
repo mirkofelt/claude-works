@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import sqlite3
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -11,8 +12,6 @@ from ..config import section, get_agent_model
 from ..prompts import load as _load_prompt
 
 logger = logging.getLogger(__name__)
-
-_ALLOWLIST_FILE = os.environ.get("SECURITY_ALLOWLIST_FILE", "/data/security_allowlist.json")
 
 
 @dataclass
@@ -53,27 +52,36 @@ class SecuritySupervisor:
             len(self._rules), self.enabled, self._always_allowed_actions, self._skip_all,
         )
 
+    def _config_db_path(self) -> str:
+        return os.environ.get("CONFIG_DB_FILE", "/data/config.db")
+
     def _load_allowlist(self) -> None:
         try:
-            with open(_ALLOWLIST_FILE) as f:
-                data = json.load(f)
-            self._always_allowed_actions.update(data.get("always_allowed_actions", []))
-            if data.get("skip_all"):
-                self._skip_all = True
-        except FileNotFoundError:
-            pass
+            with sqlite3.connect(self._config_db_path()) as conn:
+                row = conn.execute(
+                    "SELECT always_allowed_actions, skip_all FROM security_allowlist WHERE id = 1"
+                ).fetchone()
+            if row:
+                self._always_allowed_actions.update(json.loads(row[0] or "[]"))
+                if row[1]:
+                    self._skip_all = True
+        except sqlite3.OperationalError:
+            pass  # table not yet created (first run)
         except Exception as e:
-            logger.warning("Failed to load security allowlist: %s", e)
+            logger.warning("Failed to load security allowlist from DB: %s", e)
 
     def _save_allowlist(self) -> None:
         try:
-            with open(_ALLOWLIST_FILE, "w") as f:
-                json.dump({
-                    "always_allowed_actions": sorted(self._always_allowed_actions),
-                    "skip_all": self._skip_all,
-                }, f, indent=2)
+            with sqlite3.connect(self._config_db_path()) as conn:
+                conn.execute(
+                    """INSERT OR REPLACE INTO security_allowlist
+                       (id, always_allowed_actions, skip_all, updated_at)
+                       VALUES (1, ?, ?, ?)""",
+                    (json.dumps(sorted(self._always_allowed_actions)), int(self._skip_all), int(time.time())),
+                )
+                conn.commit()
         except Exception as e:
-            logger.warning("Failed to save security allowlist: %s", e)
+            logger.warning("Failed to save security allowlist to DB: %s", e)
 
     def _get_provider(self):
         if self._provider is None:
