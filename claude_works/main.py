@@ -1110,13 +1110,11 @@ Rules:
                 self._pending_chat_queue.setdefault(chat_id, []).append(
                     (telegram_id, content, incoming.telegram_message_id)
                 )
-                current = self._active_chat_content.get(chat_id, "")
-                snippet = (current[:60] + "…") if len(current) > 60 else current
-                snippet = snippet.replace("\n", " ")
-                await self._api.send_message(
-                    chat_id,
-                    f"⏳ Noch beschäftigt mit: „{snippet}“\nDeine Nachricht kommt danach dran.",
-                )
+                if incoming.telegram_message_id:
+                    try:
+                        await self._api.set_message_reaction(chat_id, incoming.telegram_message_id, "⏳")
+                    except Exception:
+                        pass
             else:
                 self._active_chat_content[chat_id] = content
                 asyncio.create_task(
