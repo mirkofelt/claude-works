@@ -52,7 +52,7 @@ footer { border-top: 1px solid var(--border); padding: 1.5rem 2rem; text-align: 
 <div class="content">
 <h1>MCP Server Integration</h1>
 
-<p>claude-works supports MCP (Model Context Protocol) servers running as stdio subprocesses inside the container. Agents get MCP tools automatically on every invocation when MCP is enabled.</p>
+<p>claude-works supports MCP (Model Context Protocol) servers running as stdio subprocesses. Agents get MCP tools automatically on every invocation when MCP is enabled. No bind mounts, no image rebuilds — everything runs from the <code>/data/plugins/</code> volume.</p>
 
 <h2>Architecture</h2>
 
@@ -60,39 +60,39 @@ footer { border-top: 1px solid var(--border); padding: 1.5rem 2rem; text-align: 
 Agent → CliProvider.complete()
            ↓  writes temp /tmp/mcp_xxx.json
         claude --print --mcp-config /tmp/mcp_xxx.json
-           ↓  spawns stdio processes
+           ↓  spawns stdio subprocesses
         uv run python /data/plugins/&lt;name&gt;/server.py
 </code></pre>
 
-<p>The config lives in <code>config.db → settings_json.mcp</code>:</p>
+<p>Config lives in <code>config.db → settings_json</code>:</p>
 <ul>
 <li><code>mcp.enabled</code> (bool) — master switch</li>
-<li><code>mcp.servers</code> (list) — server definitions with name, command, args, env</li>
+<li><code>mcp.servers</code> (list) — server definitions: name, command, args, env</li>
 </ul>
 
-<h2>Setup</h2>
+<h2>Setup (agent-driven, no manual steps)</h2>
 
-<h3>1. Mount plugin directories</h3>
+<p>Ask the agent to set up loxone/zehnder MCP and it will walk through this automatically:</p>
 
-<p>Use <code>docker-compose.plugins.yml</code> alongside the main compose file:</p>
+<h3>Step 1 — Clone server repos</h3>
 
-<pre><code class="language-bash">
-# .env
-LOXONE_MCP_DIR=/path/to/loxone-mcp
-ZEHNDER_MCP_DIR=/path/to/zehnder-mcp
+<pre><code>
+GIT_CLONE: https://github.com/mirkofelt/loxone-mcp | loxone-mcp
+GIT_CLONE: https://github.com/mirkofelt/zehnder-mcp | zehnder-mcp
 </code></pre>
 
-<pre><code class="language-bash">
-docker-compose -f docker-compose.yml -f docker-compose.plugins.yml up -d
-</code></pre>
+<p>Code lands in <code>/data/plugins/loxone-mcp/</code> and <code>/data/plugins/zehnder-mcp/</code> — both inside the already-mounted <code>/data</code> volume.</p>
 
-<p>Or add bind mounts manually in a <code>docker-compose.override.yml</code>.</p>
+<h3>Step 2 — Provide credentials</h3>
 
-<p>Plugin directories are mounted read-only at <code>/data/plugins/&lt;name&gt;/</code> inside the container.</p>
+<p>Either fill in <strong>Settings → Plugin Config</strong> in the web UI for <code>loxone</code> and <code>zehnder</code>, or tell the agent the values directly. The agent stores them via <code>PLUGIN_CONFIG_SET</code>.</p>
 
-<h3>2. Configure via agent or CONFIG_UPDATE tag</h3>
+<p>Loxone fields: <code>host</code>, <code>user</code>, <code>password</code></p>
+<p>Zehnder fields: <code>host</code>, <code>gateway_uuid</code>, <code>client_uuid</code></p>
 
-<p>Enable MCP and register servers in config.db:</p>
+<h3>Step 3 — Enable and register</h3>
+
+<p>The agent does this automatically once credentials are available:</p>
 
 <pre><code>
 CONFIG_UPDATE: mcp.enabled | true
@@ -101,40 +101,27 @@ CONFIG_UPDATE: mcp.servers | [
     "name": "loxone",
     "command": "uv",
     "args": ["run", "--project", "/data/plugins/loxone-mcp", "python", "/data/plugins/loxone-mcp/server.py"],
-    "env": {
-      "LOXONE_HOST": "192.168.x.x",
-      "LOXONE_USER": "admin",
-      "LOXONE_PASSWORD": "secret"
-    }
+    "env": {"LOXONE_HOST": "...", "LOXONE_USER": "...", "LOXONE_PASSWORD": "..."}
   },
   {
     "name": "zehnder",
     "command": "uv",
     "args": ["run", "--project", "/data/plugins/zehnder-mcp", "python", "/data/plugins/zehnder-mcp/server.py"],
-    "env": {
-      "ZEHNDER_HOST": "192.168.x.x",
-      "ZEHNDER_GATEWAY_UUID": "1fff7a107a1040008000144fd7100000",
-      "ZEHNDER_CLIENT_UUID": "c1a4c0de000000000000000000000001"
-    }
+    "env": {"ZEHNDER_HOST": "...", "ZEHNDER_GATEWAY_UUID": "...", "ZEHNDER_CLIENT_UUID": "..."}
   }
 ]
 </code></pre>
 
-<p>Config takes effect on the next agent invocation — no restart needed.</p>
+<p>No restart needed. Takes effect on the next agent call.</p>
 
-<h3>3. Install new MCP servers via agent</h3>
+<h2>Adding other MCP servers</h2>
 
-<p>Agents can clone and configure new MCP servers themselves:</p>
+<p>Same pattern works for any stdio MCP server:</p>
 
 <pre><code>
-GIT_CLONE: https://github.com/owner/mcp-server | server-name
+GIT_CLONE: https://github.com/owner/my-mcp-server | my-server
+CONFIG_UPDATE: mcp.servers | [&lt;existing servers...&gt;, {"name":"my-server","command":"uv","args":[...],"env":{...}}]
 </code></pre>
-
-<p>Then instruct the agent to configure it via CONFIG_UPDATE.</p>
-
-<h2>Credential storage</h2>
-
-<p>Credentials are stored in the <code>env</code> field of each server entry in <code>config.db</code>. This is encrypted-at-rest by filesystem permissions on <code>/data/</code>. Do not commit actual credentials — use CONFIG_UPDATE or the Web UI Settings panel.</p>
 
 <h2>Disabling MCP</h2>
 
@@ -142,13 +129,14 @@ GIT_CLONE: https://github.com/owner/mcp-server | server-name
 CONFIG_UPDATE: mcp.enabled | false
 </code></pre>
 
-<h2>Constraints</h2>
+<h2>Notes</h2>
 
 <ul>
-<li>Only works with CLI provider (<code>llm.provider = "cli"</code>). API provider uses a different MCP path (Anthropic beta, HTTP-only).</li>
-<li><code>uv</code> must be available in the container (included in the image since commit <code>b9cc717</code>).</li>
-<li>Plugin dirs must be mounted into the container — the server code is not bundled in the image.</li>
-<li>Each agent invocation spawns fresh MCP server processes (no persistent connection).</li>
+<li><code>uv</code> is included in the container image and manages per-project virtualenvs automatically.</li>
+<li>First run downloads dependencies into <code>/data/plugins/&lt;name&gt;/.venv</code> — takes ~10–30s depending on network.</li>
+<li>MCP server processes are spawned fresh per agent invocation (no persistent connection).</li>
+<li>Only works with CLI provider (<code>llm.provider = "cli"</code>). API provider uses a separate path.</li>
+<li>Credentials are stored in <code>config.db</code> (inside the <code>/data</code> volume, not in any repo).</li>
 </ul>
 
 </div>
