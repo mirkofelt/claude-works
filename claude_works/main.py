@@ -32,7 +32,6 @@ from .agents.coordinator import AgentCoordinator
 from .agents.mechanic import MechanicAgent, MechanicContext
 from .agents.specialist.generalist import GeneralistAgent
 from .auth.users import upsert_user, is_allowed, is_admin, set_role
-from .memory import store as memory_store
 from .security import SecuritySupervisor
 from .web.app import app as web_app, set_daemon as _set_web_daemon, set_setup_token as _set_web_setup_token
 from .logging_setup import setup as _setup_logging, uvicorn_log_config as _uvicorn_log_config

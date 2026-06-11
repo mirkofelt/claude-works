@@ -142,13 +142,6 @@
     select.role-sel { background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 3px 6px; border-radius: 4px; font-size: 12px; cursor: pointer; }
     select.role-sel:focus { outline: none; border-color: var(--accent); }
 
-    /* memory grid */
-    .mem-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
-    .mem-card { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 14px; }
-    .mem-key { font-weight: 600; color: var(--accent); word-break: break-all; margin-bottom: 4px; font-size: 13px; }
-    .mem-val { color: var(--muted); font-size: 13px; word-break: break-word; max-height: 72px; overflow: hidden; line-height: 1.4; }
-    .mem-meta { font-size: 11px; color: var(--muted); margin-top: 8px; opacity: .7; }
-
     /* lane counts bar */
     .lane-counts { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
     .lane-count { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 10px 18px; text-align: center; min-width: 80px; }
@@ -353,7 +346,6 @@
   <button class="active" onclick="showTab('tasks')">Tasks</button>
   <button onclick="showTab('messages')">Messages</button>
   <button onclick="showTab('users')">Users</button>
-  <button onclick="showTab('memory')">Memory</button>
   <button onclick="showTab('knowledge')">Knowledge</button>
   <button onclick="showTab('approvals')">Approvals</button>
   <button onclick="showTab('kanban')">Kanban</button>
@@ -448,14 +440,6 @@
       <tbody id="userBody"><tr><td colspan="6" class="empty">Loading…</td></tr></tbody>
     </table>
   </div>
-</div>
-
-<div class="section" id="tab-memory">
-  <div class="toolbar">
-    <input type="text" id="memQ" placeholder="Search…" style="width:240px" onkeydown="if(event.key==='Enter')loadMemory()">
-    <button class="btn btn-ghost" onclick="loadMemory()">Search</button>
-  </div>
-  <div class="mem-grid" id="memGrid"><div class="empty">Loading…</div></div>
 </div>
 
 <div class="section" id="tab-knowledge">
@@ -792,7 +776,7 @@ let _chatHistoryLoaded = false;
 let timer = null;
 let tokenPeriod = '24h';
 
-const TABS = ['tasks', 'messages', 'users', 'memory', 'knowledge', 'approvals', 'kanban', 'tokens', 'logs', 'chat', 'settings'];
+const TABS = ['tasks', 'messages', 'users', 'knowledge', 'approvals', 'kanban', 'tokens', 'logs', 'chat', 'settings'];
 
 const LANE_COLORS = {
   backlog: '#8b949e', assigned: '#58a6ff', in_progress: '#d29922',
@@ -878,7 +862,6 @@ function loadTab(t) {
   if (t === 'tasks') loadTasks();
   else if (t === 'messages') loadMessages();
   else if (t === 'users') loadUsers();
-  else if (t === 'memory') loadMemory();
   else if (t === 'knowledge') loadKnowledge();
   else if (t === 'approvals') loadApprovals();
   else if (t === 'kanban') loadKanban();
@@ -1006,19 +989,6 @@ async function editUserName(telegramId, currentName) {
   await api('/api/users/' + telegramId, { method: 'PUT', body: JSON.stringify({ name: newName }) });
   const el = document.getElementById('uname-' + telegramId);
   if (el) el.textContent = newName || '–';
-}
-
-async function loadMemory() {
-  const q = document.getElementById('memQ').value.trim();
-  const items = await api('/api/memory' + (q ? '?q=' + encodeURIComponent(q) : ''));
-  const g = document.getElementById('memGrid');
-  if (!items?.length) { g.innerHTML = '<div class="empty">No memory entries</div>'; return; }
-  g.innerHTML = items.map(m => `
-    <div class="mem-card">
-      <div class="mem-key">${esc(m.key)}</div>
-      <div class="mem-val">${esc(m.value)}</div>
-      <div class="mem-meta">${m.user_id ? 'user ' + m.user_id : 'global'} · ${ts(m.updated_at)}</div>
-    </div>`).join('');
 }
 
 async function loadApprovals() {

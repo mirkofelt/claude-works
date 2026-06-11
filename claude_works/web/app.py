@@ -16,7 +16,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .. import config, db
 from ..config_store import save_config as _store_save_config
-from ..memory import store as memory_store
 from ..knowledge import store as knowledge_store
 from ..auth.users import get_user, set_role
 from ..kanban.models import Lane
@@ -485,17 +484,6 @@ async def get_messages(chat_id: int | None = None, limit: int = 50):
             rows = await cur.fetchall()
     await conn.close()
     return [dict(r) for r in rows]
-
-
-@app.get("/api/memory", dependencies=[Depends(_verify_token)])
-async def get_memory(user_id: int | None = None, q: str | None = None):
-    conn = await _get_conn()
-    if q:
-        items = await memory_store.search(conn, q, user_id=user_id)
-    else:
-        items = await memory_store.list_all(conn, user_id=user_id)
-    await conn.close()
-    return items
 
 
 @app.get("/api/knowledge", dependencies=[Depends(_verify_token)])
