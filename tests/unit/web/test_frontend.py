@@ -22,6 +22,8 @@ _CRITICAL_FUNCTIONS = [
     "drawTokenChart",
     "drawCostChart",
     "drawUsageChart",
+    "_showOfflineBanner",
+    "_hideOfflineBanner",
 ]
 
 _CRITICAL_ELEMENTS = [

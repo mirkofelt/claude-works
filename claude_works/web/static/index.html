@@ -996,16 +996,40 @@ async function _loadRepairInfo() {
   }
 }
 
+function _showOfflineBanner() {
+  let b = document.getElementById('offlineBanner');
+  if (!b) {
+    b = document.createElement('div');
+    b.id = 'offlineBanner';
+    b.style.cssText = 'position:fixed;top:0;left:0;right:0;padding:9px 16px;background:#d29922;color:#0d1117;font-size:13px;font-weight:500;text-align:center;z-index:9998';
+    b.textContent = '⚠ Server nicht erreichbar — Verbindung wird wiederhergestellt…';
+    document.body && document.body.appendChild(b);
+  }
+  b.style.display = 'block';
+}
+
+function _hideOfflineBanner() {
+  const b = document.getElementById('offlineBanner');
+  if (b) b.style.display = 'none';
+}
+
 async function api(path, opts = {}) {
   const o = { ...opts };
   if (o.body !== undefined && typeof o.body === 'object' && o.body !== null) {
     o.body = JSON.stringify(o.body);
   }
-  const r = await fetch(path, {
-    ...o,
-    credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) }
-  });
+  let r;
+  try {
+    r = await fetch(path, {
+      ...o,
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) }
+    });
+  } catch {
+    _showOfflineBanner();
+    return null;
+  }
+  _hideOfflineBanner();
   if (r.status === 401) { TOKEN = ''; localStorage.removeItem('comms_token'); showAuth(); return null; }
   if (r.status === 429) {
     let detail = 'Rate limited';
