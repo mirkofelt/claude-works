@@ -1705,134 +1705,123 @@ function drawUsageChart(usageData, isCli) {
   const ctx = _setupCanvas(canvas, W, H);
   ctx.clearRect(0, 0, W, H);
 
-  // Normalize: subscription pct format → tokens_used=pct, limit=100
   const isSubscription = usageData.some(d => d.session_pct != null || d.weekly_all_pct != null);
-  const mapped = isSubscription
-    ? usageData.filter(d => d.session_pct != null).map(d => ({
-        ...d, tokens_used: d.session_pct, tokens_limit: 100,
-        _weekly: d.weekly_all_pct,
-      }))
-    : usageData.filter(d => d.tokens_used != null);
-  const pts = mapped;
-  if (!pts.length) {
+  const snapshots = isSubscription ? usageData : usageData.filter(d => d.tokens_used != null);
+
+  if (!snapshots.length) {
     ctx.fillStyle = '#3d444d'; ctx.font = '12px sans-serif'; ctx.textAlign = 'center';
     ctx.fillText('No usage snapshots yet — polls every 5 min', W / 2, H / 2);
     const pctEl = document.getElementById('usagePctLabel');
     if (pctEl) { pctEl.textContent = 'no data yet'; pctEl.style.color = 'var(--muted)'; }
     return;
   }
-  // duplicate single point so line renders
-  if (pts.length === 1) pts.push({ ...pts[0], sampled_at: pts[0].sampled_at + 300 });
 
-  const limit = isSubscription ? 100 : (usageData.find(d => d.tokens_limit)?.tokens_limit || null);
-  const maxVal = limit || Math.max(...pts.map(d => d.tokens_used || 0)) || 1;
-  const PAD = { top: 20, bottom: 32, left: 60, right: limit ? 36 : 12 };
+  // Build series: each is { label, color, dash, pts: [{t, v}] }
+  const MODEL_PALETTE = ['#bc8cff', '#3fb950', '#f78166', '#79c0ff', '#ffa657'];
+  const series = [];
+
+  if (isSubscription) {
+    // Session (5h)
+    const sesPts = snapshots.filter(d => d.session_pct != null).map(d => ({ t: d.sampled_at, v: d.session_pct }));
+    if (sesPts.length) series.push({ label: 'Session (5h)', color: '#58a6ff', dash: [], pts: sesPts });
+    // Week all-models
+    const wkPts = snapshots.filter(d => d.weekly_all_pct != null).map(d => ({ t: d.sampled_at, v: d.weekly_all_pct }));
+    if (wkPts.length) series.push({ label: 'Woche (alle)', color: '#d29922', dash: [4, 3], pts: wkPts });
+    // Per-model weekly
+    const modelNames = [...new Set(snapshots.flatMap(d => (d.weekly_models || []).map(m => m.name)))];
+    modelNames.forEach((name, i) => {
+      const mPts = snapshots.filter(d => (d.weekly_models || []).some(m => m.name === name))
+        .map(d => { const m = d.weekly_models.find(m => m.name === name); return { t: d.sampled_at, v: m ? m.pct : null }; })
+        .filter(p => p.v != null);
+      if (mPts.length) series.push({ label: 'Woche (' + name + ')', color: MODEL_PALETTE[i % MODEL_PALETTE.length], dash: [2, 4], pts: mPts });
+    });
+  } else {
+    const limit = usageData.find(d => d.tokens_limit)?.tokens_limit || null;
+    const tknPts = snapshots.map(d => ({ t: d.sampled_at, v: limit ? Math.round(d.tokens_used / limit * 100) : d.tokens_used }));
+    series.push({ label: limit ? 'Token-Nutzung (%)' : 'Tokens', color: '#58a6ff', dash: [], pts: tknPts });
+  }
+
+  if (!series.length || series.every(s => !s.pts.length)) return;
+
+  // Ensure single-point series render as line
+  series.forEach(s => { if (s.pts.length === 1) s.pts.push({ ...s.pts[0], t: s.pts[0].t + 300 }); });
+
+  const allT = series.flatMap(s => s.pts.map(p => p.t));
+  const tMin = Math.min(...allT), tMax = Math.max(...allT) || tMin + 1;
+  const maxVal = isSubscription ? 100 : Math.max(...series.flatMap(s => s.pts.map(p => p.v))) || 1;
+
+  const legendH = Math.ceil(series.length / 3) * 14 + 6;
+  const PAD = { top: legendH + 8, bottom: 32, left: 44, right: 12 };
   const cW = W - PAD.left - PAD.right;
   const cH = H - PAD.top - PAD.bottom;
+  const toX = t => PAD.left + ((t - tMin) / (tMax - tMin || 1)) * cW;
+  const toY = v => PAD.top + cH * (1 - Math.min(v, maxVal) / maxVal);
 
   // grid
-  ctx.strokeStyle = '#21262d';
-  ctx.lineWidth = 1;
+  ctx.strokeStyle = '#21262d'; ctx.lineWidth = 1;
   [0.25, 0.5, 0.75, 1].forEach(r => {
     const y = PAD.top + cH * (1 - r);
     ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(W - PAD.right, y); ctx.stroke();
     ctx.fillStyle = '#8b949e'; ctx.font = '10px sans-serif'; ctx.textAlign = 'right';
-    ctx.fillText(isSubscription ? Math.round(maxVal * r) + '%' : fmt(Math.round(maxVal * r)), PAD.left - 4, y + 3);
+    ctx.fillText(Math.round(maxVal * r) + (isSubscription ? '%' : ''), PAD.left - 4, y + 3);
   });
-
-  // limit + threshold lines (shown when a limit is known)
-  if (limit) {
-    const thresholds = [
-      { r: 1.0, color: '#f85149', label: '100%' },
-      { r: 0.9, color: '#e6801a', label: '90%' },
-      { r: 0.7, color: '#d29922', label: '70%' },
-    ];
-    thresholds.forEach(({ r, color, label }) => {
-      const y = PAD.top + cH * (1 - r);
-      ctx.strokeStyle = color; ctx.lineWidth = 1;
-      ctx.setLineDash(r === 1.0 ? [4, 4] : [2, 4]);
-      ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(W - PAD.right, y); ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.fillStyle = color; ctx.font = '9px sans-serif'; ctx.textAlign = 'left';
-      ctx.fillText(label, W - PAD.right + 3, y + 3);
-    });
-  }
-
-  const tMin = pts[0].sampled_at, tMax = pts[pts.length - 1].sampled_at || tMin + 1;
-  const tRange = tMax - tMin || 1;
-  const toX = t => PAD.left + ((t - tMin) / tRange) * cW;
-  const toY = v => PAD.top + cH * (1 - Math.min(v, maxVal) / maxVal);
-
-  const last = pts[pts.length - 1];
-  const lastPct = limit ? last.tokens_used / limit : null;
-  const lineColor = lastPct != null ? (lastPct >= 0.9 ? '#f85149' : lastPct >= 0.7 ? '#d29922' : '#58a6ff') : '#58a6ff';
-
-  // area fill
-  ctx.beginPath();
-  ctx.moveTo(toX(pts[0].sampled_at), PAD.top + cH);
-  pts.forEach(d => ctx.lineTo(toX(d.sampled_at), toY(d.tokens_used)));
-  ctx.lineTo(toX(last.sampled_at), PAD.top + cH);
-  ctx.closePath();
-  ctx.fillStyle = lineColor.replace('#', 'rgba(').replace(/^rgba\((..)(..)(..)/, (_, r, g, b) =>
-    `rgba(${parseInt(r,16)},${parseInt(g,16)},${parseInt(b,16)}`) + ',0.12)';
-  // simple fallback fill
-  ctx.fillStyle = lastPct >= 0.9 ? 'rgba(248,81,73,0.1)' : lastPct >= 0.7 ? 'rgba(210,153,34,0.1)' : 'rgba(88,166,255,0.1)';
-  ctx.fill();
-
-  // line
-  ctx.strokeStyle = lineColor; ctx.lineWidth = 2;
-  ctx.beginPath();
-  pts.forEach((d, i) => { i === 0 ? ctx.moveTo(toX(d.sampled_at), toY(d.tokens_used)) : ctx.lineTo(toX(d.sampled_at), toY(d.tokens_used)); });
-  ctx.stroke();
-
-  // endpoint dot
-  ctx.beginPath(); ctx.arc(toX(last.sampled_at), toY(last.tokens_used), 4, 0, Math.PI * 2);
-  ctx.fillStyle = lineColor; ctx.fill();
 
   // x labels
+  const allSorted = [...allT].sort((a, b) => a - b);
+  const labelStep = Math.max(1, Math.floor(allSorted.length / 6));
   ctx.fillStyle = '#8b949e'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
-  const labelStep = Math.max(1, Math.floor(pts.length / 6));
-  pts.forEach((d, i) => {
-    if (i % labelStep !== 0 && i !== pts.length - 1) return;
-    const dt = new Date(d.sampled_at * 1000);
-    const lbl = pts.length <= 25
+  allSorted.forEach((t, i) => {
+    if (i % labelStep !== 0 && i !== allSorted.length - 1) return;
+    const dt = new Date(t * 1000);
+    const lbl = allSorted.length <= 25
       ? dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       : dt.toLocaleDateString([], { month: 'short', day: 'numeric' });
-    ctx.fillText(lbl, toX(d.sampled_at), H - 8);
+    ctx.fillText(lbl, toX(t), H - 8);
   });
 
-  // weekly line (subscription mode only)
-  if (isSubscription) {
-    const wkPts = pts.filter(d => d._weekly != null);
-    if (wkPts.length > 1) {
-      ctx.strokeStyle = '#d29922'; ctx.lineWidth = 1.5;
-      ctx.setLineDash([3, 3]);
-      ctx.beginPath();
-      wkPts.forEach((d, i) => { i === 0 ? ctx.moveTo(toX(d.sampled_at), toY(d._weekly)) : ctx.lineTo(toX(d.sampled_at), toY(d._weekly)); });
-      ctx.stroke(); ctx.setLineDash([]);
-    }
-  }
+  // draw lines
+  series.forEach(s => {
+    if (s.pts.length < 2) return;
+    ctx.strokeStyle = s.color; ctx.lineWidth = 2;
+    ctx.setLineDash(s.dash);
+    ctx.beginPath();
+    s.pts.forEach((p, i) => { i === 0 ? ctx.moveTo(toX(p.t), toY(p.v)) : ctx.lineTo(toX(p.t), toY(p.v)); });
+    ctx.stroke(); ctx.setLineDash([]);
+    // endpoint dot
+    const last = s.pts[s.pts.length - 1];
+    ctx.beginPath(); ctx.arc(toX(last.t), toY(last.v), 3, 0, Math.PI * 2);
+    ctx.fillStyle = s.color; ctx.fill();
+  });
+
+  // legend (top)
+  let lx = PAD.left, ly = 10;
+  series.forEach((s, i) => {
+    if (i > 0 && lx + 120 > W - PAD.right) { lx = PAD.left; ly += 14; }
+    ctx.fillStyle = s.color; ctx.fillRect(lx, ly, 10, 2);
+    ctx.fillStyle = '#8b949e'; ctx.font = '10px sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText(s.label, lx + 14, ly + 4);
+    lx += 14 + ctx.measureText(s.label).width + 16;
+  });
 
   // header pct label
-  if (lastPct != null || isSubscription) {
-    const pctEl = document.getElementById('usagePctLabel');
-    if (pctEl) {
-      const sesLabel = isSubscription ? `Session ${last.tokens_used}%` : `${Math.round(lastPct * 100)}% used`;
-      const wkLabel = isSubscription && last._weekly != null ? ` · Week ${last._weekly}%` : '';
-      pctEl.textContent = sesLabel + wkLabel;
-      pctEl.style.color = lineColor;
-    }
+  const pctEl = document.getElementById('usagePctLabel');
+  if (pctEl && series.length) {
+    const last = series[0].pts[series[0].pts.length - 1];
+    const sesColor = last.v >= 90 ? '#f85149' : last.v >= 70 ? '#d29922' : '#58a6ff';
+    pctEl.textContent = series.map(s => { const p = s.pts[s.pts.length - 1]; return s.label + ': ' + Math.round(p.v) + (isSubscription ? '%' : ''); }).join(' · ');
+    pctEl.style.color = sesColor;
   }
 
   canvas.onmousemove = (e) => {
     const rect = canvas.getBoundingClientRect();
     const mx = e.clientX - rect.left;
-    const tRange2 = tMax - tMin || 1;
-    const hoverT = tMin + ((mx - PAD.left) / cW) * tRange2;
-    const closest = pts.reduce((best, p) => Math.abs(p.sampled_at - hoverT) < Math.abs(best.sampled_at - hoverT) ? p : best);
-    const d = new Date(closest.sampled_at * 1000);
-    const pct = limit ? ` (${Math.round(closest.tokens_used / limit * 100)}%)` : '';
-    _showTip(e, `<b>${d.toLocaleString([], {hour:'2-digit',minute:'2-digit',month:'short',day:'numeric'})}</b><br>Used: ${fmt(closest.tokens_used)}${pct}${limit ? '<br>Limit: ' + fmt(limit) : ''}`);
+    const hoverT = tMin + ((mx - PAD.left) / cW) * (tMax - tMin || 1);
+    const lines = series.map(s => {
+      const c = s.pts.reduce((b, p) => Math.abs(p.t - hoverT) < Math.abs(b.t - hoverT) ? p : b);
+      return s.label + ': ' + Math.round(c.v) + (isSubscription ? '%' : '');
+    });
+    const dt = new Date(hoverT * 1000);
+    _showTip(e, '<b>' + dt.toLocaleString([], { hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric' }) + '</b><br>' + lines.join('<br>'));
   };
   canvas.onmouseleave = _hideTip;
 }
