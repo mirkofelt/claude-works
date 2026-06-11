@@ -1215,15 +1215,55 @@ class Daemon:
             if not allowed:
                 await self._api.send_message(task.chat_id, "Response blocked by security policy.")
                 return
+            # Strip all tags from clean_result (collect lists), then send clean text
             clean_result, keyboard = _parse_buttons(result)
-            clean_result, tts_text = _extract_voice_tag(clean_result)
-            clean_result, map_query = _extract_map_tag(clean_result)
-            clean_result, send_email_args = _extract_send_email_tag(clean_result)
-            clean_result, read_email_args = _extract_read_email_tag(clean_result)
-            clean_result, github_args = _extract_github_api_tag(clean_result)
-            clean_result, git_clone_args = _extract_git_clone_tag(clean_result)
-            clean_result, kb_save_args = _extract_kb_save_tag(clean_result)
-            clean_result, kb_update_args = _extract_kb_update_tag(clean_result)
+
+            all_tts: list[str] = []
+            while True:
+                clean_result, v = _extract_voice_tag(clean_result)
+                if not v: break
+                all_tts.append(v)
+
+            all_maps: list[str] = []
+            while True:
+                clean_result, v = _extract_map_tag(clean_result)
+                if not v: break
+                all_maps.append(v)
+
+            all_send_emails: list[tuple] = []
+            while True:
+                clean_result, v = _extract_send_email_tag(clean_result)
+                if not v: break
+                all_send_emails.append(v)
+
+            # READ_EMAIL is a read-only tool — handled in _exec_tool_tags; strip if it somehow survived
+            while True:
+                clean_result, v = _extract_read_email_tag(clean_result)
+                if not v: break
+
+            all_github: list[tuple] = []
+            while True:
+                clean_result, v = _extract_github_api_tag(clean_result)
+                if not v: break
+                all_github.append(v)
+
+            # GIT_CLONE is a read tool — handled in _exec_tool_tags; strip if it somehow survived
+            while True:
+                clean_result, v = _extract_git_clone_tag(clean_result)
+                if not v: break
+
+            all_kb_saves: list[tuple] = []
+            while True:
+                clean_result, v = _extract_kb_save_tag(clean_result)
+                if not v: break
+                all_kb_saves.append(v)
+
+            all_kb_updates: list[tuple] = []
+            while True:
+                clean_result, v = _extract_kb_update_tag(clean_result)
+                if not v: break
+                all_kb_updates.append(v)
+
             reply_markup = {"inline_keyboard": keyboard} if keyboard is not None else None
 
             if clean_result.strip():
@@ -1236,7 +1276,7 @@ class Daemon:
             else:
                 sent = {"message_id": 0}
 
-            if tts_text:
+            for tts_text in all_tts:
                 tts_allowed = await self._security.check_action(
                     "tts_send", tts_text, task_id=task.id, chat_id=task.chat_id, user_id=task.user_id
                 )
@@ -1251,7 +1291,7 @@ class Daemon:
                 else:
                     logger.info("TTS blocked by security for task=%d", task.id)
 
-            if map_query:
+            for map_query in all_maps:
                 try:
                     async with httpx.AsyncClient(timeout=10.0) as hc:
                         r = await hc.get(
@@ -1270,8 +1310,7 @@ class Daemon:
                 except Exception as e:
                     logger.warning("Map geocoding failed for task=%d: %s", task.id, e)
 
-            if send_email_args:
-                to, subject, body = send_email_args
+            for to, subject, body in all_send_emails:
                 email_content = f"To: {to}\nSubject: {subject}\n\n{body}"
                 email_allowed = await self._security.check_action(
                     "email_send", email_content, task_id=task.id, chat_id=task.chat_id, user_id=task.user_id
@@ -1291,27 +1330,7 @@ class Daemon:
                         logger.warning("Email send failed for task=%d: %s", task.id, e)
                         await self._api.send_message(task.chat_id, f"Email send failed: {e}")
 
-            if read_email_args:
-                folder, count = read_email_args
-                try:
-                    email_cfg = config.section("email")
-                    emails = await _read_emails(folder, count, email_cfg)
-                    if emails:
-                        lines = [f"📬 {folder} — last {len(emails)} emails:\n"]
-                        for i, m in enumerate(emails, 1):
-                            lines.append(f"{i}. **{m['subject']}**\nVon: {m['from']}\n{m['date']}\n")
-                        await self._api.send_message(task.chat_id, "\n".join(lines))
-                    else:
-                        await self._api.send_message(task.chat_id, f"📭 {folder} is empty.")
-                except KeyError:
-                    logger.error("Email config missing — set email.imap_host/user/password in settings.json")
-                    await self._api.send_message(task.chat_id, "Emails unavailable: IMAP configuration missing.")
-                except Exception as e:
-                    logger.warning("Email read failed for task=%d: %s", task.id, e)
-                    await self._api.send_message(task.chat_id, f"Email read failed: {e}")
-
-            while github_args:
-                method, endpoint, body = github_args
+            for method, endpoint, body in all_github:
                 is_write = method in ("POST", "PUT", "PATCH", "DELETE")
                 do_exec = True
                 if is_write:
@@ -1336,19 +1355,8 @@ class Daemon:
                     except Exception as e:
                         logger.warning("GitHub API failed for task=%d: %s", task.id, e)
                         await self._api.send_message(task.chat_id, f"GitHub error: {e}")
-                clean_result, github_args = _extract_github_api_tag(clean_result)
 
-            if git_clone_args:
-                repo_url, plugin_name = git_clone_args
-                safe_name = re.sub(r'[^a-zA-Z0-9._-]', '', plugin_name)[:64]
-                target = f"{_PLUGINS_DIR}/{safe_name}"
-                asyncio.create_task(
-                    self._do_git_clone(task.chat_id, repo_url, target),
-                    name=f"git-clone-{safe_name}",
-                )
-
-            if kb_save_args:
-                title, entry_type, tags, content = kb_save_args
+            for title, entry_type, tags, content in all_kb_saves:
                 if title and content:
                     try:
                         conn = await db.get_conn()
@@ -1362,8 +1370,7 @@ class Daemon:
                     except Exception as e:
                         logger.warning("KB_SAVE failed for task=%d: %s", task.id, e)
 
-            if kb_update_args:
-                entry_id, title, entry_type, tags, content = kb_update_args
+            for entry_id, title, entry_type, tags, content in all_kb_updates:
                 try:
                     conn = await db.get_conn()
                     ok = await knowledge_store.update(
