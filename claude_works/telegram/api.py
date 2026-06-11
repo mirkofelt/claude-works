@@ -97,6 +97,9 @@ class TelegramAPI:
         resp.raise_for_status()
         return resp.content
 
+    async def get_me(self) -> dict:
+        return await self._call("getMe")
+
     async def answer_callback_query(self, callback_query_id: str, text: str = "") -> bool:
         await self._call(
             "answerCallbackQuery",

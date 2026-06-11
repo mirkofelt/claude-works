@@ -239,6 +239,8 @@ class Daemon:
         self._pending_direct_fetches: dict[str, dict] = {}
         self._pending_reauth: dict[int, asyncio.subprocess.Process] = {}  # chat_id → proc
         self._chat_agents: dict[int, GeneralistAgent] = {}  # chat_id → persistent chat agent
+        self._bot_username: str = ""  # loaded at startup via getMe
+        self._mention_only_chats: set[int] = set()  # chat_ids where bot only responds to @mention
 
     # ──────────────────────────────────────────────────────────
     # Lifecycle
@@ -311,6 +313,15 @@ class Daemon:
             logger.info("Imported %d knowledge file(s) from /data/knowledge/", _imported)
         tg_cfg = config.section("telegram")
         self._api = TelegramAPI(tg_cfg["token"])
+
+        try:
+            me = await self._api.get_me()
+            self._bot_username = me.get("result", {}).get("username", "") or me.get("username", "")
+            logger.info("Bot username: @%s", self._bot_username)
+        except Exception as e:
+            logger.warning("getMe failed: %s", e)
+
+        await self._load_mention_only_chats()
 
         self._board = KanbanBoard(self._conn)
         self._token_tracker = TokenTracker(self._conn)
@@ -673,6 +684,19 @@ class Daemon:
             logger.debug("Duplicate message_id=%d — skipping", incoming.telegram_message_id)
             return
 
+        # Mention-only mode: log message to DB (done above) but skip response unless @mentioned
+        if chat_id in self._mention_only_chats:
+            is_reply_to_bot = bool(msg.get("reply_to_message", {}).get("from", {}).get("is_bot"))
+            is_mentioned = bool(
+                self._bot_username and text and f"@{self._bot_username}" in text
+            )
+            if not is_mentioned and not is_reply_to_bot:
+                logger.debug("Mention-only: silently logged msg in chat=%d", chat_id)
+                return
+            # Strip @mention from text so agent doesn't see it as part of the request
+            if self._bot_username and text:
+                text = text.replace(f"@{self._bot_username}", "").strip()
+
         pending = self._pending_messages.get(chat_id)
         if pending and should_bundle(pending, incoming):
             logger.debug("Bundling message with pending (chat=%d)", chat_id)
@@ -868,7 +892,11 @@ class Daemon:
 
     async def _handle_command(self, text: str, from_id: int, chat_id: int) -> None:
         parts = text.strip().split()
-        cmd = parts[0].lower()
+        # Strip @botname suffix from commands sent in group chats (e.g. /mention@botname)
+        raw_cmd = parts[0].lower()
+        if "@" in raw_cmd:
+            raw_cmd = raw_cmd.split("@")[0]
+        cmd = raw_cmd
 
         if cmd == "/auth" and len(parts) >= 2:
             if not await is_admin(self._conn, from_id):
@@ -949,6 +977,22 @@ class Daemon:
                     await self._api.send_message(chat_id, "No config found in DB.")
             except Exception as e:
                 await self._api.send_message(chat_id, f"Reload failed: {e}")
+
+        elif cmd == "/mention":
+            if not await is_allowed(self._conn, from_id):
+                return
+            arg = parts[1].lower() if len(parts) >= 2 else ""
+            if arg == "on":
+                self._mention_only_chats.add(chat_id)
+                await self._save_mention_only_chats()
+                await self._api.send_message(chat_id, "👂 Mention-only Modus aktiv — antworte nur bei @Erwähnung.")
+            elif arg == "off":
+                self._mention_only_chats.discard(chat_id)
+                await self._save_mention_only_chats()
+                await self._api.send_message(chat_id, "💬 Antworte jetzt auf alle Nachrichten.")
+            else:
+                state = "an" if chat_id in self._mention_only_chats else "aus"
+                await self._api.send_message(chat_id, f"Mention-only Modus: {state}\nUsage: /mention on|off")
 
         elif cmd == "/repair" and len(parts) >= 2:
             if not await is_admin(self._conn, from_id):
@@ -1200,6 +1244,27 @@ class Daemon:
 
     async def _on_task_requeued(self, task: KanbanTask) -> None:
         self._stop_typing(task.chat_id)
+
+    async def _load_mention_only_chats(self) -> None:
+        try:
+            async with self._conn.execute(
+                "SELECT value FROM daemon_state WHERE key = 'mention_only_chats'"
+            ) as cur:
+                row = await cur.fetchone()
+            if row:
+                import json as _json
+                self._mention_only_chats = set(_json.loads(row[0]))
+                logger.info("Loaded %d mention-only chats", len(self._mention_only_chats))
+        except Exception as e:
+            logger.warning("Failed to load mention_only_chats: %s", e)
+
+    async def _save_mention_only_chats(self) -> None:
+        import json as _json
+        await self._conn.execute(
+            """INSERT OR REPLACE INTO daemon_state (key, value, updated_at) VALUES (?, ?, ?)""",
+            ("mention_only_chats", _json.dumps(sorted(self._mention_only_chats)), int(time.time())),
+        )
+        await self._conn.commit()
 
     async def _load_chat_history(self, chat_id: int, limit: int = 30) -> list[dict]:
         """Load recent conversation from DB as {role, content} pairs, chronological order."""
