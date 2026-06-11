@@ -271,14 +271,15 @@ async def cli_auth_confirm(body: dict, x_setup_token: str | None = Header(defaul
     if not code:
         raise HTTPException(status_code=400, detail="code required")
 
+    proc = _cli_auth_proc
     try:
-        _cli_auth_proc.stdin.write((code + "\n").encode())
-        await _cli_auth_proc.stdin.drain()
-        stdout, _ = await asyncio.wait_for(_cli_auth_proc.communicate(), timeout=30.0)
-        returncode = _cli_auth_proc.returncode
+        proc.stdin.write((code + "\n").encode())
+        await proc.stdin.drain()
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30.0)
+        returncode = proc.returncode
     except asyncio.TimeoutError:
         try:
-            _cli_auth_proc.kill()
+            proc.kill()
         except Exception:
             pass
         raise HTTPException(status_code=504, detail="Auth confirmation timed out")
@@ -349,14 +350,15 @@ async def runtime_cli_auth_confirm(body: dict):
     code = body.get("code", "").strip()
     if not code:
         raise HTTPException(status_code=400, detail="code required")
+    proc = _runtime_cli_auth_proc
     try:
-        _runtime_cli_auth_proc.stdin.write((code + "\n").encode())
-        await _runtime_cli_auth_proc.stdin.drain()
-        stdout, _ = await asyncio.wait_for(_runtime_cli_auth_proc.communicate(), timeout=30.0)
-        returncode = _runtime_cli_auth_proc.returncode
+        proc.stdin.write((code + "\n").encode())
+        await proc.stdin.drain()
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30.0)
+        returncode = proc.returncode
     except asyncio.TimeoutError:
         try:
-            _runtime_cli_auth_proc.kill()
+            proc.kill()
         except Exception:
             pass
         raise HTTPException(status_code=504, detail="Auth confirmation timed out")
