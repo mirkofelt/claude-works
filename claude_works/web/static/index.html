@@ -639,7 +639,7 @@
         <div class="field"><label>Task Timeout (s)</label><input type="number" id="s_ag_task_timeout"></div>
         <div class="field"><label>PO Timeout (s)</label><input type="number" id="s_ag_po_timeout"></div>
         <div class="field"><label>Max Retries</label><input type="number" id="s_ag_retries"></div>
-        <div class="field wide"><label>Model Tiers (JSON)</label><textarea id="s_ag_tiers" rows="3"></textarea><div class="hint">{"fast":"...", "balanced":"...", "best":"..."}</div></div>
+        <div class="field wide"><label>Model Tiers (JSON)</label><textarea id="s_ag_tiers" rows="3"></textarea><div class="hint">{"fast":"claude-haiku-4-5-20251001", "balanced":"claude-sonnet-4-6", "best":"claude-opus-4-8"}</div></div>
         <div class="field wide"><label>Per-Agent Models (JSON)</label><textarea id="s_ag_models" rows="6"></textarea></div>
       </div>
     </details>
@@ -714,7 +714,7 @@
       <div class="cfg-body">
         <div class="field"><label>Health Check Interval (s)</label><input type="number" id="s_sv_health"></div>
         <div class="field"><label>Max Restart Attempts</label><input type="number" id="s_sv_restarts"></div>
-        <div class="field wide"><label>Restart Backoff (JSON array, e.g. [5,15,60])</label><input type="text" id="s_sv_backoff"></div>
+        <div class="field wide"><label>Restart Backoff (JSON array)</label><textarea id="s_sv_backoff" rows="2"></textarea><div class="hint">[5, 15, 60]</div></div>
       </div>
     </details>
 
