@@ -207,6 +207,12 @@ CREATE TABLE IF NOT EXISTS pending_reactions (
     tg_msg_id INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS pending_initial_msgs (
+    task_id INTEGER PRIMARY KEY,
+    chat_id INTEGER NOT NULL,
+    tg_msg_id INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS usage_snapshots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     tokens_used INTEGER,

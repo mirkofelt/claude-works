@@ -485,6 +485,19 @@ class Daemon:
             await self._conn.commit()
             logger.info("Startup cleanup: cleared %d stale hourglass reactions", len(stale_reactions))
 
+        # Update stale initial messages to show restart notice
+        async with self._conn.execute("SELECT task_id, chat_id, tg_msg_id FROM pending_initial_msgs") as cur:
+            stale_initials = await cur.fetchall()
+        for _, chat_id, tg_msg_id in stale_initials:
+            try:
+                await self._api.edit_message(chat_id, tg_msg_id, "↩ Restarted — task re-queued, working on it...")
+            except Exception:
+                pass
+        if stale_initials:
+            await self._conn.execute("DELETE FROM pending_initial_msgs")
+            await self._conn.commit()
+            logger.info("Startup cleanup: updated %d stale initial messages", len(stale_initials))
+
         stale_lanes = (Lane.ASSIGNED.value, Lane.IN_PROGRESS.value, Lane.REVIEW.value)
         placeholders = ",".join("?" * len(stale_lanes))
         # Reset root tasks to BACKLOG
@@ -928,7 +941,13 @@ class Daemon:
                 init_sent = await self._api.send_message(
                     chat_id, f"✎ Working on: {preview}"
                 )
-                self._pending_initial_msgs[task_id] = init_sent["message_id"]
+                init_msg_id = init_sent["message_id"]
+                self._pending_initial_msgs[task_id] = init_msg_id
+                await self._conn.execute(
+                    "INSERT OR REPLACE INTO pending_initial_msgs (task_id, chat_id, tg_msg_id) VALUES (?, ?, ?)",
+                    (task_id, chat_id, init_msg_id),
+                )
+                await self._conn.commit()
             except Exception:
                 pass
         else:
@@ -1311,16 +1330,20 @@ class Daemon:
 
             reply_markup = {"inline_keyboard": keyboard} if keyboard is not None else None
             initial_msg_id = self._pending_initial_msgs.pop(task.id, None) if task.id else None
+            if initial_msg_id and task.id:
+                try:
+                    await self._conn.execute("DELETE FROM pending_initial_msgs WHERE task_id = ?", (task.id,))
+                    await self._conn.commit()
+                except Exception:
+                    pass
 
             if clean_result.strip():
                 html_result = _md_to_telegram_html(clean_result)
                 if initial_msg_id:
-                    # Edit the "in progress" placeholder with the actual result
                     try:
                         await self._api.edit_message(task.chat_id, initial_msg_id, html_result, parse_mode="HTML", reply_markup=reply_markup)
                         sent = {"message_id": initial_msg_id}
                     except Exception:
-                        # Edit failed (e.g. message too old) — fall back to new message
                         try:
                             sent = await self._api.send_message(task.chat_id, html_result, parse_mode="HTML", reply_markup=reply_markup)
                         except Exception:
@@ -1470,13 +1493,28 @@ class Daemon:
             )
             await self._conn.commit()
         elif error:
+            # Clean up any pending initial message on error
+            init_msg_id = self._pending_initial_msgs.pop(task.id, None) if task.id else None
+            if init_msg_id and task.id:
+                try:
+                    await self._conn.execute("DELETE FROM pending_initial_msgs WHERE task_id = ?", (task.id,))
+                    await self._conn.commit()
+                except Exception:
+                    pass
             if "CLI_AUTH_REQUIRED" in error:
-                await self._api.send_message(
-                    task.chat_id,
-                    "Claude CLI not logged in. Send /reauth to authenticate."
-                )
+                err_text = "Claude CLI not logged in. Send /reauth to authenticate."
             else:
+                err_text = None
                 logger.debug("Agent error for task=%s (recovery will handle user notification): %s", task.id, error)
+            if init_msg_id:
+                notice = err_text or "⚠ Task failed — see logs."
+                try:
+                    await self._api.edit_message(task.chat_id, init_msg_id, notice)
+                except Exception:
+                    if err_text:
+                        await self._api.send_message(task.chat_id, err_text)
+            elif err_text:
+                await self._api.send_message(task.chat_id, err_text)
 
     async def _on_task_requeued(self, task: KanbanTask) -> None:
         self._stop_typing(task.chat_id)
