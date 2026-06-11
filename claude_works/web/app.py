@@ -899,20 +899,24 @@ async def get_tokens(period: str = "24h"):
     ) as cur:
         ts_rows = await cur.fetchall()
 
-    cli_usage_ts = []
+    # Cumulative token consumption over billing period (30d) from internal tracker.
+    # Shown as "usage chart" regardless of provider — subscription limits unavailable from Max plan CLI.
     llm_cfg = config.section("llm")
-    if llm_cfg.get("provider") == "cli":
-        # always span full billing period (30d) regardless of selected period
-        billing_since = int(time.time()) - 2592000
-        async with conn.execute(
-            "SELECT sampled_at, tokens_used, tokens_limit FROM usage_snapshots WHERE sampled_at >= ? ORDER BY sampled_at ASC",
-            (billing_since,),
-        ) as cur:
-            cli_rows = await cur.fetchall()
-        cli_usage_ts = [
-            {"sampled_at": r["sampled_at"], "tokens_used": r["tokens_used"], "tokens_limit": r["tokens_limit"]}
-            for r in cli_rows
-        ]
+    billing_since = int(time.time()) - 2592000
+    bucket_billing = 21600  # 6h buckets over 30 days
+    async with conn.execute(
+        """SELECT (timestamp / ?) * ? as bucket,
+                  SUM(input_tokens + output_tokens) as total_tokens
+           FROM token_usage WHERE timestamp >= ?
+           GROUP BY bucket ORDER BY bucket ASC""",
+        (bucket_billing, bucket_billing, billing_since),
+    ) as cur:
+        billing_rows = await cur.fetchall()
+    cumulative = 0
+    cli_usage_ts = []
+    for r in billing_rows:
+        cumulative += (r["total_tokens"] or 0)
+        cli_usage_ts.append({"sampled_at": r["bucket"], "tokens_used": cumulative, "tokens_limit": None})
 
     await conn.close()
 
@@ -943,7 +947,7 @@ async def get_tokens(period: str = "24h"):
         "total_cost_usd": round(total_cost, 6),
         "timeseries": timeseries,
         "cli_usage": cli_usage_ts,
-        "is_cli": llm_cfg.get("provider") == "cli",
+        "is_cli": True,  # always show usage chart; limit data unavailable for Max plan
     }
 
 

@@ -595,7 +595,7 @@
   </div>
   <div class="card" id="usageChartCard" style="margin-bottom:16px;display:none">
     <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px 0">
-      <span style="font-size:.75rem;color:var(--muted)">Token limit consumption (billing period)</span>
+      <span style="font-size:.75rem;color:var(--muted)">Token consumption — cumulative, rolling 30 days</span>
       <span id="usagePctLabel" style="font-size:.75rem;font-weight:600"></span>
     </div>
     <div class="chart-wrap">
@@ -1666,7 +1666,7 @@ function drawUsageChart(usageData, isCli) {
   const pts = usageData.filter(d => d.tokens_used != null);
   if (!pts.length) {
     ctx.fillStyle = '#3d444d'; ctx.font = '12px sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText('Collecting data — snapshots every 5 min…', W / 2, H / 2);
+    ctx.fillText('No activity yet — data appears after first agent call', W / 2, H / 2);
     const pctEl = document.getElementById('usagePctLabel');
     if (pctEl) { pctEl.textContent = 'no data yet'; pctEl.style.color = 'var(--muted)'; }
     return;
