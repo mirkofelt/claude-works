@@ -167,6 +167,9 @@ class ControllerAgent:
             logger.info("Task %d recovered action=%s class=%s", task_id, action, agent_class.value)
 
     async def _route(self, content: str) -> AgentClass:
+        if not content or not content.strip():
+            logger.warning("Controller: empty task content — defaulting to generalist")
+            return AgentClass.GENERALIST
         fast = _fast_route(content)
         if fast is not None:
             logger.info("Controller fast-route: %r → %s", content[:60], fast.value)

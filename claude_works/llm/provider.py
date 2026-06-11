@@ -139,7 +139,9 @@ class CliProvider(LLMProvider):
             )
             full_system = f"{system}\n\n---\nConversation history:\n{history}\n---"
 
-        user_msg = messages[-1]["content"] if messages else ""
+        user_msg = (messages[-1]["content"] if messages else "") or ""
+        if not user_msg.strip():
+            raise ValueError("CLI provider: empty user message — refusing to call --print with no input")
 
         cmd = [
             self._binary,
