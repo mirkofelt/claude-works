@@ -165,6 +165,15 @@ def _extract_git_clone_tag(text: str) -> "tuple[str, tuple[str, str] | None]":
     return clean, (m.group(1).strip(), m.group(2).strip())
 
 
+def _extract_board_task_tag(text: str) -> "tuple[str, str | None]":
+    """Extract [BOARD_TASK: task description]. Returns (clean_text, task_description or None)."""
+    m = re.search(r'\[BOARD_TASK:\s*([^\]]+)\]', text, re.DOTALL)
+    if not m:
+        return text, None
+    clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
+    return clean, m.group(1).strip()
+
+
 def _extract_kb_search_tag(text: str) -> "tuple[str, str | None]":
     """Extract [KB_SEARCH: query]. Returns (clean_text, query or None)."""
     m = re.search(r'\[KB_SEARCH:\s*([^\]]+)\]', text)
@@ -1084,7 +1093,8 @@ Rules:
             try:
                 preview = content[:120] + ("…" if len(content) > 120 else "")
                 init_sent = await self._api.send_message(
-                    chat_id, f"✎ Working on: {preview}"
+                    chat_id, f"✎ Working on: {preview}",
+                    reply_to_message_id=incoming.telegram_message_id,
                 )
                 init_msg_id = init_sent["message_id"]
                 self._pending_initial_msgs[task_id] = init_msg_id
@@ -1852,6 +1862,7 @@ Rules:
                             chat_id,
                             _md_to_telegram_html(clean) + "\n\n<i>✎ working...</i>",
                             parse_mode="HTML",
+                            reply_to_message_id=reply_to_msg_id,
                         )
                         preliminary_msg_id = init["message_id"]
                         if task_id:
@@ -1863,6 +1874,14 @@ Rules:
                     agent.run(f"[Tool results]\n{tool_feedback}\n\nContinue with the task."),
                     timeout=300.0,
                 )
+            # Check for BOARD_TASK self-routing tag
+            clean_result, board_task_desc = _extract_board_task_tag(result)
+            if board_task_desc and self._board:
+                board_proto = KanbanTask(id=None, chat_id=chat_id, user_id=user_id, content=board_task_desc)
+                await self._board.push(board_proto)
+                result = clean_result
+                logger.info("Chat %d: agent self-routed task to board: %s", chat_id, board_task_desc[:80])
+
             if task_id and self._board:
                 await self._board.complete(task_id, result[:2000] if result else "")
             real_task = KanbanTask(id=task_id, chat_id=chat_id, user_id=user_id, content=content)
