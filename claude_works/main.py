@@ -1033,7 +1033,7 @@ class Daemon:
             )
             await self._conn.commit()
         elif error:
-            await self._api.send_message(task.chat_id, f"Error: {error}")
+            logger.debug("Agent error for task=%s (recovery will handle user notification): %s", task.id, error)
 
     async def _on_task_requeued(self, task: KanbanTask) -> None:
         self._stop_typing(task.chat_id)
