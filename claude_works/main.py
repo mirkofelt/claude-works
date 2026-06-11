@@ -1665,6 +1665,15 @@ class Daemon:
                 self._usage_state = stats
                 pct_str = f"{stats.usage_pct * 100:.0f}%" if stats.usage_pct is not None else "?"
                 logger.info("Claude Code usage: %s (tokens %s/%s)", pct_str, stats.tokens_used, stats.tokens_limit)
+                if stats.tokens_used is not None:
+                    try:
+                        await self._conn.execute(
+                            "INSERT INTO usage_snapshots (tokens_used, tokens_limit, sampled_at) VALUES (?, ?, ?)",
+                            (stats.tokens_used, stats.tokens_limit, int(time.time())),
+                        )
+                        await self._conn.commit()
+                    except Exception:
+                        pass
                 if stats.is_near_limit and not self._usage_near_limit_notified:
                     self._usage_near_limit_notified = True
                     await self._notify_admins_usage(stats)

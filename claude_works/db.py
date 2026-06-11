@@ -206,6 +206,14 @@ CREATE TABLE IF NOT EXISTS pending_reactions (
     chat_id INTEGER NOT NULL,
     tg_msg_id INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS usage_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tokens_used INTEGER,
+    tokens_limit INTEGER,
+    sampled_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_usage_snapshots_time ON usage_snapshots(sampled_at);
 """
 
 CONFIG_TABLES = """

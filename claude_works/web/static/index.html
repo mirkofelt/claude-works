@@ -158,6 +158,7 @@
     /* token chart */
     .chart-wrap { padding: 12px; }
     canvas#tokenChart { display: block; width: 100%; height: 220px; }
+    canvas#usageChart { display: block; width: 100%; height: 160px; }
 
     /* token period buttons */
     .period-group { display: flex; gap: 4px; }
@@ -572,6 +573,12 @@
   <div class="card" style="margin-bottom:16px">
     <div class="chart-wrap">
       <canvas id="tokenChart"></canvas>
+    </div>
+  </div>
+  <div class="card" id="usageChartCard" style="margin-bottom:16px;display:none">
+    <div style="font-size:.75rem;color:var(--muted);padding:8px 12px 0">Claude Code usage (billing period)</div>
+    <div class="chart-wrap">
+      <canvas id="usageChart"></canvas>
     </div>
   </div>
   <div class="card">
@@ -1113,6 +1120,7 @@ async function loadTokens() {
   </tr>`;
 
   drawTokenChart(data.timeseries || []);
+  drawUsageChart(data.cli_usage || []);
 }
 
 function drawTokenChart(tsData) {
@@ -1212,6 +1220,89 @@ function drawTokenChart(tsData) {
     ctx.fillText(cls, lx + 12, ly + 8);
     lx += 12 + ctx.measureText(cls).width + 14;
   });
+}
+
+function drawUsageChart(usageData) {
+  const card = document.getElementById('usageChartCard');
+  if (!usageData || !usageData.length) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  const canvas = document.getElementById('usageChart');
+  const W = canvas.offsetWidth || 800;
+  const H = 160;
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+
+  const limit = usageData.find(d => d.tokens_limit)?.tokens_limit || null;
+  const maxVal = limit || Math.max(...usageData.map(d => d.tokens_used || 0)) || 1;
+  const PAD = { top: 20, bottom: 32, left: 60, right: 12 };
+  const cW = W - PAD.left - PAD.right;
+  const cH = H - PAD.top - PAD.bottom;
+  const pts = usageData.filter(d => d.tokens_used != null);
+  if (!pts.length) { card.style.display = 'none'; return; }
+
+  // grid
+  ctx.strokeStyle = '#21262d';
+  ctx.lineWidth = 1;
+  [0.25, 0.5, 0.75, 1].forEach(r => {
+    const y = PAD.top + cH * (1 - r);
+    ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(W - PAD.right, y); ctx.stroke();
+    ctx.fillStyle = '#8b949e'; ctx.font = '10px sans-serif'; ctx.textAlign = 'right';
+    ctx.fillText(fmt(Math.round(maxVal * r)), PAD.left - 4, y + 3);
+  });
+
+  // limit line
+  if (limit) {
+    const y = PAD.top;
+    ctx.strokeStyle = '#f85149'; ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(W - PAD.right, y); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#f85149'; ctx.font = '10px sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText('limit', PAD.left + 4, y - 3);
+  }
+
+  // line
+  const tMin = pts[0].sampled_at, tMax = pts[pts.length - 1].sampled_at || tMin + 1;
+  const tRange = tMax - tMin || 1;
+  const toX = t => PAD.left + ((t - tMin) / tRange) * cW;
+  const toY = v => PAD.top + cH * (1 - Math.min(v, maxVal) / maxVal);
+
+  ctx.strokeStyle = '#58a6ff'; ctx.lineWidth = 2;
+  ctx.beginPath();
+  pts.forEach((d, i) => {
+    const x = toX(d.sampled_at), y = toY(d.tokens_used);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  // dots
+  ctx.fillStyle = '#58a6ff';
+  pts.forEach(d => {
+    ctx.beginPath();
+    ctx.arc(toX(d.sampled_at), toY(d.tokens_used), 3, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  // x labels
+  ctx.fillStyle = '#8b949e'; ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
+  const labelStep = Math.max(1, Math.floor(pts.length / 6));
+  pts.forEach((d, i) => {
+    if (i % labelStep !== 0 && i !== pts.length - 1) return;
+    const x = toX(d.sampled_at);
+    const dt = new Date(d.sampled_at * 1000);
+    const lbl = pts.length <= 25
+      ? dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      : dt.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    ctx.fillText(lbl, x, H - 8);
+  });
+
+  // current value label
+  const last = pts[pts.length - 1];
+  const pct = limit ? ` (${Math.round(last.tokens_used / limit * 100)}%)` : '';
+  ctx.fillStyle = '#58a6ff'; ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'right';
+  ctx.fillText(fmt(last.tokens_used) + pct, W - PAD.right, PAD.top - 4);
 }
 
 async function loadLogs() {

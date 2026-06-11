@@ -818,6 +818,19 @@ async def get_tokens(period: str = "24h"):
     ) as cur:
         ts_rows = await cur.fetchall()
 
+    cli_usage_ts = []
+    llm_cfg = config.section("llm")
+    if llm_cfg.get("provider") == "cli":
+        async with conn.execute(
+            "SELECT sampled_at, tokens_used, tokens_limit FROM usage_snapshots WHERE sampled_at >= ? ORDER BY sampled_at ASC",
+            (since,),
+        ) as cur:
+            cli_rows = await cur.fetchall()
+        cli_usage_ts = [
+            {"sampled_at": r["sampled_at"], "tokens_used": r["tokens_used"], "tokens_limit": r["tokens_limit"]}
+            for r in cli_rows
+        ]
+
     await conn.close()
 
     stats = {
@@ -841,7 +854,13 @@ async def get_tokens(period: str = "24h"):
         }
         for r in ts_rows
     ]
-    return {"period": period, "stats": stats, "total_cost_usd": round(total_cost, 6), "timeseries": timeseries}
+    return {
+        "period": period,
+        "stats": stats,
+        "total_cost_usd": round(total_cost, 6),
+        "timeseries": timeseries,
+        "cli_usage": cli_usage_ts,
+    }
 
 
 @app.get("/api/logs", dependencies=[Depends(_verify_token)])
