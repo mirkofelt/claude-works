@@ -423,7 +423,7 @@ async def get_task_logs(task_id: int, since: int = 0):
     if buf:
         entries = [e for e in buf if e["ts"] > since]
         return {"task_id": task_id, "logs": entries, "source": "memory"}
-    conn = await _db.get_conn()
+    conn = await _get_conn()
     async with conn.execute(
         "SELECT ts, level, msg FROM task_logs WHERE task_id = ? AND ts > ? ORDER BY ts ASC",
         (task_id, since),
