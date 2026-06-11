@@ -55,16 +55,19 @@ class ControllerAgent:
         provider: LLMProvider | None = None,
         token_tracker: TokenTracker | None = None,
         on_result=None,
+        on_repair_trigger=None,
     ) -> None:
         self.id = str(uuid.uuid4())[:8]
         self._board = board
         self._provider = provider
         self._token_tracker = token_tracker
         self._on_result = on_result
+        self._on_repair_trigger = on_repair_trigger
         self._running = False
         self._owns_provider = provider is None
         self._recovery_attempts: dict[int, int] = {}  # task_id → attempt count
         self._exhausted: set[int] = set()  # task_ids that hit max retries
+        self._systemic_failures = 0  # consecutive LLM call failures in recovery
 
     def _get_provider(self) -> LLMProvider:
         if self._provider is None:
@@ -129,9 +132,17 @@ class ControllerAgent:
 
         try:
             action, agent_class = await self._decide_recovery(task.content, error)
+            self._systemic_failures = 0  # reset on success
         except Exception:
             logger.exception("Recovery routing failed for task %d — defaulting retry", task_id)
             action, agent_class = "retry", AgentClass.GENERALIST
+            self._systemic_failures += 1
+            if self._systemic_failures >= 3 and self._on_repair_trigger:
+                logger.error("3 consecutive recovery LLM failures — triggering REPAIR mode")
+                import asyncio as _asyncio
+                _asyncio.ensure_future(self._on_repair_trigger(
+                    f"Recovery LLM failed {self._systemic_failures}x — API/network issue?"
+                ))
 
         if action == "abandon":
             self._exhausted.add(task_id)

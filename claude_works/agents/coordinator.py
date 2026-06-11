@@ -64,13 +64,14 @@ _SPECIALIST_MAP = {
 class AgentCoordinator:
     """Orchestrates controller, chief, and specialist workers over KanbanBoard."""
 
-    def __init__(self, board: KanbanBoard, token_tracker: TokenTracker, on_result, on_requeue=None, user_backgrounds: dict | None = None, exec_tools=None) -> None:
+    def __init__(self, board: KanbanBoard, token_tracker: TokenTracker, on_result, on_requeue=None, user_backgrounds: dict | None = None, exec_tools=None, on_repair_trigger=None) -> None:
         self._board = board
         self._token_tracker = token_tracker
         self._on_result = on_result
         self._on_requeue = on_requeue
         self._user_backgrounds: dict[int, str] = user_backgrounds or {}
-        self._exec_tools = exec_tools  # async (result: str) -> tuple[str, str | None]
+        self._exec_tools = exec_tools
+        self._on_repair_trigger = on_repair_trigger  # async (result: str) -> tuple[str, str | None]
         self._provider: LLMProvider | None = None
         self._controller: ControllerAgent | None = None
         self._chief: ChiefAgent | None = None
@@ -95,6 +96,7 @@ class AgentCoordinator:
             provider=provider,
             token_tracker=self._token_tracker,
             on_result=self._on_result,
+            on_repair_trigger=self._on_repair_trigger,
         )
         self._chief = ChiefAgent(
             board=self._board,

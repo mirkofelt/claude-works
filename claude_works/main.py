@@ -383,6 +383,7 @@ class Daemon:
         self._chat_reply_to: dict[int, int] = {}
         self._active_chat_content: dict[int, str] = {}
         self._pending_chat_queue: dict[int, list] = {}
+        self._chat_task_start_times: dict[int, float] = {}
         self._running = False
         self._mode_mgr = ModeManager()
         self._mechanic: MechanicAgent | None = None
@@ -494,6 +495,7 @@ class Daemon:
             on_requeue=self._on_task_requeued,
             user_backgrounds=self._user_backgrounds,
             exec_tools=self._exec_tool_tags,
+            on_repair_trigger=self.trigger_repair,
         )
         self._coordinator.start()
 
@@ -545,6 +547,7 @@ class Daemon:
         asyncio.create_task(self._config_watcher_loop(), name="config-watcher")
         asyncio.create_task(self._usage_poll_loop(), name="usage-poller")
         asyncio.create_task(self._network_health_loop(admin_ids), name="network-health")
+        asyncio.create_task(self._stuck_chat_watchdog(), name="stuck-chat-watchdog")
 
         self._running = True
         logger.info("claude-works daemon started in RUN mode")
@@ -1121,6 +1124,7 @@ Rules:
                         pass
             else:
                 self._active_chat_content[chat_id] = content
+                self._chat_task_start_times[chat_id] = time.time()
                 asyncio.create_task(
                     self._handle_chat(chat_id, telegram_id, content, incoming.telegram_message_id),
                     name=f"chat-{chat_id}",
@@ -2083,6 +2087,7 @@ Rules:
 
     def _flush_chat_queue(self, chat_id: int) -> None:
         """Spawn next queued chat message, if any."""
+        self._chat_task_start_times.pop(chat_id, None)
         queue = self._pending_chat_queue.get(chat_id, [])
         if not queue:
             self._pending_chat_queue.pop(chat_id, None)
@@ -2092,6 +2097,7 @@ Rules:
         if not queue:
             self._pending_chat_queue.pop(chat_id, None)
         self._active_chat_content[chat_id] = content
+        self._chat_task_start_times[chat_id] = time.time()
         asyncio.create_task(
             self._handle_chat(chat_id, user_id, content, msg_id),
             name=f"chat-{chat_id}",
@@ -2199,6 +2205,35 @@ Rules:
 
     _TOR_CHECK_INTERVAL = 60
     _TOR_TASK_COOLDOWN = 300  # don't re-push health task if one was pushed within this window
+
+    async def _stuck_chat_watchdog(self) -> None:
+        """Detect and clear chat handlers stuck > 10 minutes."""
+        STUCK_THRESHOLD = 600  # seconds
+        await asyncio.sleep(60.0)
+        try:
+            while self._running:
+                await asyncio.sleep(60.0)
+                now = time.time()
+                for chat_id, task in list(self._typing_tasks.items()):
+                    if task.done():
+                        self._typing_tasks.pop(chat_id, None)
+                        self._flush_chat_queue(chat_id)
+                        continue
+                    age = now - getattr(task, '_created_at', now)
+                    # asyncio.Task doesn't expose creation time — use a separate tracker
+                if self._chat_task_start_times:
+                    for chat_id, started_at in list(self._chat_task_start_times.items()):
+                        if now - started_at > STUCK_THRESHOLD and chat_id in self._typing_tasks:
+                            logger.warning("Stuck chat detected for chat=%d (%ds) — forcing cleanup", chat_id, int(now - started_at))
+                            self._stop_typing(chat_id)
+                            self._flush_chat_queue(chat_id)
+                            self._chat_task_start_times.pop(chat_id, None)
+                            try:
+                                await self._api.send_message(chat_id, "⚠️ Vorheriger Request hat sich aufgehängt und wurde abgebrochen.")
+                            except Exception:
+                                pass
+        except asyncio.CancelledError:
+            pass
 
     async def _network_health_loop(self, admin_ids: list) -> None:
         """Periodically check if Tor is reachable; push a SECURITY task when it's down."""
