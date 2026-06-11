@@ -412,6 +412,19 @@ class Daemon:
     async def _reset_stale_tasks(self) -> None:
         """Reset tasks interrupted by previous crash/restart so they're retried cleanly."""
         from .kanban.models import Lane
+        # Clear stale hourglass reactions from previous run
+        async with self._conn.execute("SELECT task_id, chat_id, tg_msg_id FROM pending_reactions") as cur:
+            stale_reactions = await cur.fetchall()
+        for _, chat_id, tg_msg_id in stale_reactions:
+            try:
+                await self._api.set_message_reaction(chat_id, tg_msg_id, None)
+            except Exception:
+                pass
+        if stale_reactions:
+            await self._conn.execute("DELETE FROM pending_reactions")
+            await self._conn.commit()
+            logger.info("Startup cleanup: cleared %d stale hourglass reactions", len(stale_reactions))
+
         stale_lanes = (Lane.ASSIGNED.value, Lane.IN_PROGRESS.value, Lane.REVIEW.value)
         placeholders = ",".join("?" * len(stale_lanes))
         # Reset root tasks to BACKLOG
@@ -842,6 +855,11 @@ class Daemon:
             try:
                 await self._api.set_message_reaction(chat_id, incoming.telegram_message_id, "⏳")
                 self._pending_reactions[task_id] = (chat_id, incoming.telegram_message_id)
+                await self._conn.execute(
+                    "INSERT OR REPLACE INTO pending_reactions (task_id, chat_id, tg_msg_id) VALUES (?, ?, ?)",
+                    (task_id, chat_id, incoming.telegram_message_id),
+                )
+                await self._conn.commit()
             except Exception:
                 pass
         else:
@@ -1151,6 +1169,11 @@ class Daemon:
         if reaction_info:
             try:
                 await self._api.set_message_reaction(reaction_info[0], reaction_info[1], None)
+            except Exception:
+                pass
+            try:
+                await self._conn.execute("DELETE FROM pending_reactions WHERE task_id = ?", (task.id,))
+                await self._conn.commit()
             except Exception:
                 pass
         if task.parent_id is not None:

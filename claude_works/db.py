@@ -200,6 +200,12 @@ CREATE TABLE IF NOT EXISTS daemon_state (
     value TEXT NOT NULL,
     updated_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS pending_reactions (
+    task_id INTEGER PRIMARY KEY,
+    chat_id INTEGER NOT NULL,
+    tg_msg_id INTEGER NOT NULL
+);
 """
 
 CONFIG_TABLES = """
