@@ -866,6 +866,7 @@ async def get_tokens(period: str = "24h"):
         "total_cost_usd": round(total_cost, 6),
         "timeseries": timeseries,
         "cli_usage": cli_usage_ts,
+        "is_cli": llm_cfg.get("provider") == "cli",
     }
 
 

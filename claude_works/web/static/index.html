@@ -1253,7 +1253,7 @@ async function loadTokens() {
 
   drawTokenChart(data.timeseries || []);
   drawCostChart(data.timeseries || [], data.total_cost_usd || 0);
-  drawUsageChart(data.cli_usage || []);
+  drawUsageChart(data.cli_usage || [], data.is_cli || false);
 }
 
 function drawTokenChart(tsData) {
@@ -1434,25 +1434,34 @@ function drawCostChart(tsData, totalCost) {
   });
 }
 
-function drawUsageChart(usageData) {
+function drawUsageChart(usageData, isCli) {
   const card = document.getElementById('usageChartCard');
-  if (!usageData || !usageData.length) { card.style.display = 'none'; return; }
+  if (!isCli) { card.style.display = 'none'; return; }
   card.style.display = '';
   const canvas = document.getElementById('usageChart');
   const W = canvas.offsetWidth || 800;
-  const H = 160;
+  const H = 200;
   canvas.width = W;
   canvas.height = H;
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, W, H);
 
+  const pts = usageData.filter(d => d.tokens_used != null);
+  if (!pts.length) {
+    ctx.fillStyle = '#3d444d'; ctx.font = '12px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('Collecting data — snapshots every 5 min…', W / 2, H / 2);
+    const pctEl = document.getElementById('usagePctLabel');
+    if (pctEl) { pctEl.textContent = 'no data yet'; pctEl.style.color = 'var(--muted)'; }
+    return;
+  }
+  // duplicate single point so line renders
+  if (pts.length === 1) pts.push({ ...pts[0], sampled_at: pts[0].sampled_at + 300 });
+
   const limit = usageData.find(d => d.tokens_limit)?.tokens_limit || null;
-  const maxVal = limit || Math.max(...usageData.map(d => d.tokens_used || 0)) || 1;
+  const maxVal = limit || Math.max(...pts.map(d => d.tokens_used || 0)) || 1;
   const PAD = { top: 20, bottom: 32, left: 60, right: 12 };
   const cW = W - PAD.left - PAD.right;
   const cH = H - PAD.top - PAD.bottom;
-  const pts = usageData.filter(d => d.tokens_used != null);
-  if (!pts.length) { card.style.display = 'none'; return; }
 
   // grid
   ctx.strokeStyle = '#21262d';
