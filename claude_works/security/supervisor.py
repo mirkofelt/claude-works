@@ -14,6 +14,9 @@ from ..prompts import load as _load_prompt
 logger = logging.getLogger(__name__)
 
 
+import re as _re
+
+
 @dataclass
 class PendingApproval:
     id: int
@@ -26,6 +29,8 @@ class PendingApproval:
     event: asyncio.Event = field(default_factory=asyncio.Event)
     approved: bool = False
     decided_by: int | None = None
+    specific_key: str | None = None   # e.g. "email_send:x@y.de"
+    specific_label: str | None = None  # e.g. "an x@y.de"
 
 
 class SecuritySupervisor:
@@ -93,15 +98,43 @@ class SecuritySupervisor:
     def enabled(self) -> bool:
         return section("security").get("enabled", False)
 
+    @staticmethod
+    def _extract_specific(action_type: str, content: str) -> "tuple[str, str] | None":
+        """Extract (storage_key, button_label) for action-specific allowlist entries."""
+        if action_type == "email_send":
+            m = _re.search(r'\[SEND_EMAIL:\s*([^\s|\]]+)', content)
+            if m:
+                recipient = m.group(1).strip()
+                return f"email_send:{recipient}", f"an {recipient[:30]}"
+        elif action_type == "github_write":
+            m = _re.search(r'\[GITHUB_API:\s*(POST|PUT|PATCH|DELETE)\s*\|\s*([^\s|\]\n]+)', content, _re.I)
+            if m:
+                method = m.group(1).upper()
+                endpoint = m.group(2).strip()[:30]
+                return f"github_write:{method}:{endpoint}", f"{method} {endpoint}"
+        elif action_type == "tts_send":
+            return f"tts_send:all", "vorlesen"
+        return None
+
+    @staticmethod
+    def _action_label(action_type: str) -> str:
+        return {
+            "email_send": "✉️ Immer senden",
+            "github_write": "🔧 Immer schreiben",
+            "tts_send": "🔊 Immer vorlesen",
+            "data_deletion": "🗑️ Immer löschen",
+            "command_execution": "⚙️ Immer ausführen",
+        }.get(action_type, f"🔄 Immer: {action_type[:18]}")
+
     def allow_action_type(self, action_type: str) -> None:
         self._always_allowed_actions.add(action_type)
         self._save_allowlist()
         logger.info("Security: '%s' permanently allowed", action_type)
 
-    def allow_all(self) -> None:
-        self._skip_all = True
+    def allow_specific(self, specific_key: str) -> None:
+        self._always_allowed_actions.add(specific_key)
         self._save_allowlist()
-        logger.warning("Security: all checks permanently disabled by admin")
+        logger.info("Security: specific key '%s' permanently allowed", specific_key)
 
     async def _run_so_check(self, action_type: str, content: str, task_id: int | None) -> bool:
         """LLM content review — always runs when security is enabled, regardless of allowlist."""
@@ -158,9 +191,16 @@ class SecuritySupervisor:
         if not triggered:
             return True
 
-        # Stage 1: user approval — skipped if pre-approved
+        # Stage 1: user approval — skipped if pre-approved (action-type OR specific key)
         if not self._skip_all:
-            need_approval = [t for t in triggered if t not in self._always_allowed_actions]
+            need_approval = []
+            for t in triggered:
+                if t in self._always_allowed_actions:
+                    continue
+                specific = self._extract_specific(t, content)
+                if specific and specific[0] in self._always_allowed_actions:
+                    continue
+                need_approval.append(t)
             if need_approval:
                 user_ok = await self._request_approval(need_approval, content, task_id, chat_id, user_id)
                 if not user_ok:
@@ -180,6 +220,12 @@ class SecuritySupervisor:
         approval_id = self._next_id
         self._next_id += 1
 
+        specific_key, specific_label = None, None
+        primary_type = action_types[0] if action_types else ""
+        specific = self._extract_specific(primary_type, content)
+        if specific:
+            specific_key, specific_label = specific
+
         approval = PendingApproval(
             id=approval_id,
             task_id=task_id,
@@ -188,6 +234,8 @@ class SecuritySupervisor:
             action_types=action_types,
             content=content[:500],
             requested_at=time.time(),
+            specific_key=specific_key,
+            specific_label=specific_label,
         )
         self._pending[approval_id] = approval
 
@@ -224,18 +272,18 @@ class SecuritySupervisor:
             f"Aktion: {types_str}\n"
             f"Vorschau: {preview}"
         )
-        # Truncate action label for button (max ~20 chars to fit Telegram button)
-        action_label = types_str[:20]
-        keyboard = {"inline_keyboard": [
-            [
-                {"text": "✅ Einmalig", "callback_data": f"sec_once:{approval.id}"},
-                {"text": f"🔄 Immer: {action_label}", "callback_data": f"sec_always_action:{approval.id}"},
-            ],
-            [
-                {"text": "🔓 Immer alles", "callback_data": f"sec_always_all:{approval.id}"},
-                {"text": "❌ Ablehnen", "callback_data": f"sec_deny:{approval.id}"},
-            ],
-        ]}
+        primary_type = approval.action_types[0] if approval.action_types else ""
+        row1 = [
+            {"text": "✅ Einmalig", "callback_data": f"sec_once:{approval.id}"},
+            {"text": self._action_label(primary_type), "callback_data": f"sec_always_action:{approval.id}"},
+        ]
+        row2 = [{"text": "❌ Ablehnen", "callback_data": f"sec_deny:{approval.id}"}]
+        if approval.specific_key and approval.specific_label:
+            row2.insert(0, {
+                "text": f"🔁 Immer {approval.specific_label}",
+                "callback_data": f"sec_always_specific:{approval.id}",
+            })
+        keyboard = {"inline_keyboard": [row1, row2]}
         for admin_id in self._admin_ids:
             try:
                 await self._notify_fn(admin_id, msg, reply_markup=keyboard)
@@ -251,22 +299,22 @@ class SecuritySupervisor:
         approval.event.set()
         return True
 
+    def approve_always_specific(self, approval_id: int, admin_id: int) -> bool:
+        approval = self._pending.get(approval_id)
+        if not approval or not approval.specific_key:
+            return False
+        self.allow_specific(approval.specific_key)
+        approval.approved = True
+        approval.decided_by = admin_id
+        approval.event.set()
+        return True
+
     def approve_always_action(self, approval_id: int, admin_id: int) -> bool:
         approval = self._pending.get(approval_id)
         if not approval:
             return False
         for action_type in approval.action_types:
             self.allow_action_type(action_type)
-        approval.approved = True
-        approval.decided_by = admin_id
-        approval.event.set()
-        return True
-
-    def approve_always_all(self, approval_id: int, admin_id: int) -> bool:
-        approval = self._pending.get(approval_id)
-        if not approval:
-            return False
-        self.allow_all()
         approval.approved = True
         approval.decided_by = admin_id
         approval.event.set()

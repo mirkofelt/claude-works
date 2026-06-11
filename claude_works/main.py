@@ -844,12 +844,12 @@ class Daemon:
             elif scope == "sec_deny":
                 ok = self._security.deny(approval_id, telegram_id)
                 reply = "❌ Abgelehnt."
+            elif scope == "sec_always_specific":
+                ok = self._security.approve_always_specific(approval_id, telegram_id)
+                reply = "🔁 Spezifische Freigabe dauerhaft gespeichert."
             elif scope == "sec_always_action":
                 ok = self._security.approve_always_action(approval_id, telegram_id)
                 reply = "🔄 Aktion dauerhaft freigegeben — zukünftige Anfragen dieser Art werden automatisch genehmigt."
-            elif scope == "sec_always_all":
-                ok = self._security.approve_always_all(approval_id, telegram_id)
-                reply = "🔓 Alle Security-Checks dauerhaft deaktiviert."
             else:
                 return
             if ok:
