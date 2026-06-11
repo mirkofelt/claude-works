@@ -550,9 +550,9 @@
     <table>
       <thead><tr>
         <th>#</th><th>Lane</th><th>Class</th><th>User</th><th>Content</th>
-        <th>Created</th><th>Duration</th>
+        <th>Created</th><th>Duration</th><th></th>
       </tr></thead>
-      <tbody id="kanbanBody"><tr><td colspan="7" class="empty">Loading…</td></tr></tbody>
+      <tbody id="kanbanBody"><tr><td colspan="8" class="empty">Loading…</td></tr></tbody>
     </table>
   </div>
 </div>
@@ -1350,6 +1350,13 @@ async function decideApproval(id, action) {
   loadApprovals();
 }
 
+async function cancelTask(id, e) {
+  if (e) e.stopPropagation();
+  if (!confirm('Task #' + id + ' abbrechen?')) return;
+  await api('/api/tasks/' + id + '/cancel', { method: 'POST' });
+  loadKanban();
+}
+
 async function loadKanban() {
   const lane = document.getElementById('kanbanLane').value;
   const limit = document.getElementById('kanbanLimit').value;
@@ -1366,7 +1373,7 @@ async function loadKanban() {
 
   const rows = await api('/api/kanban?limit=' + limit + (lane ? '&lane=' + lane : ''));
   const b = document.getElementById('kanbanBody');
-  if (!rows?.length) { b.innerHTML = '<tr><td colspan="7" class="empty">No tasks</td></tr>'; return; }
+  if (!rows?.length) { b.innerHTML = '<tr><td colspan="8" class="empty">No tasks</td></tr>'; return; }
   b.innerHTML = rows.map(t => `
     <tr class="task-row${selectedTaskId === t.id ? ' selected' : ''}" onclick="openTaskLog(${t.id})">
       <td class="mono">${t.id}</td>
@@ -1376,6 +1383,9 @@ async function loadKanban() {
       <td><span class="trunc" title="${esc(t.content)}">${esc(t.content)}</span></td>
       <td style="white-space:nowrap;color:var(--muted);font-size:12px">${ts(t.created_at)}</td>
       <td>${dur(t.started_at, t.completed_at)}</td>
+      <td onclick="event.stopPropagation()">
+        ${ ['backlog','assigned','in_progress'].includes(t.lane) ? `<button class="btn btn-ghost" style="padding:.15rem .4rem;font-size:.75rem;color:#ef4444" onclick="cancelTask(${t.id},event)" title="Abbrechen">✕</button>` : '' }
+      </td>
     </tr>`).join('');
 }
 

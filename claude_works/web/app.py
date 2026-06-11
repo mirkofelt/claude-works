@@ -392,6 +392,30 @@ async def get_usage():
             "session_reset_at": None, "weekly_reset_at": None}
 
 
+@app.post("/api/tasks/{task_id}/cancel", dependencies=[Depends(_verify_token)])
+async def cancel_task(task_id: int):
+    conn = await _get_conn()
+    async with conn.execute("SELECT lane FROM kanban_tasks WHERE id = ?", (task_id,)) as cur:
+        row = await cur.fetchone()
+    if not row:
+        await conn.close()
+        raise HTTPException(status_code=404, detail="Task not found")
+    if row["lane"] in ("done", "failed"):
+        await conn.close()
+        raise HTTPException(status_code=400, detail="Task already finished")
+    # Cancel running agent if possible
+    if _daemon_ref and _daemon_ref._coordinator:
+        _daemon_ref._coordinator.cancel_task(task_id)
+    # Mark as failed in DB
+    await conn.execute(
+        "UPDATE kanban_tasks SET lane = 'failed', error = 'Abgebrochen', completed_at = ? WHERE id = ?",
+        (int(__import__("time").time()), task_id),
+    )
+    await conn.commit()
+    await conn.close()
+    return {"ok": True}
+
+
 @app.get("/api/tasks/{task_id}/logs", dependencies=[Depends(_verify_token)])
 async def get_task_logs(task_id: int, since: int = 0):
     from ..telemetry.task_log import get_buffer

@@ -142,6 +142,16 @@ class AgentCoordinator:
             await self._provider.close()
         logger.info("AgentCoordinator stopped")
 
+    def cancel_task(self, task_id: int) -> bool:
+        """Cancel a running agent task by task_id. Returns True if found and cancelled."""
+        for key, asyncio_task in list(self._active.items()):
+            if key.endswith(f"-{task_id}"):
+                asyncio_task.cancel()
+                self._active.pop(key, None)
+                logger.info("Coordinator: cancelled active task %d (key=%s)", task_id, key)
+                return True
+        return False
+
     @property
     def active_count(self) -> int:
         return len(self._active)
