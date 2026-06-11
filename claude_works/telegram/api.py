@@ -108,14 +108,16 @@ class TelegramAPI:
         text: str,
         parse_mode: str | None = None,
         reply_markup: dict | None = None,
+        remove_keyboard: bool = False,
     ) -> dict[str, Any]:
+        markup = {"inline_keyboard": []} if remove_keyboard else reply_markup
         return await self._call(
             "editMessageText",
             chat_id=chat_id,
             message_id=message_id,
             text=text,
             parse_mode=parse_mode,
-            reply_markup=reply_markup,
+            reply_markup=markup,
         )
 
     async def answer_callback_query(self, callback_query_id: str, text: str = "") -> bool:

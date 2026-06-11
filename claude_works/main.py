@@ -1040,12 +1040,46 @@ class Daemon:
             else:
                 return
             if ok:
-                await self._api.send_message(chat_id, reply)
+                sec_orig_msg = cq.get("message") or {}
+                sec_orig_id = sec_orig_msg.get("message_id", 0)
+                sec_orig_text = sec_orig_msg.get("text", "")
+                if sec_orig_id and sec_orig_text:
+                    try:
+                        await self._api.edit_message(
+                            chat_id, sec_orig_id,
+                            f"{sec_orig_text}\n\n→ {reply}",
+                            remove_keyboard=True,
+                        )
+                    except Exception:
+                        await self._api.send_message(chat_id, reply)
+                else:
+                    await self._api.send_message(chat_id, reply)
             return
 
         await self._api.answer_callback_query(callback_query_id)
+        # Resolve button label from the original message's inline keyboard
+        orig_msg = cq.get("message") or {}
+        orig_msg_id = orig_msg.get("message_id", 0)
+        orig_text = orig_msg.get("text", "")
+        keyboard = (orig_msg.get("reply_markup") or {}).get("inline_keyboard", [])
+        btn_label = data
+        for row in keyboard:
+            for btn in row:
+                if btn.get("callback_data") == data:
+                    btn_label = btn.get("text", data)
+                    break
+        # Edit original message: append selection, remove keyboard
+        if orig_msg_id and orig_text:
+            try:
+                await self._api.edit_message(
+                    chat_id, orig_msg_id,
+                    f"{orig_text}\n\n→ {btn_label}",
+                    remove_keyboard=True,
+                )
+            except Exception:
+                pass
         fake_msg = {
-            "message_id": cq.get("message", {}).get("message_id", 0),
+            "message_id": orig_msg_id,
             "chat": {"id": chat_id},
             "from": from_user,
             "text": data,
