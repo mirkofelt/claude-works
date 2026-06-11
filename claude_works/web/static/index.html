@@ -859,6 +859,13 @@
 </main>
 
 <script>
+window.onerror = function(msg, src, line, col) {
+  var b = document.createElement('div');
+  b.style.cssText = 'position:fixed;top:0;left:0;right:0;padding:10px 16px;background:#f85149;color:#fff;font-size:13px;z-index:9999;font-family:monospace;white-space:pre-wrap';
+  b.textContent = 'UI error (line ' + line + '): ' + msg + '\nReload after update or contact admin.';
+  document.body && document.body.appendChild(b);
+};
+
 let TOKEN = localStorage.getItem('comms_token') || '';
 let activeTab = 'messages';
 let _chatHistoryLoaded = false;

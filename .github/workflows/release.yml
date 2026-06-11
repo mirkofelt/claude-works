@@ -32,6 +32,20 @@ jobs:
       - name: Run tests
         run: python -m pytest tests/ -v --tb=short
 
+      - name: Check JS syntax in index.html
+        run: |
+          node -e "
+            const fs = require('fs');
+            const html = fs.readFileSync('claude_works/web/static/index.html', 'utf8');
+            const m = html.match(/<script>([\s\S]*?)<\/script>/g);
+            if (!m) process.exit(0);
+            m.forEach((block, i) => {
+              const js = block.replace(/<\/?script>/g, '');
+              try { new Function(js); } catch(e) { console.error('JS block', i, 'error:', e.message); process.exit(1); }
+            });
+            console.log('JS syntax OK');
+          "
+
       - name: Get version tag
         id: version
         run: |
