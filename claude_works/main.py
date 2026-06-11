@@ -384,6 +384,7 @@ class Daemon:
         self._active_chat_content: dict[int, str] = {}
         self._pending_chat_queue: dict[int, list] = {}
         self._chat_task_start_times: dict[int, float] = {}
+        self._chat_exception_count: int = 0
         self._running = False
         self._mode_mgr = ModeManager()
         self._mechanic: MechanicAgent | None = None
@@ -737,10 +738,22 @@ class Daemon:
                 pass
 
     async def trigger_repair(self, error: str) -> None:
-        """Enter REPAIR mode and spawn MechanicAgent."""
+        """Enter REPAIR mode and spawn MechanicAgent. Notifies admins."""
         if self._mode_mgr.mode == DaemonMode.REPAIR:
             logger.warning("trigger_repair called while already in REPAIR mode — ignored")
             return
+        logger.error("Entering REPAIR mode: %s", error)
+        # Notify admins before stopping coordinator
+        cfg = config.section("users")
+        tg_cfg = config.section("telegram")
+        admin_ids = cfg.get("admin_ids", tg_cfg.get("admin_chat_ids", []))
+        if self._api and admin_ids:
+            msg = f"⚠️ REPAIR MODE\n\nGrund: {error[:300]}\n\nMechanic analysiert das Problem."
+            for admin_id in admin_ids:
+                try:
+                    await self._api.send_message(admin_id, msg)
+                except Exception:
+                    pass
         if self._coordinator:
             await self._coordinator.stop()
             self._coordinator = None
@@ -1907,13 +1920,19 @@ Rules:
             if task_id and self._board:
                 await self._board.fail(task_id, "timeout (300s)")
             await self._api.send_message(chat_id, "Timeout.")
-        except Exception:
+        except Exception as exc:
             if task_id and self._board:
                 try:
                     await self._board.fail(task_id, "exception in chat handler")
                 except Exception:
                     pass
             logger.exception("Chat handler error for chat=%d", chat_id)
+            self._chat_exception_count += 1
+            if self._chat_exception_count >= 3:
+                self._chat_exception_count = 0
+                asyncio.ensure_future(self.trigger_repair(f"Chat handler crashed 3x: {exc}"))
+        else:
+            self._chat_exception_count = 0
         finally:
             # Always clear typing + drain queue, even if task_id is None or _on_agent_result was skipped
             if task_id:
