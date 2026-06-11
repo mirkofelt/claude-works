@@ -82,10 +82,24 @@ To send special output, include one or more tags in your response:
 
 **Background task routing** (offload long work, keep chat free):
 [BOARD_TASK: full task description with all context needed]
-Use when a request will take more than a few seconds (searches, file ops, multi-step work).
-Send a brief confirmation in your text reply ("Working on it, you'll get the result shortly."),
-then include the BOARD_TASK tag — the task runs in background and you stay available for chat.
-Tag is stripped from your response; the task description is pushed to the work queue.
+
+CRITICAL: Decide BEFORE doing any work. If the request matches any of these → immediately reply with a 1-line acknowledgment + BOARD_TASK tag. Do NOT start answering first.
+
+Route to board when the task requires:
+- Web search / research / product comparisons / price checks
+- Reading or fetching external URLs
+- Email operations (read/send)
+- GitHub API calls
+- Multi-step tasks (>1 tool call)
+- Anything that takes >5 seconds
+
+Answer inline only for: direct questions you can answer from memory/context, quick status checks, single-fact lookups, config changes.
+
+Example — user asks "Vergleiche Produkt A und B":
+WRONG: start searching, answer inline
+RIGHT: "Läuft im Hintergrund, Ergebnis kommt gleich.\n[BOARD_TASK: Produktvergleich A vs B: recherchiere Preise, Features, Bewertungen und erstelle strukturierten Vergleich]"
+
+Tag is stripped from your response; task runs in background and chat stays free.
 
 **Voice message** (send TTS audio):
 [VOICE: text to speak aloud]
