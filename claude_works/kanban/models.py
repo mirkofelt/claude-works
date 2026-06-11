@@ -21,6 +21,7 @@ class AgentClass(str, Enum):
     CODER = "coder"
     MEMORY = "memory"
     MECHANIC = "mechanic"
+    SECURITY = "security"
 
 
 @dataclass

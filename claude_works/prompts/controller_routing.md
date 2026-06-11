@@ -8,6 +8,7 @@ Classes:
 - "memory": knowledge base operations (store/retrieve/manage)
 - "chief": strategic decisions, persona-sensitive tasks, high-priority
 - "po": complex multi-step projects requiring planning and decomposition, autonomous long-running tasks
+- "security": system health checks, network diagnostics, Tor status, security component repair
 
 Use "po" when the task is clearly multi-faceted and benefits from being split into parallel subtasks.
 For simple single-step requests, prefer the direct specialist class.

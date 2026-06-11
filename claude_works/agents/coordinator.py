@@ -17,6 +17,7 @@ from .specialist.generalist import GeneralistAgent
 from .specialist.researcher import ResearchAgent
 from .specialist.code_team import CodeTeam
 from .specialist.memory import MemoryAgent
+from .specialist.security import SecurityAgent
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,7 @@ _SPECIALIST_MAP = {
     AgentClass.RESEARCHER: ResearchAgent,
     AgentClass.CODER: CodeTeam,
     AgentClass.MEMORY: MemoryAgent,
+    AgentClass.SECURITY: SecurityAgent,
 }
 
 
@@ -108,7 +110,7 @@ class AgentCoordinator:
         self._tasks.append(asyncio.create_task(self._chief.run_loop(self._on_result), name="chief-loop"))
         self._tasks.append(asyncio.create_task(self._po.run_loop(self._on_result), name="po-loop"))
 
-        for agent_class in (AgentClass.GENERALIST, AgentClass.RESEARCHER, AgentClass.CODER, AgentClass.MEMORY):
+        for agent_class in (AgentClass.GENERALIST, AgentClass.RESEARCHER, AgentClass.CODER, AgentClass.MEMORY, AgentClass.SECURITY):
             self._tasks.append(asyncio.create_task(
                 self._specialist_loop(agent_class),
                 name=f"specialist-{agent_class.value}",

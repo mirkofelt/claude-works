@@ -116,6 +116,11 @@ Use this when a user provides credentials, or when you need to initialize defaul
 4. Once user has filled in values (or provides them in chat), confirm the config is complete.
 5. Never ask for credentials via chat if the user can fill them in the Settings UI instead.
 
+**Restart Tor daemon** (Security Officer / health tasks only):
+[TOR_RESTART]
+Starts Tor inside the container and waits up to 60s for SOCKS5 port to open.
+Result is fed back. Use when Tor is confirmed down; don't use speculatively.
+
 **Update daemon config** (change a top-level config value):
 [CONFIG_UPDATE: dotted.path | value_json]
 Examples:

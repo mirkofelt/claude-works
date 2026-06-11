@@ -25,7 +25,7 @@ from .telegram.reactions import resolve_action, extract_reaction_emoji
 from .tasks.models import IncomingMessage
 from .tasks.bundler import should_bundle, merge_content
 from .kanban.board import KanbanBoard
-from .kanban.models import KanbanTask
+from .kanban.models import AgentClass, KanbanTask
 from .telemetry.tokens import TokenTracker
 from .knowledge import store as knowledge_store
 from .agents.coordinator import AgentCoordinator
@@ -260,6 +260,50 @@ def _build_git_clone_cmd(repo_url: str, target: str) -> list[str]:
         return ["git", "-c", f"http.proxy={git_proxy}", "clone", "--depth=1", repo_url, target]
     return ["git", "clone", "--depth=1", repo_url, target]
 
+_TOR_RESTART_RE = re.compile(r'\[TOR_RESTART\]', re.IGNORECASE)
+
+
+def _extract_tor_restart_tag(text: str) -> "tuple[str, bool]":
+    """Remove [TOR_RESTART] from text. Returns (clean_text, found)."""
+    clean, n = _TOR_RESTART_RE.subn("", text)
+    return clean.strip(), n > 0
+
+
+async def _restart_tor() -> str:
+    """Start or restart Tor daemon inside container. Returns status string."""
+    try:
+        import os as _os
+        _os.makedirs("/var/lib/tor", exist_ok=True)
+        _os.makedirs("/run/tor", exist_ok=True)
+        proc = await asyncio.create_subprocess_exec(
+            "tor", "--RunAsDaemon", "1",
+            "--DataDirectory", "/var/lib/tor",
+            "--PidFile", "/run/tor/tor.pid",
+            "--Log", "warn stderr",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=10.0)
+        if proc.returncode != 0:
+            return f"tor start failed (exit {proc.returncode}): {stderr.decode(errors='replace')[:200]}"
+        # Wait for SOCKS port to open (max 60s)
+        for _ in range(60):
+            try:
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection("127.0.0.1", 9050), timeout=1.0
+                )
+                writer.close()
+                await writer.wait_closed()
+                return "Tor started successfully — SOCKS5 proxy ready on 127.0.0.1:9050"
+            except Exception:
+                await asyncio.sleep(1.0)
+        return "tor process started but port 9050 not ready after 60s — Tor may still be bootstrapping"
+    except asyncio.TimeoutError:
+        return "tor start timed out (10s)"
+    except Exception as e:
+        return f"tor restart error: {e}"
+
+
 _TASK_VERB_RE = re.compile(
     r'\b(schreib|erstell|generier|entwickel|implementier|analysier|recherchier|'
     r'migrier|repari|konvertier|deploy|extrahier|zusammenfass|berechne?|kalkulier|'
@@ -476,6 +520,7 @@ class Daemon:
 
         asyncio.create_task(self._config_watcher_loop(), name="config-watcher")
         asyncio.create_task(self._usage_poll_loop(), name="usage-poller")
+        asyncio.create_task(self._network_health_loop(admin_ids), name="network-health")
 
         self._running = True
         logger.info("claude-works daemon started in RUN mode")
@@ -1830,6 +1875,11 @@ class Daemon:
             except Exception as e:
                 tool_results.append(f"KB_SEARCH failed: {e}")
 
+        result, found_restart = _extract_tor_restart_tag(result)
+        if found_restart:
+            status = await _restart_tor()
+            tool_results.append(f"TOR_RESTART: {status}")
+
         return result, "\n\n".join(tool_results) if tool_results else None
 
     async def _do_git_clone(self, chat_id: int, repo_url: str, target: str) -> None:
@@ -1936,6 +1986,54 @@ class Daemon:
                     await self._notify_admins_usage(stats)
                 elif not stats.is_near_limit:
                     self._usage_near_limit_notified = False
+        except asyncio.CancelledError:
+            pass
+
+    _TOR_CHECK_INTERVAL = 60
+    _TOR_TASK_COOLDOWN = 300  # don't re-push health task if one was pushed within this window
+
+    async def _network_health_loop(self, admin_ids: list) -> None:
+        """Periodically check if Tor is reachable; push a SECURITY task when it's down."""
+        last_pushed: float = 0.0
+        await asyncio.sleep(15.0)  # brief startup grace period
+        try:
+            while self._running:
+                tor_ok = False
+                try:
+                    reader, writer = await asyncio.wait_for(
+                        asyncio.open_connection("127.0.0.1", 9050), timeout=3.0
+                    )
+                    writer.close()
+                    await writer.wait_closed()
+                    tor_ok = True
+                except Exception:
+                    pass
+
+                if not tor_ok:
+                    now = time.time()
+                    logger.warning("Network health: Tor SOCKS5 not reachable on 127.0.0.1:9050")
+                    if self._board and admin_ids and (now - last_pushed) > self._TOR_TASK_COOLDOWN:
+                        last_pushed = now
+                        health_task = KanbanTask(
+                            id=None,
+                            chat_id=admin_ids[0],
+                            user_id=admin_ids[0],
+                            content=(
+                                "## System Health Alert: Tor Not Reachable\n\n"
+                                "Tor SOCKS5 proxy on 127.0.0.1:9050 is not responding.\n"
+                                "Outbound traffic is unprotected until Tor is restored.\n\n"
+                                "Action required:\n"
+                                "1. Try restarting Tor with [TOR_RESTART]\n"
+                                "2. Check the result and confirm Tor is up\n"
+                                "3. Only notify the user if restart fails"
+                            ),
+                            agent_class=AgentClass.SECURITY,
+                            priority=10,
+                        )
+                        await self._board.push(health_task)
+                        logger.info("Pushed SECURITY task for Tor health failure")
+
+                await asyncio.sleep(self._TOR_CHECK_INTERVAL)
         except asyncio.CancelledError:
             pass
 
