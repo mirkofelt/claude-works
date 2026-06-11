@@ -232,7 +232,11 @@ class AgentCoordinator:
                         break
                     logger.info("Specialist %s task %d: tool results fed back, continuing", agent_class.value, task.id)
                     result = await asyncio.wait_for(
-                        agent.run(f"[Tool results]\n{tool_feedback}\n\nContinue with the task."),
+                        agent.run(
+                            f"[Tool results]\n{tool_feedback}\n\n"
+                            "Process the tool results above and continue with the task. "
+                            "Do NOT echo or repeat raw tool output — summarise in plain language only."
+                        ),
                         timeout=timeout,
                     )
             self._rate_limit_count = 0  # reset on success

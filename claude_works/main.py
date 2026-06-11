@@ -64,6 +64,16 @@ def _md_to_telegram_html(text: str) -> str:
     return "".join(result)
 
 
+_ECHOED_TOOL_RE = re.compile(
+    r"GitHub\s+(?:GET|POST|PUT|PATCH|DELETE)\s+[^\n]+:\n\s*[\[\{][\s\S]*?(?=\n[^\s\[\{]|\Z)",
+    re.MULTILINE,
+)
+
+def _strip_echoed_tool_results(text: str) -> str:
+    """Remove raw tool-result blocks the agent may have echoed into its reply."""
+    return _ECHOED_TOOL_RE.sub("[tool output stripped]", text).strip()
+
+
 def _extract_voice_tag(text: str) -> "tuple[str, str | None]":
     """Extract [VOICE: text] tag. Returns (clean_text, tts_text or None)."""
     m = re.search(r'\[VOICE:\s*([^\]]+)\]', text, re.DOTALL)
@@ -1438,6 +1448,9 @@ class Daemon:
                     await self._conn.commit()
                 except Exception:
                     pass
+
+            # Strip raw tool-result blocks the agent may have echoed back
+            clean_result = _strip_echoed_tool_results(clean_result)
 
             if clean_result.strip():
                 html_result = _md_to_telegram_html(clean_result)
