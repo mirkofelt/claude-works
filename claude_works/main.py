@@ -357,6 +357,12 @@ class Daemon:
         self._running = True
         logger.info("claude-works daemon started in RUN mode")
 
+        for admin_id in admin_ids:
+            try:
+                await self._api.send_message(admin_id, "✓ claude-works gestartet und einsatzbereit.")
+            except Exception as e:
+                logger.warning("Startup notification to admin %d failed: %s", admin_id, e)
+
     async def _reset_stale_tasks(self) -> None:
         """Reset tasks interrupted by previous crash/restart so they're retried cleanly."""
         from .kanban.models import Lane
