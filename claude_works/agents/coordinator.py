@@ -2,7 +2,7 @@ import asyncio
 import logging
 import time
 
-from ..config import section
+from ..config import section, get as _get_config
 from .. import db
 from ..knowledge import store as knowledge_store
 from ..kanban.board import KanbanBoard
@@ -219,6 +219,9 @@ class AgentCoordinator:
                 return
 
             content = await _inject_knowledge(task.content, task.user_id)
+            sys_mode = _get_config().get("system", {}).get("mode", "run")
+            if sys_mode != "run":
+                content = f"[SYSTEM MODE: {sys_mode.upper()}]\n\n{content}"
             result = await asyncio.wait_for(agent.run(content), timeout=timeout)
             # Tool loop — feed read-tool results back so agent can continue processing
             if self._exec_tools:

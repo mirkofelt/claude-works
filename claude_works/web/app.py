@@ -450,6 +450,27 @@ async def get_repair_report():
     return {"report": report}
 
 
+@app.get("/api/mode", dependencies=[Depends(_verify_token)])
+async def get_mode():
+    cfg = config.get()
+    mode = cfg.get("system", {}).get("mode", "run")
+    return {"mode": mode}
+
+
+@app.post("/api/mode", dependencies=[Depends(_verify_token)])
+async def set_mode(body: dict):
+    mode = str(body.get("mode", "run")).lower()
+    if mode not in ("run", "repair"):
+        raise HTTPException(status_code=400, detail="mode must be 'run' or 'repair'")
+    cfg = config.get()
+    cfg.setdefault("system", {})["mode"] = mode
+    conn = await db.init_config()
+    await _store_save_config(conn, cfg)
+    await conn.close()
+    config._settings = cfg
+    return {"mode": mode}
+
+
 @app.get("/api/messages", dependencies=[Depends(_verify_token)])
 async def get_messages(chat_id: int | None = None, limit: int = 50):
     conn = await _get_conn()

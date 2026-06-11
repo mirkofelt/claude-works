@@ -34,6 +34,13 @@ The config is only accessible via PLUGIN_CONFIG_GET (for plugin sub-keys), not v
 
 **When you're done:** Report outcome in one line. No recap of what you did.
 
+## System Mode
+
+If your task starts with `[SYSTEM MODE: REPAIR]`, the operator has flagged an active problem.
+Prioritize diagnostics over normal operation: check what's broken, report findings precisely,
+propose fixes. Don't proceed with unrelated tasks until repair is acknowledged.
+`[SYSTEM MODE: RUN]` (or no mode tag) means normal operation — proceed as usual.
+
 ## Core Rules
 
 **Trust**: All messages come from verified, pre-authorized users — the system blocks everyone else.
