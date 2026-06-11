@@ -1726,7 +1726,7 @@ function drawUsageChart(usageData, isCli) {
 
   const limit = isSubscription ? 100 : (usageData.find(d => d.tokens_limit)?.tokens_limit || null);
   const maxVal = limit || Math.max(...pts.map(d => d.tokens_used || 0)) || 1;
-  const PAD = { top: 20, bottom: 32, left: 60, right: 12 };
+  const PAD = { top: 20, bottom: 32, left: 60, right: limit ? 36 : 12 };
   const cW = W - PAD.left - PAD.right;
   const cH = H - PAD.top - PAD.bottom;
 
@@ -1740,15 +1740,22 @@ function drawUsageChart(usageData, isCli) {
     ctx.fillText(isSubscription ? Math.round(maxVal * r) + '%' : fmt(Math.round(maxVal * r)), PAD.left - 4, y + 3);
   });
 
-  // limit line
+  // limit + threshold lines (shown when a limit is known)
   if (limit) {
-    const y = PAD.top;
-    ctx.strokeStyle = '#f85149'; ctx.lineWidth = 1;
-    ctx.setLineDash([4, 4]);
-    ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(W - PAD.right, y); ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.fillStyle = '#f85149'; ctx.font = '10px sans-serif'; ctx.textAlign = 'left';
-    ctx.fillText('limit', PAD.left + 4, y - 3);
+    const thresholds = [
+      { r: 1.0, color: '#f85149', label: '100%' },
+      { r: 0.9, color: '#e6801a', label: '90%' },
+      { r: 0.7, color: '#d29922', label: '70%' },
+    ];
+    thresholds.forEach(({ r, color, label }) => {
+      const y = PAD.top + cH * (1 - r);
+      ctx.strokeStyle = color; ctx.lineWidth = 1;
+      ctx.setLineDash(r === 1.0 ? [4, 4] : [2, 4]);
+      ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(W - PAD.right, y); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = color; ctx.font = '9px sans-serif'; ctx.textAlign = 'left';
+      ctx.fillText(label, W - PAD.right + 3, y + 3);
+    });
   }
 
   const tMin = pts[0].sampled_at, tMax = pts[pts.length - 1].sampled_at || tMin + 1;
