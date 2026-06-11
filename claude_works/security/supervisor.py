@@ -96,7 +96,7 @@ class SecuritySupervisor:
 
     @property
     def enabled(self) -> bool:
-        return section("security").get("enabled", False)
+        return section("security").get("enabled", True)
 
     @staticmethod
     def _extract_specific(action_type: str, content: str) -> "tuple[str, str] | None":
