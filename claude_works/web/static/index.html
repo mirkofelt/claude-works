@@ -579,6 +579,8 @@
       <div style="flex:1"></div>
       <div id="modeIndicator" style="padding:6px 14px;display:flex;align-items:center;font-size:11px;letter-spacing:.8px;border-left:1px solid #1c2128"></div>
     </div>
+    <!-- quick commands bar -->
+    <div id="uplinkCmds" style="background:#0a0e13;border-bottom:1px solid #1c2128;padding:5px 14px;display:flex;gap:6px;flex-wrap:wrap;flex-shrink:0;min-height:32px"></div>
     <!-- scrollback -->
     <div id="chatHistory" style="flex:1;overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:2px;background:#0a0e13">
       <div id="chatPlaceholder" style="color:#3d444d;font-size:12px;font-family:inherit">-- session start --</div>
@@ -588,7 +590,7 @@
       <span id="termPrompt" style="color:#3fb950;font-size:13px;white-space:nowrap;padding-right:6px">operator@uplink:~$</span>
       <input id="chatInput" type="text" autocomplete="off" spellcheck="false"
         style="flex:1;background:transparent;border:none;outline:none;color:#e6edf3;font-family:inherit;font-size:13px;caret-color:#3fb950"
-        onkeydown="if(event.key==='Enter'){event.preventDefault();sendAdminChat()}"
+        onkeydown="handleUplinkKey(event)"
         placeholder="">
     </div>
   </div>
@@ -791,13 +793,74 @@ const CLASS_COLORS = {
 };
 
 let _uplinkMode = 'run';
+let _uplinkHistory = [];
+let _uplinkHistoryIdx = -1;
+
+const _UPLINK_DEFAULT_CMDS = [
+  { label: 'status',       text: 'Give me a full system status: agents, queue, Tor, errors.' },
+  { label: 'tor?',         text: 'Check Tor status and confirm network is healthy.' },
+  { label: 'queue',        text: 'Show current task queue — what is pending, in progress, or stuck?' },
+  { label: 'diagnose',     text: 'Diagnose the system. What is broken or behaving unexpectedly?' },
+  { label: 'clear errors', text: 'List and clear all failed tasks from the queue.' },
+];
 
 async function loadUplink() {
   const d = await api('/api/mode');
   if (d) { _uplinkMode = d.mode || 'run'; }
   _renderModeBar();
+  await _renderCmdBar();
   loadAdminChatHistory();
   if (_uplinkMode === 'repair') _loadRepairInfo();
+}
+
+async function _renderCmdBar() {
+  const bar = document.getElementById('uplinkCmds');
+  if (!bar) return;
+  const cfg = await api('/api/config');
+  const cmds = cfg?.config?.system?.uplink_commands || _UPLINK_DEFAULT_CMDS;
+  bar.innerHTML = cmds.map((c, i) =>
+    `<button onclick="_uplinkFill(${i})" style="` +
+    `padding:2px 9px;font-family:inherit;font-size:11px;letter-spacing:.5px;` +
+    `background:transparent;border:1px solid #1c2128;color:#3d444d;border-radius:2px;` +
+    `cursor:pointer;transition:color .1s,border-color .1s;white-space:nowrap` +
+    `" onmouseover="this.style.color='#58a6ff';this.style.borderColor='#58a6ff'" ` +
+    `onmouseout="this.style.color='#3d444d';this.style.borderColor='#1c2128'"` +
+    `>${esc(c.label)}</button>`
+  ).join('');
+  bar._cmds = cmds;
+}
+
+function _uplinkFill(idx) {
+  const bar = document.getElementById('uplinkCmds');
+  const cmds = bar?._cmds || _UPLINK_DEFAULT_CMDS;
+  const input = document.getElementById('chatInput');
+  if (!input || !cmds[idx]) return;
+  input.value = cmds[idx].text;
+  input.focus();
+}
+
+function handleUplinkKey(e) {
+  const input = document.getElementById('chatInput');
+  if (e.key === 'Enter') { e.preventDefault(); sendAdminChat(); return; }
+  if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (_uplinkHistory.length === 0) return;
+    if (_uplinkHistoryIdx === -1) _uplinkHistoryIdx = _uplinkHistory.length - 1;
+    else if (_uplinkHistoryIdx > 0) _uplinkHistoryIdx--;
+    input.value = _uplinkHistory[_uplinkHistoryIdx];
+    setTimeout(() => input.setSelectionRange(input.value.length, input.value.length), 0);
+  }
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    if (_uplinkHistoryIdx === -1) return;
+    if (_uplinkHistoryIdx < _uplinkHistory.length - 1) {
+      _uplinkHistoryIdx++;
+      input.value = _uplinkHistory[_uplinkHistoryIdx];
+    } else {
+      _uplinkHistoryIdx = -1;
+      input.value = '';
+    }
+  }
 }
 
 function _renderModeBar() {
@@ -1383,6 +1446,10 @@ async function sendAdminChat() {
 
   const placeholder = document.getElementById('chatPlaceholder');
   if (placeholder) placeholder.remove();
+
+  _uplinkHistory.push(text);
+  if (_uplinkHistory.length > 50) _uplinkHistory.shift();
+  _uplinkHistoryIdx = -1;
 
   input.value = '';
   input.disabled = true;
