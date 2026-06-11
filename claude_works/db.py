@@ -264,6 +264,7 @@ CREATE TABLE IF NOT EXISTS security_allowlist (
 """
 
 _MIGRATIONS = [
+    "ALTER TABLE users ADD COLUMN persona TEXT",
     "ALTER TABLE token_usage ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0",
     "ALTER TABLE usage_snapshots ADD COLUMN usage_pct REAL",
     "ALTER TABLE usage_snapshots ADD COLUMN session_pct REAL",

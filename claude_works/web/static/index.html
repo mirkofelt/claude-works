@@ -436,9 +436,9 @@
   <div class="card">
     <table>
       <thead><tr>
-        <th>#</th><th>Telegram ID</th><th>Name</th><th>Role</th><th>Last Seen</th><th></th>
+        <th>#</th><th>Telegram ID</th><th>Name</th><th>Role</th><th>Last Seen</th><th>Persona</th><th></th>
       </tr></thead>
-      <tbody id="userBody"><tr><td colspan="6" class="empty">Loading…</td></tr></tbody>
+      <tbody id="userBody"><tr><td colspan="7" class="empty">Loading…</td></tr></tbody>
     </table>
   </div>
 </div>
@@ -1264,6 +1264,9 @@ async function loadUsers() {
       </td>
       <td style="color:var(--muted);font-size:12px">${ts(u.last_seen)}</td>
       <td>
+        <span id="upersona-${u.telegram_id}" ondblclick="editUserPersona(${u.telegram_id},'${esc(u.persona||'')}')" style="cursor:pointer;font-size:11px;color:var(--muted)" title="Double-click to edit persona">${esc(u.persona||'–')}</span>
+      </td>
+      <td>
         <button class="btn btn-ghost" style="padding:.15rem .4rem;font-size:.75rem;color:#ef4444" onclick="deleteUser(${u.telegram_id},'${esc(u.name||String(u.telegram_id))}')">✕</button>
       </td>
     </tr>`).join('');
@@ -1307,6 +1310,14 @@ async function editUserName(telegramId, currentName) {
   await api('/api/users/' + telegramId, { method: 'PUT', body: JSON.stringify({ name: newName }) });
   const el = document.getElementById('uname-' + telegramId);
   if (el) el.textContent = newName || '–';
+}
+
+async function editUserPersona(telegramId, currentPersona) {
+  const newPersona = prompt('Persona for this user (leave empty for default):', currentPersona);
+  if (newPersona === null) return;
+  await api('/api/users/' + telegramId, { method: 'PUT', body: JSON.stringify({ persona: newPersona }) });
+  const el = document.getElementById('upersona-' + telegramId);
+  if (el) el.textContent = newPersona || '–';
 }
 
 async function loadApprovals() {

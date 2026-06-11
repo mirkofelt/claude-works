@@ -685,6 +685,17 @@ async def update_user(telegram_id: int, body: dict):
             await conn.close()
             raise HTTPException(status_code=400, detail="Invalid role")
         await set_role(conn, telegram_id, role)
+    if "persona" in body:
+        persona = body["persona"] or None
+        await conn.execute("UPDATE users SET persona = ? WHERE telegram_id = ?", (persona, telegram_id))
+        await conn.commit()
+        if _daemon_ref:
+            if persona:
+                _daemon_ref._user_personas[telegram_id] = persona
+            else:
+                _daemon_ref._user_personas.pop(telegram_id, None)
+            # Invalidate cached chat agent so new persona takes effect
+            _daemon_ref._chat_agents.pop(telegram_id, None)
     await conn.close()
     return {"ok": True}
 

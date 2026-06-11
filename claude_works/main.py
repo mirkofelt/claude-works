@@ -393,6 +393,7 @@ class Daemon:
         self._usage_near_limit_notified = False
         self._stop_called = False
         self._user_backgrounds: dict[int, str] = {}
+        self._user_personas: dict[int, str] = {}
         self._pending_direct_fetches: dict[str, dict] = {}
         self._pending_reauth: dict[int, asyncio.subprocess.Process] = {}  # chat_id → proc
         self._chat_agents: dict[int, GeneralistAgent] = {}  # chat_id → persistent chat agent
@@ -907,6 +908,9 @@ Rules:
                 background = ""
             if background:
                 self._user_backgrounds[telegram_id] = background
+
+        if user.get("persona"):
+            self._user_personas[telegram_id] = user["persona"]
 
         if not await is_allowed(self._conn, telegram_id):
             if user["role"] == "blocked":
@@ -1827,8 +1831,9 @@ Rules:
         try:
             agent = self._chat_agents.get(chat_id)
             if agent is None:
-                persona = ""
-                if self._coordinator and self._coordinator._chief:
+                # Per-user persona overrides global chief persona
+                persona = self._user_personas.get(user_id, "")
+                if not persona and self._coordinator and self._coordinator._chief:
                     persona = self._coordinator._chief.persona
                 provider = self._coordinator._get_provider() if self._coordinator else None
                 agent = GeneralistAgent(
