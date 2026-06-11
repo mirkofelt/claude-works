@@ -497,12 +497,22 @@
   <div class="toolbar">
     <button class="btn btn-ghost" onclick="loadApprovals()">Refresh</button>
   </div>
-  <div class="card">
+  <div class="card" style="margin-bottom:16px">
+    <div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:10px">Pending</div>
     <table>
       <thead><tr>
         <th>#</th><th>Triggers</th><th>User</th><th>Age</th><th>Preview</th><th>Actions</th>
       </tr></thead>
       <tbody id="approvalBody"><tr><td colspan="6" class="empty">No pending approvals</td></tr></tbody>
+    </table>
+  </div>
+  <div class="card">
+    <div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:10px">History</div>
+    <table>
+      <thead><tr>
+        <th>Time</th><th>Decision</th><th>Triggers</th><th>Preview</th>
+      </tr></thead>
+      <tbody id="approvalHistoryBody"><tr><td colspan="4" class="empty">No history</td></tr></tbody>
     </table>
   </div>
 </div>
@@ -1300,10 +1310,10 @@ async function editUserName(telegramId, currentName) {
 }
 
 async function loadApprovals() {
-  const rows = await api('/api/approvals');
+  const [rows, hist] = await Promise.all([api('/api/approvals'), api('/api/approvals/history')]);
   const b = document.getElementById('approvalBody');
-  if (!rows?.length) { b.innerHTML = '<tr><td colspan="6" class="empty">No pending approvals</td></tr>'; return; }
-  b.innerHTML = rows.map(a => `
+  if (!rows?.length) { b.innerHTML = '<tr><td colspan="6" class="empty">No pending approvals</td></tr>'; }
+  else b.innerHTML = rows.map(a => `
     <tr>
       <td class="mono">${a.id}</td>
       <td>${a.action_types.map(t => `<span class="badge b-security">${esc(t)}</span>`).join(' ')}</td>
@@ -1315,6 +1325,19 @@ async function loadApprovals() {
         <button class="btn btn-deny" onclick="decideApproval(${a.id},'deny')">Deny</button>
       </td>
     </tr>`).join('');
+  const hb = document.getElementById('approvalHistoryBody');
+  if (!hist?.length) { hb.innerHTML = '<tr><td colspan="4" class="empty">No history yet</td></tr>'; return; }
+  const DCOLOR = { approved: 'var(--green)', denied: 'var(--red)', timeout: 'var(--muted)' };
+  hb.innerHTML = hist.map(h => {
+    const dt = new Date(h.decided_at * 1000).toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+    const color = DCOLOR[h.decision] || 'var(--muted)';
+    return `<tr>
+      <td style="color:var(--muted);font-size:12px;white-space:nowrap">${dt}</td>
+      <td><span style="color:${color};font-weight:600">${h.decision}</span></td>
+      <td>${(h.action_types||[]).map(t=>`<span class="badge b-security">${esc(t)}</span>`).join(' ')}</td>
+      <td><span class="trunc" title="${esc(h.content_preview||'')}">${esc(h.content_preview||'')}</span></td>
+    </tr>`;
+  }).join('');
 }
 
 async function decideApproval(id, action) {

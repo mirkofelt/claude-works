@@ -43,10 +43,12 @@ class SecuritySupervisor:
         self._provider: Any = None
         self._always_allowed_actions: set[str] = set()
         self._skip_all: bool = False
+        self._log_fn: Any = None
 
-    def configure(self, notify_fn: Any, admin_ids: list[int]) -> None:
+    def configure(self, notify_fn: Any, admin_ids: list[int], log_fn: Any = None) -> None:
         self._notify_fn = notify_fn
         self._admin_ids = admin_ids
+        self._log_fn = log_fn
         cfg = section("security")
         self._rules = build_rules(cfg.get("rules"))
         self._always_allowed_actions = set(cfg.get("always_allow_actions", []))
@@ -257,10 +259,26 @@ class SecuritySupervisor:
 
         self._pending.pop(approval_id, None)
 
+        decision = "approved" if approval.approved else ("timeout" if approval.decided_by is None else "denied")
         if approval.approved:
             logger.info("Approval id=%d approved by=%s", approval_id, approval.decided_by)
         else:
-            logger.warning("Approval id=%d denied by=%s", approval_id, approval.decided_by)
+            logger.warning("Approval id=%d %s by=%s", approval_id, decision, approval.decided_by)
+
+        if self._log_fn:
+            try:
+                asyncio.ensure_future(self._log_fn(
+                    action_types=approval.action_types,
+                    content_preview=approval.content[:300],
+                    task_id=approval.task_id,
+                    chat_id=approval.chat_id,
+                    decision=decision,
+                    decided_by=approval.decided_by,
+                    requested_at=int(approval.requested_at),
+                    decided_at=int(time.time()),
+                ))
+            except Exception as e:
+                logger.warning("Failed to log approval: %s", e)
 
         return approval.approved
 

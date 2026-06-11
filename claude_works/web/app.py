@@ -708,6 +708,33 @@ async def get_approvals():
     return []
 
 
+@app.get("/api/approvals/history", dependencies=[Depends(_verify_token)])
+async def get_approval_history(limit: int = 100):
+    import json as _json_ah
+    conn = await db.init()
+    async with conn.execute(
+        "SELECT id, action_types, content_preview, task_id, chat_id, decision, decided_by, requested_at, decided_at"
+        " FROM approval_log ORDER BY decided_at DESC LIMIT ?",
+        (min(limit, 500),),
+    ) as cur:
+        rows = await cur.fetchall()
+    await conn.close()
+    return [
+        {
+            "id": r["id"],
+            "action_types": _json_ah.loads(r["action_types"]) if r["action_types"] else [],
+            "content_preview": r["content_preview"],
+            "task_id": r["task_id"],
+            "chat_id": r["chat_id"],
+            "decision": r["decision"],
+            "decided_by": r["decided_by"],
+            "requested_at": r["requested_at"],
+            "decided_at": r["decided_at"],
+        }
+        for r in rows
+    ]
+
+
 @app.post("/api/approvals/{approval_id}/approve", dependencies=[Depends(_verify_token)])
 async def approve_action(approval_id: int):
     if not _daemon_ref:

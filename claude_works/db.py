@@ -230,6 +230,19 @@ CREATE TABLE IF NOT EXISTS task_logs (
     msg TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_task_logs_task ON task_logs(task_id, ts);
+
+CREATE TABLE IF NOT EXISTS approval_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    action_types TEXT NOT NULL,
+    content_preview TEXT,
+    task_id INTEGER,
+    chat_id INTEGER,
+    decision TEXT NOT NULL,
+    decided_by INTEGER,
+    requested_at INTEGER NOT NULL,
+    decided_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_approval_log_time ON approval_log(decided_at DESC);
 """
 
 CONFIG_TABLES = """

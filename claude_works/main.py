@@ -539,7 +539,7 @@ class Daemon:
         llm_cfg = config.section("llm")
         if llm_cfg.get("provider") == "cli":
             asyncio.create_task(self._check_cli_auth_on_startup(admin_ids), name="startup-auth-check")
-        self._security.configure(self._api.send_message, admin_ids)
+        self._security.configure(self._api.send_message, admin_ids, log_fn=self._log_approval)
 
         asyncio.create_task(self._config_watcher_loop(), name="config-watcher")
         asyncio.create_task(self._usage_poll_loop(), name="usage-poller")
@@ -2060,6 +2060,19 @@ Rules:
                 admin_id,
                 f"New user requesting access: {name or 'unknown'} (ID: {telegram_id})\n/auth {telegram_id}",
             )
+
+    async def _log_approval(self, *, action_types, content_preview, task_id, chat_id, decision, decided_by, requested_at, decided_at) -> None:
+        import json as _json_al
+        try:
+            await self._conn.execute(
+                """INSERT INTO approval_log
+                   (action_types, content_preview, task_id, chat_id, decision, decided_by, requested_at, decided_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (_json_al.dumps(action_types), content_preview, task_id, chat_id, decision, decided_by, requested_at, decided_at),
+            )
+            await self._conn.commit()
+        except Exception as e:
+            logger.warning("approval_log write failed: %s", e)
 
     def _flush_chat_queue(self, chat_id: int) -> None:
         """Spawn next queued chat message, if any."""
