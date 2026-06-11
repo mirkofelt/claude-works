@@ -315,6 +315,7 @@ class Daemon:
         self._bot_username: str = ""  # loaded at startup via getMe
         self._mention_only_chats: set[int] = set()  # chat_ids where bot only responds to @mention
         self._pending_reactions: dict[int, tuple[int, int]] = {}  # kanban task_id → (chat_id, tg_msg_id)
+        self._pending_initial_msgs: dict[int, int] = {}  # kanban task_id → preliminary tg_msg_id
 
     # ──────────────────────────────────────────────────────────
     # Lifecycle
@@ -921,6 +922,15 @@ class Daemon:
                 await self._conn.commit()
             except Exception:
                 pass
+            # Send initial "in progress" message so something visible appears immediately
+            try:
+                preview = content[:120] + ("…" if len(content) > 120 else "")
+                init_sent = await self._api.send_message(
+                    chat_id, f"✎ Working on: {preview}"
+                )
+                self._pending_initial_msgs[task_id] = init_sent["message_id"]
+            except Exception:
+                pass
         else:
             asyncio.create_task(
                 self._handle_chat(chat_id, telegram_id, content),
@@ -1300,16 +1310,34 @@ class Daemon:
                 all_plugin_config_sets.append(v)
 
             reply_markup = {"inline_keyboard": keyboard} if keyboard is not None else None
+            initial_msg_id = self._pending_initial_msgs.pop(task.id, None) if task.id else None
 
             if clean_result.strip():
                 html_result = _md_to_telegram_html(clean_result)
-                try:
-                    sent = await self._api.send_message(task.chat_id, html_result, parse_mode="HTML", reply_markup=reply_markup)
-                except Exception:
-                    logger.warning("HTML send failed for task=%d, retrying plain", task.id)
-                    sent = await self._api.send_message(task.chat_id, clean_result, reply_markup=reply_markup)
+                if initial_msg_id:
+                    # Edit the "in progress" placeholder with the actual result
+                    try:
+                        await self._api.edit_message(task.chat_id, initial_msg_id, html_result, parse_mode="HTML", reply_markup=reply_markup)
+                        sent = {"message_id": initial_msg_id}
+                    except Exception:
+                        # Edit failed (e.g. message too old) — fall back to new message
+                        try:
+                            sent = await self._api.send_message(task.chat_id, html_result, parse_mode="HTML", reply_markup=reply_markup)
+                        except Exception:
+                            sent = await self._api.send_message(task.chat_id, clean_result, reply_markup=reply_markup)
+                else:
+                    try:
+                        sent = await self._api.send_message(task.chat_id, html_result, parse_mode="HTML", reply_markup=reply_markup)
+                    except Exception:
+                        logger.warning("HTML send failed for task=%d, retrying plain", task.id)
+                        sent = await self._api.send_message(task.chat_id, clean_result, reply_markup=reply_markup)
             else:
-                sent = {"message_id": 0}
+                if initial_msg_id:
+                    try:
+                        await self._api.edit_message(task.chat_id, initial_msg_id, "✓")
+                    except Exception:
+                        pass
+                sent = {"message_id": initial_msg_id or 0}
 
             for tts_text in all_tts:
                 tts_allowed = await self._security.check_action(
@@ -1521,11 +1549,21 @@ class Daemon:
                 proto = KanbanTask(id=None, chat_id=chat_id, user_id=user_id, content=content)
                 task_id = await self._board.push_active(proto, agent_id="chat")
             result = await asyncio.wait_for(agent.run(content), timeout=300.0)
+            preliminary_msg_id: int | None = None
             for _ in range(5):
                 clean, tool_feedback = await self._exec_tool_tags(result)
                 if not tool_feedback:
                     result = clean
                     break
+                # Send preliminary text while tool loop continues
+                if preliminary_msg_id is None and clean.strip():
+                    try:
+                        init = await self._api.send_message(chat_id, clean + "\n\n✎ _working..._")
+                        preliminary_msg_id = init["message_id"]
+                        if task_id:
+                            self._pending_initial_msgs[task_id] = preliminary_msg_id
+                    except Exception:
+                        pass
                 logger.info("Chat %d: tool results fed back, continuing", chat_id)
                 result = await asyncio.wait_for(
                     agent.run(f"[Tool results]\n{tool_feedback}\n\nContinue with the task."),
