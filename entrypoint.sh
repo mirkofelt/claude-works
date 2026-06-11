@@ -33,6 +33,7 @@ fi
 # Start Tor daemon in background (provides SOCKS5 proxy at 127.0.0.1:9050)
 if command -v tor >/dev/null 2>&1; then
     mkdir -p /var/lib/tor /run/tor
+    chown -R root:root /var/lib/tor /run/tor
     tor --RunAsDaemon 1 \
         --DataDirectory /var/lib/tor \
         --PidFile /run/tor/tor.pid \
