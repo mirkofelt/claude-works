@@ -1553,16 +1553,22 @@ async function confirmRuntimeCliAuth() {
   const code = document.getElementById('s_cli_auth_code').value.trim();
   const statusEl = document.getElementById('s_cli_auth_status');
   if (!code) return;
-  const d = await api('/api/cli-auth/confirm', { method: 'POST', body: JSON.stringify({ code }) });
-  statusEl.style.display = 'block';
-  if (d && d.ok) {
-    statusEl.textContent = '✓ Authenticated successfully.';
-    statusEl.style.background = 'var(--green)20'; statusEl.style.color = 'var(--green)';
-    document.getElementById('s_cli_code_field').style.display = 'none';
-    document.getElementById('s_cli_auth_url_box').style.display = 'none';
-  } else {
-    statusEl.textContent = 'Auth failed — check logs.';
-    statusEl.style.background = 'var(--red)20'; statusEl.style.color = 'var(--red)';
+  statusEl.style.display = 'block'; statusEl.textContent = 'Confirming…'; statusEl.style.color = 'var(--muted)'; statusEl.style.background = 'transparent';
+  try {
+    const r = await fetch('/api/cli-auth/confirm', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) });
+    const body = await r.json().catch(() => ({}));
+    if (r.ok && body.ok) {
+      statusEl.textContent = '✓ Authenticated.';
+      statusEl.style.color = 'var(--green)'; statusEl.style.background = '#1c3a2520';
+      document.getElementById('s_cli_code_field').style.display = 'none';
+      document.getElementById('s_cli_auth_url_box').style.display = 'none';
+    } else {
+      statusEl.textContent = body.detail || `Auth failed (HTTP ${r.status})`;
+      statusEl.style.color = 'var(--red)'; statusEl.style.background = '#3a1c1c20';
+    }
+  } catch (e) {
+    statusEl.textContent = 'Network error: ' + e;
+    statusEl.style.color = 'var(--red)';
   }
 }
 
