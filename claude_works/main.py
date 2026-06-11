@@ -370,6 +370,7 @@ class Daemon:
         self._security: SecuritySupervisor = SecuritySupervisor()
         self._pending_messages: dict[int, IncomingMessage] = {}
         self._typing_tasks: dict[int, asyncio.Task] = {}
+        self._chat_task_ids: set[int] = set()
         self._running = False
         self._mode_mgr = ModeManager()
         self._mechanic: MechanicAgent | None = None
@@ -1066,7 +1067,6 @@ Rules:
                 priority=1 if content.startswith("!") else 0,
             )
             task_id = await self._board.push(task)
-            self._start_typing(chat_id)
             try:
                 await self._api.set_message_reaction(chat_id, incoming.telegram_message_id, "⏳")
                 self._pending_reactions[task_id] = (chat_id, incoming.telegram_message_id)
@@ -1094,7 +1094,7 @@ Rules:
                 pass
         else:
             if chat_id in self._typing_tasks:
-                # Board task or chat task already in progress — don't spawn concurrent LLM call
+                # Chat agent already active for this chat — don't spawn concurrent chat call
                 await self._api.send_message(chat_id, "⏳ Bin noch dabei — gleich fertig.")
             else:
                 asyncio.create_task(
@@ -1432,7 +1432,9 @@ Rules:
         )
 
     async def _on_agent_result(self, task: KanbanTask, result: str | None, error: str | None = None) -> None:
-        self._stop_typing(task.chat_id)
+        if task.id in self._chat_task_ids:
+            self._chat_task_ids.discard(task.id)
+            self._stop_typing(task.chat_id)
         reaction_info = self._pending_reactions.pop(task.id, None) if task.id else None
         if reaction_info:
             try:
@@ -1735,7 +1737,9 @@ Rules:
                 await self._api.send_message(task.chat_id, err_text)
 
     async def _on_task_requeued(self, task: KanbanTask) -> None:
-        self._stop_typing(task.chat_id)
+        if task.id in self._chat_task_ids:
+            self._chat_task_ids.discard(task.id)
+            self._stop_typing(task.chat_id)
 
     async def _load_mention_only_chats(self) -> None:
         try:
@@ -1810,6 +1814,8 @@ Rules:
             if self._board:
                 proto = KanbanTask(id=None, chat_id=chat_id, user_id=user_id, content=content)
                 task_id = await self._board.push_active(proto, agent_id="chat")
+                if task_id:
+                    self._chat_task_ids.add(task_id)
             result = await asyncio.wait_for(agent.run(content), timeout=300.0)
             preliminary_msg_id: int | None = None
             for _ in range(5):
