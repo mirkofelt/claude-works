@@ -1897,18 +1897,22 @@ Rules:
             real_task = KanbanTask(id=task_id, chat_id=chat_id, user_id=user_id, content=content)
             await self._on_agent_result(real_task, result, None)
         except asyncio.TimeoutError:
-            self._stop_typing(chat_id)
             if task_id and self._board:
                 await self._board.fail(task_id, "timeout (300s)")
             await self._api.send_message(chat_id, "Timeout.")
         except Exception:
-            self._stop_typing(chat_id)
             if task_id and self._board:
                 try:
                     await self._board.fail(task_id, "exception in chat handler")
                 except Exception:
                     pass
             logger.exception("Chat handler error for chat=%d", chat_id)
+        finally:
+            # Always clear typing + drain queue, even if task_id is None or _on_agent_result was skipped
+            if task_id:
+                self._chat_task_ids.discard(task_id)
+            self._stop_typing(chat_id)
+            self._flush_chat_queue(chat_id)
 
     async def _exec_tool_tags(self, result: str) -> "tuple[str, str | None]":
         """Execute read-only tool tags in result, return (cleaned_result, tool_output_or_None).
