@@ -22,6 +22,14 @@ if [ -f "$DATA_DIR/init.sh" ]; then
     echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] done init.sh" >> "$INIT_LOG"
 fi
 
+# Symlink /root/.claude → /data/.claude so claude CLI auth persists across restarts
+# claude CLI stores credentials at ~/.claude; /data is the persistent volume
+mkdir -p "$DATA_DIR/.claude"
+if [ ! -L /root/.claude ]; then
+    rm -rf /root/.claude
+    ln -s "$DATA_DIR/.claude" /root/.claude
+fi
+
 # Start Tor daemon in background (provides SOCKS5 proxy at 127.0.0.1:9050)
 # --User root required because container runs as root
 if command -v tor >/dev/null 2>&1; then
