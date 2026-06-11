@@ -772,8 +772,12 @@ const CLASS_COLORS = {
 };
 
 async function api(path, opts = {}) {
+  const o = { ...opts };
+  if (o.body !== undefined && typeof o.body === 'object' && o.body !== null) {
+    o.body = JSON.stringify(o.body);
+  }
   const r = await fetch(path, {
-    ...opts,
+    ...o,
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) }
   });
