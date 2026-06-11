@@ -200,6 +200,21 @@ def _extract_kb_update_tag(text: str) -> "tuple[str, tuple | None]":
     return clean, (entry_id, title, entry_type, tags, content)
 
 
+_CONFIG_UPDATE_BLOCKED = {"telegram.token", "web.auth_token", "llm.api_key"}
+
+
+def _extract_config_update_tag(text: str) -> "tuple[str, tuple[str, str] | None]":
+    """Extract [CONFIG_UPDATE: dotted.path | value_json]. Returns (clean_text, (path, value_json) or None)."""
+    m = re.search(r'\[CONFIG_UPDATE:\s*([^\]]+)\]', text, re.DOTALL)
+    if not m:
+        return text, None
+    clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
+    parts = [p.strip() for p in m.group(1).split('|', 1)]
+    if len(parts) < 2:
+        return text, None
+    return clean, (parts[0], parts[1])
+
+
 def _extract_plugin_config_get_tag(text: str) -> "tuple[str, str | None]":
     """Extract [PLUGIN_CONFIG_GET: plugin_name]. Returns (clean_text, plugin_name or None)."""
     m = re.search(r'\[PLUGIN_CONFIG_GET:\s*([^\]]+)\]', text)
@@ -237,11 +252,13 @@ _TOR_SOCKS_DEFAULT = "socks5://127.0.0.1:9050"
 
 
 def _build_git_clone_cmd(repo_url: str, target: str) -> list[str]:
-    """Build git clone command routed through Tor (socks5h = DNS resolved by proxy)."""
-    tor_proxy = config.section("security").get("tor_socks_proxy", _TOR_SOCKS_DEFAULT)
-    # git needs socks5h:// so DNS resolves through Tor, not locally
-    git_proxy = tor_proxy.replace("socks5://", "socks5h://")
-    return ["git", "-c", f"http.proxy={git_proxy}", "clone", "--depth=1", repo_url, target]
+    """Build git clone command, optionally routed through Tor if tor_socks_proxy is configured."""
+    tor_proxy = config.section("security").get("tor_socks_proxy", "")
+    if tor_proxy:
+        # socks5h:// resolves DNS through proxy, not locally
+        git_proxy = tor_proxy.replace("socks5://", "socks5h://")
+        return ["git", "-c", f"http.proxy={git_proxy}", "clone", "--depth=1", repo_url, target]
+    return ["git", "clone", "--depth=1", repo_url, target]
 
 _TASK_VERB_RE = re.compile(
     r'\b(schreib|erstell|generier|entwickel|implementier|analysier|recherchier|'
@@ -871,7 +888,7 @@ class Daemon:
 
         urls = _URL_RE.findall(content)
         if urls:
-            tor_proxy = config.section("security").get("tor_socks_proxy", _TOR_SOCKS_DEFAULT)
+            tor_proxy = config.section("security").get("tor_socks_proxy", "") or None
             fetched_sections: list[str] = []
             urls_blocked: list[str] = []
             for url in urls[:_MAX_FETCH_URLS]:
@@ -1362,6 +1379,12 @@ class Daemon:
                 if not v: break
                 all_plugin_config_sets.append(v)
 
+            all_config_updates: list[tuple] = []
+            while True:
+                clean_result, v = _extract_config_update_tag(clean_result)
+                if not v: break
+                all_config_updates.append(v)
+
             reply_markup = {"inline_keyboard": keyboard} if keyboard is not None else None
             initial_msg_id = self._pending_initial_msgs.pop(task.id, None) if task.id else None
             if initial_msg_id and task.id:
@@ -1504,6 +1527,35 @@ class Daemon:
                         logger.warning("KB_UPDATE: entry %d not found for task=%d", entry_id, task.id)
                 except Exception as e:
                     logger.warning("KB_UPDATE failed for task=%d: %s", task.id, e)
+
+            for cfg_path, cfg_value_json in all_config_updates:
+                if cfg_path in _CONFIG_UPDATE_BLOCKED:
+                    logger.warning("CONFIG_UPDATE: blocked sensitive path '%s' for task=%d", cfg_path, task.id)
+                    await self._api.send_message(task.chat_id, f"⚠ CONFIG_UPDATE blocked: '{cfg_path}' is a protected key.")
+                    continue
+                try:
+                    import json as _json
+                    new_val = _json.loads(cfg_value_json)
+                    from .config_store import save_config as _cfg_save
+                    current = config.get()
+                    # Navigate and patch dotted path
+                    updated = {**current}
+                    keys = cfg_path.split('.')
+                    target = updated
+                    for k in keys[:-1]:
+                        if k not in target or not isinstance(target[k], dict):
+                            target[k] = {}
+                        target[k] = dict(target[k])
+                        target = target[k]
+                    target[keys[-1]] = new_val
+                    conn = await db.init_config()
+                    await _cfg_save(conn, updated)
+                    await conn.close()
+                    config.set(updated)
+                    logger.info("CONFIG_UPDATE: set '%s' by agent for task=%d", cfg_path, task.id)
+                except Exception as e:
+                    logger.warning("CONFIG_UPDATE failed for task=%d: %s", task.id, e)
+                    await self._api.send_message(task.chat_id, f"⚠ CONFIG_UPDATE '{cfg_path}' failed: {e}")
 
             for plugin_name, plugin_cfg in all_plugin_config_sets:
                 try:
