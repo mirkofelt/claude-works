@@ -248,7 +248,7 @@ _PLUGINS_DIR = os.environ.get("PLUGINS_DIR", "/data/plugins")
 _URL_RE = re.compile(r'https?://[^\s<>"\']+')
 _MAX_FETCH_URLS = 3
 _MAX_FETCH_CHARS = 4000
-_TOR_SOCKS_DEFAULT = "socks5://127.0.0.1:9050"
+_TOR_SOCKS_DEFAULT = "socks5://tor:9050"
 
 
 def _build_git_clone_cmd(repo_url: str, target: str) -> list[str]:

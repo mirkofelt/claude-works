@@ -1,8 +1,15 @@
 services:
+  tor:
+    image: dperson/torproxy:latest
+    container_name: claude-works-tor
+    restart: unless-stopped
+
   claude-works:
     build: .
     container_name: claude-works
     restart: unless-stopped
+    depends_on:
+      - tor
     volumes:
       - ${CLAUDE_WORKS_DATA:-./data}:/data
     ports:
