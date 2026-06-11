@@ -137,7 +137,13 @@ class CliProvider(LLMProvider):
             history = "\n\n".join(
                 f"[{m['role'].upper()}]: {m['content']}" for m in messages[:-1]
             )
-            full_system = f"{system}\n\n---\nConversation history:\n{history}\n---"
+            full_system = (
+                f"{system}\n\n---\nConversation history:\n{history}\n---\n\n"
+                "**Core tools reminder** (always available regardless of history length):\n"
+                "[VOICE: text] → TTS audio | [KB_SAVE: title|type|tags|content] → save knowledge | "
+                "[KB_UPDATE: id|...] → update knowledge | [BOARD_TASK: desc] → background task | "
+                "[SEND_EMAIL: to|subject|body] → email | [GITHUB_API: METHOD|/endpoint|body] → GitHub"
+            )
 
         user_msg = (messages[-1]["content"] if messages else "") or ""
         if not user_msg.strip():
