@@ -2093,7 +2093,7 @@ function pluginRead() {
 function _updateDevModeUI(on) {
   const badge = document.getElementById('devModeBadge');
   const section = document.getElementById('deployGuardSection');
-  if (badge) { badge.textContent = on ? 'on' : 'off'; badge.style.background = on ? '#0f2a15'; badge.style.color = on ? 'var(--green)' : 'var(--muted)'; }
+  if (badge) { badge.textContent = on ? 'on' : 'off'; badge.style.background = on ? '#0f2a15' : 'var(--surface)'; badge.style.color = on ? 'var(--green)' : 'var(--muted)'; }
   if (section) section.style.display = on ? 'block' : 'none';
 }
 
