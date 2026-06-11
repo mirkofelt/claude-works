@@ -1309,6 +1309,16 @@ Rules:
             msg = f"poller: {'✓' if h['poller'] else '✗'} | agents: {h['active_agents']} active{mode_info}{sec}"
             await self._api.send_message(chat_id, msg)
 
+        elif cmd == "/getwebauth":
+            if not await is_admin(self._conn, from_id):
+                await self._api.send_message(chat_id, "Nope.")
+                return
+            token = config.section("web").get("auth_token", "")
+            if token:
+                await self._api.send_message(chat_id, f"`{token}`", parse_mode="Markdown")
+            else:
+                await self._api.send_message(chat_id, "web.auth_token not configured.")
+
         elif cmd == "/reload_persona":
             if not await is_admin(self._conn, from_id):
                 return
