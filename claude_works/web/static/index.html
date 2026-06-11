@@ -869,7 +869,7 @@
               </div>
               <div>
                 <div style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Step 4 — Enter URL and token above</div>
-                <div class="hint">Guard URL: <code>http://deploy-guard:9876</code> (internal Docker network — both containers must be in the same Compose stack). Paste the token from Step 1 into the Deploy Token field. Hit "Test Connection" — the test runs server-side.</div>
+                <div class="hint">Guard URL: <code>http://deploy-guard:9876</code> if using docker-compose (same network), or <code>http://&lt;UNRAID-IP&gt;:9876</code> if deploy-guard runs as a separate Unraid container. Paste the token from Step 1 into the Deploy Token field. Hit "Test Connection" — the test runs server-side.</div>
               </div>
               <div>
                 <div style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Optional — GitHub Actions auto-deploy</div>

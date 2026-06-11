@@ -25,8 +25,8 @@
   <Config Name="Compose File (optional)" Target="COMPOSE_FILE" Default="" Mode="" Description="Leave empty for standalone mode (recommended for Unraid). Set to /compose/docker-compose.yml to use docker-compose instead." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
   <Config Name="Compose Service (optional)" Target="COMPOSE_SERVICE" Default="claude-works" Mode="" Description="Service name in docker-compose.yml — only used when Compose File is set" Type="Variable" Display="advanced" Required="false" Mask="false">claude-works</Config>
 
-  <!-- Port — bind to localhost only for security -->
-  <Config Name="Port" Target="9876" Default="127.0.0.1:9876" Mode="tcp" Description="Webhook port. Default binds to localhost only — only reachable via reverse proxy or tunnel." Type="Port" Display="always" Required="true" Mask="false">127.0.0.1:9876</Config>
+  <!-- Port — 0.0.0.0 so other Docker containers (claude-works) can reach it via the host IP -->
+  <Config Name="Port" Target="9876" Default="9876" Mode="tcp" Description="Webhook port. Binds to all interfaces so claude-works container can reach it. Token-protected — safe to expose on the local network." Type="Port" Display="always" Required="true" Mask="false">9876</Config>
 
   <!-- Docker socket -->
   <Config Name="Docker Socket" Target="/var/run/docker.sock" Default="/var/run/docker.sock" Mode="rw" Description="Docker socket — required for container management" Type="Path" Display="advanced" Required="true" Mask="false">/var/run/docker.sock</Config>
