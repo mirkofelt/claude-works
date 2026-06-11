@@ -795,6 +795,61 @@
       </div>
     </details>
 
+    <details class="cfg-section" id="devModeSection">
+      <summary style="display:flex;align-items:center;justify-content:space-between">
+        <span>Developer Mode</span>
+        <span id="devModeBadge" style="font-size:11px;padding:2px 8px;border-radius:10px;background:var(--surface);color:var(--muted);margin-left:8px">off</span>
+      </summary>
+      <div class="cfg-body">
+        <div class="field wide">
+          <label style="display:flex;align-items:center;gap:10px;cursor:pointer">
+            <input type="checkbox" id="s_dev_mode" onchange="toggleDevMode(this.checked)" style="width:16px;height:16px;accent-color:var(--accent)">
+            <span>Enable developer features (deploy guard, live updates)</span>
+          </label>
+          <div class="hint">When off, deploy guard config is hidden and update operations are disabled.</div>
+        </div>
+
+        <div id="deployGuardSection" style="display:none;border-top:1px solid var(--border);margin-top:16px;padding-top:16px">
+          <div style="font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin-bottom:14px">Deploy Guard</div>
+          <div class="field"><label>Guard URL</label><input type="text" id="s_deploy_guard_url" placeholder="http://deploy-guard:9876"><div class="hint">Internal URL of the deploy-guard container</div></div>
+          <div class="field"><label>Deploy Token</label><input type="password" id="s_deploy_token" placeholder="your-deploy-token"><div class="hint">Must match <code>DEPLOY_TOKEN</code> in deploy-guard environment</div></div>
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <button class="btn btn-ghost" onclick="testDeployGuard()" id="btnTestGuard">Test Connection</button>
+            <span id="deployGuardStatus" style="font-size:12px;align-self:center"></span>
+          </div>
+
+          <details style="margin-top:20px;border:1px solid var(--border);border-radius:6px;overflow:hidden">
+            <summary style="padding:10px 14px;background:var(--surface);cursor:pointer;font-size:13px;font-weight:500">Setup Guide →</summary>
+            <div style="padding:16px 14px;display:flex;flex-direction:column;gap:14px;font-size:13px">
+              <div>
+                <div style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Step 1 — Generate deploy token</div>
+                <code style="display:block;background:var(--bg);padding:8px 10px;border-radius:4px;font-size:12px;color:var(--green);border:1px solid var(--border)">openssl rand -hex 32</code>
+                <div class="hint" style="margin-top:4px">Copy the output — this is your DEPLOY_TOKEN.</div>
+              </div>
+              <div>
+                <div style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Step 2 — Add to Unraid .env</div>
+                <code style="display:block;background:var(--bg);padding:8px 10px;border-radius:4px;font-size:12px;color:var(--accent);border:1px solid var(--border)">DEPLOY_TOKEN=&lt;your-token-here&gt;</code>
+                <div class="hint" style="margin-top:4px">Edit <code>/path/to/claude-works/.env</code> on your Unraid host.</div>
+              </div>
+              <div>
+                <div style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Step 3 — Start deploy-guard</div>
+                <code style="display:block;background:var(--bg);padding:8px 10px;border-radius:4px;font-size:12px;color:var(--accent);border:1px solid var(--border)">docker-compose up -d deploy-guard</code>
+                <div class="hint" style="margin-top:4px">The <code>deploy-guard</code> service is defined in <code>docker-compose.yml</code>. It binds to <code>127.0.0.1:9876</code> only.</div>
+              </div>
+              <div>
+                <div style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Step 4 — Enter URL and token above</div>
+                <div class="hint">Guard URL: <code>http://deploy-guard:9876</code> (internal Docker network) or <code>http://127.0.0.1:9876</code> if on the same host. Paste the token from Step 1 into the Deploy Token field. Hit "Test Connection".</div>
+              </div>
+              <div>
+                <div style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Optional — GitHub Actions auto-deploy</div>
+                <div class="hint">Add two secrets to the GitHub repo: <code>DEPLOY_WEBHOOK_URL</code> (your guard URL, reachable from CI) and <code>DEPLOY_TOKEN</code>. The CI workflow will POST to <code>/deploy</code> after every successful main branch build.</div>
+              </div>
+            </div>
+          </details>
+        </div>
+      </div>
+    </details>
+
     <div style="margin-top:12px;font-size:11px;color:var(--muted)">
       Changes apply immediately. Reload page if auth token or port changes.
     </div>
@@ -2035,6 +2090,36 @@ function pluginRead() {
   return result;
 }
 
+function _updateDevModeUI(on) {
+  const badge = document.getElementById('devModeBadge');
+  const section = document.getElementById('deployGuardSection');
+  if (badge) { badge.textContent = on ? 'on' : 'off'; badge.style.background = on ? '#0f2a15'; badge.style.color = on ? 'var(--green)' : 'var(--muted)'; }
+  if (section) section.style.display = on ? 'block' : 'none';
+}
+
+async function toggleDevMode(on) {
+  _updateDevModeUI(on);
+  await saveSettings();
+}
+
+async function testDeployGuard() {
+  const btn = document.getElementById('btnTestGuard');
+  const status = document.getElementById('deployGuardStatus');
+  const url = document.getElementById('s_deploy_guard_url')?.value?.trim();
+  const token = document.getElementById('s_deploy_token')?.value?.trim();
+  if (!url || !token) { status.textContent = '⚠ URL and token required'; status.style.color = 'var(--yellow)'; return; }
+  btn.disabled = true; btn.textContent = 'Testing…'; status.textContent = '';
+  try {
+    const r = await fetch(url + '/health?token=' + encodeURIComponent(token), { signal: AbortSignal.timeout(5000) });
+    if (r.ok) { status.textContent = '✓ Connected'; status.style.color = 'var(--green)'; }
+    else { status.textContent = '✗ HTTP ' + r.status; status.style.color = 'var(--red)'; }
+  } catch (e) {
+    status.textContent = '✗ ' + (e.name === 'TimeoutError' ? 'Timeout' : 'Unreachable');
+    status.style.color = 'var(--red)';
+  }
+  btn.disabled = false; btn.textContent = 'Test Connection';
+}
+
 async function loadSettings() {
   const msg = document.getElementById('settingsMsg');
   try {
@@ -2076,6 +2161,16 @@ async function loadSettings() {
     _setb('s_mcp_enabled', mcp.enabled); _setj('s_mcp_servers', mcp.servers || []);
     pluginRender(c.plugins || {});
     updateCliAuthVisibility();
+    // dev mode
+    const sys = c.system || {};
+    const devMode = sys.dev_mode === true;
+    const cb = document.getElementById('s_dev_mode');
+    if (cb) cb.checked = devMode;
+    _updateDevModeUI(devMode);
+    // deploy guard
+    const dg = sys.deploy_guard || {};
+    _set('s_deploy_guard_url', dg.url || '');
+    _set('s_deploy_token', dg.token || '');
     msg.style.display = 'none';
   } catch (e) {
     msg.textContent = 'Load failed: ' + e; msg.style.color = 'var(--red)'; msg.style.display = 'inline';
@@ -2150,6 +2245,13 @@ async function saveSettings() {
       logging: { dir: _sv('s_log_dir') || '/data/logs', level: _sv('s_log_level') || 'INFO' },
       mcp: { enabled: _sb('s_mcp_enabled'), servers: mcpServers || [] },
       plugins: pluginRead(),
+      system: {
+        dev_mode: document.getElementById('s_dev_mode')?.checked || false,
+        deploy_guard: {
+          url: _sv('s_deploy_guard_url') || '',
+          token: _sv('s_deploy_token') || '',
+        },
+      },
     };
   } catch (e) {
     msg.textContent = 'Invalid JSON: ' + e.message; msg.style.color = 'var(--red)'; msg.style.display = 'inline'; return;

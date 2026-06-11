@@ -471,6 +471,65 @@ async def set_mode(body: dict):
     return {"mode": mode}
 
 
+@app.get("/api/deploy/status", dependencies=[Depends(_verify_token)])
+async def get_deploy_status():
+    import httpx
+    cfg = config.get()
+    sys_cfg = cfg.get("system", {})
+    dev_mode = sys_cfg.get("dev_mode", False)
+    dg = sys_cfg.get("deploy_guard", {})
+    guard_url = dg.get("url", "")
+    guard_reachable = False
+    if guard_url and dev_mode:
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                r = await client.get(guard_url + "/health")
+                guard_reachable = r.status_code == 200
+        except Exception:
+            pass
+    return {"dev_mode": dev_mode, "guard_url": guard_url, "guard_reachable": guard_reachable}
+
+
+@app.post("/api/deploy/trigger", dependencies=[Depends(_verify_token)])
+async def trigger_deploy():
+    import httpx
+    cfg = config.get()
+    sys_cfg = cfg.get("system", {})
+    if not sys_cfg.get("dev_mode", False):
+        raise HTTPException(status_code=403, detail="dev_mode is disabled")
+    dg = sys_cfg.get("deploy_guard", {})
+    guard_url = dg.get("url", "").rstrip("/")
+    token = dg.get("token", "")
+    if not guard_url or not token:
+        raise HTTPException(status_code=400, detail="deploy_guard.url and .token not configured")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.post(f"{guard_url}/deploy?token={token}")
+            return {"status": "ok" if r.status_code == 200 else "error", "detail": r.text}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.post("/api/deploy/rollback", dependencies=[Depends(_verify_token)])
+async def trigger_rollback():
+    import httpx
+    cfg = config.get()
+    sys_cfg = cfg.get("system", {})
+    if not sys_cfg.get("dev_mode", False):
+        raise HTTPException(status_code=403, detail="dev_mode is disabled")
+    dg = sys_cfg.get("deploy_guard", {})
+    guard_url = dg.get("url", "").rstrip("/")
+    token = dg.get("token", "")
+    if not guard_url or not token:
+        raise HTTPException(status_code=400, detail="deploy_guard not configured")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.post(f"{guard_url}/rollback?token={token}")
+            return {"status": "ok" if r.status_code == 200 else "error", "detail": r.text}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
 @app.get("/api/messages", dependencies=[Depends(_verify_token)])
 async def get_messages(chat_id: int | None = None, limit: int = 50):
     conn = await _get_conn()
