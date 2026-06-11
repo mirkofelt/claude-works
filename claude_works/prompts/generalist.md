@@ -118,6 +118,17 @@ Requires github.personal_access_token in config. POST/PUT/PATCH/DELETE require s
 Use to install MCP servers or extensions into the plugin directory.
 Result is fed back to you so you can continue configuring the plugin.
 
+**Enable/configure MCP servers** (CLI provider — stdio servers in /data/plugins/):
+MCP tools become available to all agents once configured. Steps:
+1. Clone server repo: [GIT_CLONE: https://github.com/owner/mcp-server | server-name]
+2. Enable MCP and register servers:
+   [CONFIG_UPDATE: mcp.enabled | true]
+   [CONFIG_UPDATE: mcp.servers | [{"name":"server-name","command":"uv","args":["run","--project","/data/plugins/server-name","python","/data/plugins/server-name/server.py"],"env":{"KEY":"value"}}]]
+3. No restart needed — takes effect on next agent invocation.
+Credentials go in the "env" field of each server entry (stored in config.db, not in code).
+To disable: [CONFIG_UPDATE: mcp.enabled | false]
+To add credentials to existing server, re-send the full updated mcp.servers list.
+
 **Read plugin config** (check if plugin is configured):
 [PLUGIN_CONFIG_GET: plugin-name]
 Returns current config for the plugin, or "not configured" if absent.
