@@ -1093,10 +1093,14 @@ Rules:
             except Exception:
                 pass
         else:
-            asyncio.create_task(
-                self._handle_chat(chat_id, telegram_id, content),
-                name=f"chat-{chat_id}",
-            )
+            if chat_id in self._typing_tasks:
+                # Board task or chat task already in progress — don't spawn concurrent LLM call
+                await self._api.send_message(chat_id, "⏳ Bin noch dabei — gleich fertig.")
+            else:
+                asyncio.create_task(
+                    self._handle_chat(chat_id, telegram_id, content),
+                    name=f"chat-{chat_id}",
+                )
 
     async def _handle_reaction(self, reaction_data: dict) -> None:
         chat_id = reaction_data.get("chat", {}).get("id")
