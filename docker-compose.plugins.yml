@@ -1,5 +1,0 @@
-services:
-  claude-works:
-    volumes:
-      - ${LOXONE_MCP_DIR}:/data/plugins/loxone-mcp:ro
-      - ${ZEHNDER_MCP_DIR}:/data/plugins/zehnder-mcp:ro

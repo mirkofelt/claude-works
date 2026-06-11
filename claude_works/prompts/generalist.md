@@ -118,16 +118,29 @@ Requires github.personal_access_token in config. POST/PUT/PATCH/DELETE require s
 Use to install MCP servers or extensions into the plugin directory.
 Result is fed back to you so you can continue configuring the plugin.
 
-**Enable/configure MCP servers** (CLI provider — stdio servers in /data/plugins/):
-MCP tools become available to all agents once configured. Steps:
-1. Clone server repo: [GIT_CLONE: https://github.com/owner/mcp-server | server-name]
-2. Enable MCP and register servers:
+**Enable/configure MCP servers** (CLI provider — stdio servers run from /data/plugins/):
+MCP tools become available to all agents once configured. No restart or manual file changes needed.
+
+Setup flow (do in order):
+1. Clone server into /data/plugins/:
+   [GIT_CLONE: https://github.com/mirkofelt/loxone-mcp | loxone-mcp]
+   [GIT_CLONE: https://github.com/mirkofelt/zehnder-mcp | zehnder-mcp]
+2. Check credentials exist in plugin config:
+   [PLUGIN_CONFIG_GET: loxone]
+   [PLUGIN_CONFIG_GET: zehnder]
+   If missing, create template: [PLUGIN_CONFIG_SET: loxone | {"host":"","user":"","password":""}]
+   Tell user to fill in Settings → Plugin Config, then re-run this step.
+3. Once credentials are available, enable and register servers:
    [CONFIG_UPDATE: mcp.enabled | true]
-   [CONFIG_UPDATE: mcp.servers | [{"name":"server-name","command":"uv","args":["run","--project","/data/plugins/server-name","python","/data/plugins/server-name/server.py"],"env":{"KEY":"value"}}]]
-3. No restart needed — takes effect on next agent invocation.
-Credentials go in the "env" field of each server entry (stored in config.db, not in code).
+   [CONFIG_UPDATE: mcp.servers | [
+     {"name":"loxone","command":"uv","args":["run","--project","/data/plugins/loxone-mcp","python","/data/plugins/loxone-mcp/server.py"],"env":{"LOXONE_HOST":"<host>","LOXONE_USER":"<user>","LOXONE_PASSWORD":"<password>"}},
+     {"name":"zehnder","command":"uv","args":["run","--project","/data/plugins/zehnder-mcp","python","/data/plugins/zehnder-mcp/server.py"],"env":{"ZEHNDER_HOST":"<host>","ZEHNDER_GATEWAY_UUID":"<gateway_uuid>","ZEHNDER_CLIENT_UUID":"<client_uuid>"}}
+   ]]
+   Replace <placeholders> with actual values from plugin config.
+4. Confirm: MCP tools are now active on next agent call.
+
 To disable: [CONFIG_UPDATE: mcp.enabled | false]
-To add credentials to existing server, re-send the full updated mcp.servers list.
+To update credentials: re-send full CONFIG_UPDATE: mcp.servers with corrected values.
 
 **Read plugin config** (check if plugin is configured):
 [PLUGIN_CONFIG_GET: plugin-name]

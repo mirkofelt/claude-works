@@ -1,6 +1,6 @@
 # MCP Server Integration
 
-claude-works supports MCP (Model Context Protocol) servers running as stdio subprocesses inside the container. Agents get MCP tools automatically on every invocation when MCP is enabled.
+claude-works supports MCP (Model Context Protocol) servers running as stdio subprocesses. Agents get MCP tools automatically on every invocation when MCP is enabled. No bind mounts, no image rebuilds — everything runs from the `/data/plugins/` volume.
 
 ## Architecture
 
@@ -8,37 +8,37 @@ claude-works supports MCP (Model Context Protocol) servers running as stdio subp
 Agent → CliProvider.complete()
            ↓  writes temp /tmp/mcp_xxx.json
         claude --print --mcp-config /tmp/mcp_xxx.json
-           ↓  spawns stdio processes
+           ↓  spawns stdio subprocesses
         uv run python /data/plugins/<name>/server.py
 ```
 
-The config lives in `config.db → settings_json.mcp`:
+Config lives in `config.db → settings_json`:
 - `mcp.enabled` (bool) — master switch
-- `mcp.servers` (list) — server definitions with name, command, args, env
+- `mcp.servers` (list) — server definitions: name, command, args, env
 
-## Setup
+## Setup (agent-driven, no manual steps)
 
-### 1. Mount plugin directories
+Ask the agent to set up loxone/zehnder MCP and it will walk through this automatically:
 
-Use `docker-compose.plugins.yml` alongside the main compose file:
+### Step 1 — Clone server repos
 
-```bash
-# .env
-LOXONE_MCP_DIR=/path/to/loxone-mcp
-ZEHNDER_MCP_DIR=/path/to/zehnder-mcp
+```
+GIT_CLONE: https://github.com/mirkofelt/loxone-mcp | loxone-mcp
+GIT_CLONE: https://github.com/mirkofelt/zehnder-mcp | zehnder-mcp
 ```
 
-```bash
-docker-compose -f docker-compose.yml -f docker-compose.plugins.yml up -d
-```
+Code lands in `/data/plugins/loxone-mcp/` and `/data/plugins/zehnder-mcp/` — both inside the already-mounted `/data` volume.
 
-Or add bind mounts manually in a `docker-compose.override.yml`.
+### Step 2 — Provide credentials
 
-Plugin directories are mounted read-only at `/data/plugins/<name>/` inside the container.
+Either fill in **Settings → Plugin Config** in the web UI for `loxone` and `zehnder`, or tell the agent the values directly. The agent stores them via `PLUGIN_CONFIG_SET`.
 
-### 2. Configure via agent or CONFIG_UPDATE tag
+Loxone fields: `host`, `user`, `password`
+Zehnder fields: `host`, `gateway_uuid`, `client_uuid`
 
-Enable MCP and register servers in config.db:
+### Step 3 — Enable and register
+
+The agent does this automatically once credentials are available:
 
 ```
 CONFIG_UPDATE: mcp.enabled | true
@@ -47,40 +47,27 @@ CONFIG_UPDATE: mcp.servers | [
     "name": "loxone",
     "command": "uv",
     "args": ["run", "--project", "/data/plugins/loxone-mcp", "python", "/data/plugins/loxone-mcp/server.py"],
-    "env": {
-      "LOXONE_HOST": "192.168.x.x",
-      "LOXONE_USER": "admin",
-      "LOXONE_PASSWORD": "secret"
-    }
+    "env": {"LOXONE_HOST": "...", "LOXONE_USER": "...", "LOXONE_PASSWORD": "..."}
   },
   {
     "name": "zehnder",
     "command": "uv",
     "args": ["run", "--project", "/data/plugins/zehnder-mcp", "python", "/data/plugins/zehnder-mcp/server.py"],
-    "env": {
-      "ZEHNDER_HOST": "192.168.x.x",
-      "ZEHNDER_GATEWAY_UUID": "1fff7a107a1040008000144fd7100000",
-      "ZEHNDER_CLIENT_UUID": "c1a4c0de000000000000000000000001"
-    }
+    "env": {"ZEHNDER_HOST": "...", "ZEHNDER_GATEWAY_UUID": "...", "ZEHNDER_CLIENT_UUID": "..."}
   }
 ]
 ```
 
-Config takes effect on the next agent invocation — no restart needed.
+No restart needed. Takes effect on the next agent call.
 
-### 3. Install new MCP servers via agent
+## Adding other MCP servers
 
-Agents can clone and configure new MCP servers themselves:
+Same pattern works for any stdio MCP server:
 
 ```
-GIT_CLONE: https://github.com/owner/mcp-server | server-name
+GIT_CLONE: https://github.com/owner/my-mcp-server | my-server
+CONFIG_UPDATE: mcp.servers | [<existing servers...>, {"name":"my-server","command":"uv","args":[...],"env":{...}}]
 ```
-
-Then instruct the agent to configure it via CONFIG_UPDATE.
-
-## Credential storage
-
-Credentials are stored in the `env` field of each server entry in `config.db`. This is encrypted-at-rest by filesystem permissions on `/data/`. Do not commit actual credentials — use CONFIG_UPDATE or the Web UI Settings panel.
 
 ## Disabling MCP
 
@@ -88,9 +75,10 @@ Credentials are stored in the `env` field of each server entry in `config.db`. T
 CONFIG_UPDATE: mcp.enabled | false
 ```
 
-## Constraints
+## Notes
 
-- Only works with CLI provider (`llm.provider = "cli"`). API provider uses a different MCP path (Anthropic beta, HTTP-only).
-- `uv` must be available in the container (included in the image since commit `b9cc717`).
-- Plugin dirs must be mounted into the container — the server code is not bundled in the image.
-- Each agent invocation spawns fresh MCP server processes (no persistent connection).
+- `uv` is included in the container image and manages per-project virtualenvs automatically.
+- First run downloads dependencies into `/data/plugins/<name>/.venv` — takes ~10–30s depending on network.
+- MCP server processes are spawned fresh per agent invocation (no persistent connection).
+- Only works with CLI provider (`llm.provider = "cli"`). API provider uses a separate path.
+- Credentials are stored in `config.db` (inside the `/data` volume, not in any repo).
