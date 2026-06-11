@@ -360,7 +360,7 @@ class Daemon:
 
         for admin_id in admin_ids:
             try:
-                await self._api.send_message(admin_id, "✓ claude-works gestartet und einsatzbereit.")
+                await self._api.send_message(admin_id, "✓ claude-works started and ready.")
             except Exception as e:
                 logger.warning("Startup notification to admin %d failed: %s", admin_id, e)
 
@@ -638,23 +638,23 @@ class Daemon:
         if chat_id in self._pending_reauth and text and not text.startswith("/"):
             proc = self._pending_reauth.pop(chat_id)
             if proc.returncode is not None:
-                await self._api.send_message(chat_id, "Auth-Session abgelaufen. /reauth erneut ausführen.")
+                await self._api.send_message(chat_id, "Auth session expired. Run /reauth again.")
                 return
             try:
                 proc.stdin.write((text.strip() + "\n").encode())
                 await proc.stdin.drain()
                 stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30.0)
                 if proc.returncode == 0:
-                    await self._api.send_message(chat_id, "✓ Claude CLI authentifiziert.")
+                    await self._api.send_message(chat_id, "✓ Claude CLI authenticated.")
                 else:
                     out = stdout.decode(errors="replace") if stdout else ""
-                    await self._api.send_message(chat_id, f"Auth fehlgeschlagen: {out[:200]}")
+                    await self._api.send_message(chat_id, f"Auth failed: {out[:200]}")
             except asyncio.TimeoutError:
                 try:
                     proc.kill()
                 except Exception:
                     pass
-                await self._api.send_message(chat_id, "Auth-Bestätigung Timeout. /reauth erneut versuchen.")
+                await self._api.send_message(chat_id, "Auth confirmation timed out. Try /reauth again.")
             return
 
         # In REPAIR/MIGRATE mode, route messages to Mechanic if admin
@@ -767,11 +767,11 @@ class Daemon:
                 domains = ", ".join(urllib.parse.urlparse(u).netloc for u in urls_blocked)
                 await self._api.send_message(
                     chat_id,
-                    f"🔒 Tor-Zugriff fehlgeschlagen: <code>{domains}</code>\nDirektzugriff erlauben?",
+                    f"🔒 Tor access failed: <code>{domains}</code>\nAllow direct access?",
                     parse_mode="HTML",
                     reply_markup={"inline_keyboard": [[
-                        {"text": "✅ Ja", "callback_data": f"direct:{fetch_hash}"},
-                        {"text": "❌ Überspringen", "callback_data": f"deny:{fetch_hash}"},
+                        {"text": "✅ Yes", "callback_data": f"direct:{fetch_hash}"},
+                        {"text": "❌ Skip", "callback_data": f"deny:{fetch_hash}"},
                     ]]}
                 )
                 return
@@ -847,7 +847,7 @@ class Daemon:
             fetch_hash = data.split(":", 1)[1]
             pending = self._pending_direct_fetches.pop(fetch_hash, None)
             if not pending or time.time() > pending["expires_at"]:
-                await self._api.send_message(chat_id, "Anfrage abgelaufen.")
+                await self._api.send_message(chat_id, "Request expired.")
                 return
             content = pending["content"]
             if data.startswith("direct:"):
@@ -876,16 +876,16 @@ class Daemon:
                 return
             if scope == "sec_once":
                 ok = self._security.approve(approval_id, telegram_id)
-                reply = "✅ Einmalig freigegeben."
+                reply = "✅ Approved (once)."
             elif scope == "sec_deny":
                 ok = self._security.deny(approval_id, telegram_id)
-                reply = "❌ Abgelehnt."
+                reply = "❌ Denied."
             elif scope == "sec_always_specific":
                 ok = self._security.approve_always_specific(approval_id, telegram_id)
-                reply = "🔁 Spezifische Freigabe dauerhaft gespeichert."
+                reply = "🔁 Specific permission saved permanently."
             elif scope == "sec_always_action":
                 ok = self._security.approve_always_action(approval_id, telegram_id)
-                reply = "🔄 Aktion dauerhaft freigegeben — zukünftige Anfragen dieser Art werden automatisch genehmigt."
+                reply = "🔄 Action permanently approved — future requests of this type will be auto-approved."
             else:
                 return
             if ok:
@@ -997,14 +997,14 @@ class Daemon:
             if arg == "on":
                 self._mention_only_chats.add(chat_id)
                 await self._save_mention_only_chats()
-                await self._api.send_message(chat_id, "👂 Mention-only Modus aktiv — antworte nur bei @Erwähnung.")
+                await self._api.send_message(chat_id, "👂 Mention-only mode active — responding only when @mentioned.")
             elif arg == "off":
                 self._mention_only_chats.discard(chat_id)
                 await self._save_mention_only_chats()
-                await self._api.send_message(chat_id, "💬 Antworte jetzt auf alle Nachrichten.")
+                await self._api.send_message(chat_id, "💬 Now responding to all messages.")
             else:
-                state = "an" if chat_id in self._mention_only_chats else "aus"
-                await self._api.send_message(chat_id, f"Mention-only Modus: {state}\nUsage: /mention on|off")
+                state = "on" if chat_id in self._mention_only_chats else "off"
+                await self._api.send_message(chat_id, f"Mention-only mode: {state}\nUsage: /mention on|off")
 
         elif cmd == "/repair" and len(parts) >= 2:
             if not await is_admin(self._conn, from_id):
@@ -1070,7 +1070,7 @@ class Daemon:
                 stderr=asyncio.subprocess.STDOUT,
             )
         except FileNotFoundError:
-            await self._api.send_message(chat_id, f"CLI binary nicht gefunden: {binary}")
+            await self._api.send_message(chat_id, f"CLI binary not found: {binary}")
             return
         url = None
         buf = ""
@@ -1089,15 +1089,15 @@ class Daemon:
                     url = m.group().rstrip('.')
                     break
         except Exception as exc:
-            await self._api.send_message(chat_id, f"Auth-Start fehlgeschlagen: {exc}")
+            await self._api.send_message(chat_id, f"Auth start failed: {exc}")
             return
         if not url:
-            await self._api.send_message(chat_id, f"Keine Auth-URL gefunden. Output: {buf[:300]}")
+            await self._api.send_message(chat_id, f"No auth URL found. Output: {buf[:300]}")
             return
         self._pending_reauth[chat_id] = proc
         await self._api.send_message(
             chat_id,
-            f"Öffne diese URL im Browser und schick mir danach den Code:\n{url}"
+            f"Open this URL in your browser, then send me the code:\n{url}"
         )
 
     async def _on_agent_result(self, task: KanbanTask, result: str | None, error: str | None = None) -> None:
@@ -1166,7 +1166,7 @@ class Daemon:
                         title = results[0].get("display_name", map_query)[:60]
                         await self._api.send_location(task.chat_id, lat, lon, title=title)
                     else:
-                        await self._api.send_message(task.chat_id, f"📍 {map_query} — nicht gefunden.")
+                        await self._api.send_message(task.chat_id, f"📍 {map_query} — not found.")
                 except Exception as e:
                     logger.warning("Map geocoding failed for task=%d: %s", task.id, e)
 
@@ -1178,18 +1178,18 @@ class Daemon:
                 )
                 if not email_allowed:
                     logger.info("Email send blocked by security officer for task=%d", task.id)
-                    await self._api.send_message(task.chat_id, "E-Mail durch Security Officer blockiert — möglicher Datenleck erkannt.")
+                    await self._api.send_message(task.chat_id, "Email blocked by security officer — possible data leak detected.")
                 else:
                     try:
                         email_cfg = config.section("email")
                         await _send_email(to, subject, body, email_cfg)
-                        await self._api.send_message(task.chat_id, f"✉️ E-Mail an {to} gesendet.")
+                        await self._api.send_message(task.chat_id, f"✉️ Email sent to {to}.")
                     except KeyError:
                         logger.error("Email config missing — set email.smtp_host/user/password in settings.json")
-                        await self._api.send_message(task.chat_id, "E-Mail nicht gesendet: E-Mail-Konfiguration fehlt.")
+                        await self._api.send_message(task.chat_id, "Email not sent: email configuration missing.")
                     except Exception as e:
                         logger.warning("Email send failed for task=%d: %s", task.id, e)
-                        await self._api.send_message(task.chat_id, f"E-Mail-Versand fehlgeschlagen: {e}")
+                        await self._api.send_message(task.chat_id, f"Email send failed: {e}")
 
             if read_email_args:
                 folder, count = read_email_args
@@ -1197,18 +1197,18 @@ class Daemon:
                     email_cfg = config.section("email")
                     emails = await _read_emails(folder, count, email_cfg)
                     if emails:
-                        lines = [f"📬 {folder} — letzte {len(emails)} E-Mails:\n"]
+                        lines = [f"📬 {folder} — last {len(emails)} emails:\n"]
                         for i, m in enumerate(emails, 1):
                             lines.append(f"{i}. **{m['subject']}**\nVon: {m['from']}\n{m['date']}\n")
                         await self._api.send_message(task.chat_id, "\n".join(lines))
                     else:
-                        await self._api.send_message(task.chat_id, f"📭 {folder} ist leer.")
+                        await self._api.send_message(task.chat_id, f"📭 {folder} is empty.")
                 except KeyError:
                     logger.error("Email config missing — set email.imap_host/user/password in settings.json")
-                    await self._api.send_message(task.chat_id, "E-Mails nicht abrufbar: IMAP-Konfiguration fehlt.")
+                    await self._api.send_message(task.chat_id, "Emails unavailable: IMAP configuration missing.")
                 except Exception as e:
                     logger.warning("Email read failed for task=%d: %s", task.id, e)
-                    await self._api.send_message(task.chat_id, f"E-Mail-Abruf fehlgeschlagen: {e}")
+                    await self._api.send_message(task.chat_id, f"Email read failed: {e}")
 
             if github_args:
                 method, endpoint, body = github_args
@@ -1220,7 +1220,7 @@ class Daemon:
                     )
                     if not gh_allowed:
                         logger.info("GitHub write blocked by security officer for task=%d", task.id)
-                        await self._api.send_message(task.chat_id, "GitHub-Schreibzugriff durch Security Officer blockiert — möglicher Datenleck erkannt.")
+                        await self._api.send_message(task.chat_id, "GitHub write blocked by security officer — possible data leak detected.")
                         github_args = None
                 if github_args:
                     try:
@@ -1231,10 +1231,10 @@ class Daemon:
                         await self._api.send_message(task.chat_id, f"GitHub `{method} {endpoint}`:\n```\n{result_preview}\n```")
                     except KeyError:
                         logger.error("GitHub config missing — set github.personal_access_token in settings.json")
-                        await self._api.send_message(task.chat_id, "GitHub-Zugriff fehlgeschlagen: Token fehlt.")
+                        await self._api.send_message(task.chat_id, "GitHub access failed: token missing.")
                     except Exception as e:
                         logger.warning("GitHub API failed for task=%d: %s", task.id, e)
-                        await self._api.send_message(task.chat_id, f"GitHub-Fehler: {e}")
+                        await self._api.send_message(task.chat_id, f"GitHub error: {e}")
 
             if git_clone_args:
                 repo_url, plugin_name = git_clone_args
@@ -1255,7 +1255,7 @@ class Daemon:
             if "CLI_AUTH_REQUIRED" in error:
                 await self._api.send_message(
                     task.chat_id,
-                    "Claude CLI nicht eingeloggt. Sende /reauth um dich zu authentifizieren."
+                    "Claude CLI not logged in. Send /reauth to authenticate."
                 )
             else:
                 logger.debug("Agent error for task=%s (recovery will handle user notification): %s", task.id, error)
@@ -1430,15 +1430,15 @@ class Daemon:
             )
             _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120.0)
             if proc.returncode == 0:
-                await self._api.send_message(chat_id, f"✓ Geklont nach `{target}`")
+                await self._api.send_message(chat_id, f"✓ Cloned to `{target}`")
             else:
                 err = stderr.decode(errors="replace")[:300]
-                await self._api.send_message(chat_id, f"Git clone fehlgeschlagen:\n`{err}`")
+                await self._api.send_message(chat_id, f"Git clone failed:\n`{err}`")
         except asyncio.TimeoutError:
-            await self._api.send_message(chat_id, "Git clone Timeout (120s).")
+            await self._api.send_message(chat_id, "Git clone timed out (120s).")
         except Exception as e:
             logger.warning("Git clone error for %s: %s", repo_url, e)
-            await self._api.send_message(chat_id, f"Git clone Fehler: {e}")
+            await self._api.send_message(chat_id, f"Git clone error: {e}")
 
     async def _notify_admin_new_user(self, telegram_id: int, name: str | None) -> None:
         cfg = config.section("users")
