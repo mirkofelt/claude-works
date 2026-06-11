@@ -864,12 +864,12 @@
               </div>
               <div>
                 <div style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Step 3 — Start deploy-guard</div>
-                <code style="display:block;background:var(--bg);padding:8px 10px;border-radius:4px;font-size:12px;color:var(--accent);border:1px solid var(--border)">docker-compose up -d deploy-guard</code>
-                <div class="hint" style="margin-top:4px">The <code>deploy-guard</code> service is defined in <code>docker-compose.yml</code>. It binds to <code>127.0.0.1:9876</code> only.</div>
+                <code style="display:block;background:var(--bg);padding:8px 10px;border-radius:4px;font-size:12px;color:var(--accent);border:1px solid var(--border)">docker-compose --profile deploy up -d deploy-guard</code>
+                <div class="hint" style="margin-top:4px">deploy-guard uses the <code>deploy</code> profile — plain <code>docker-compose up</code> won't start it. It binds to <code>127.0.0.1:9876</code> on the host.</div>
               </div>
               <div>
                 <div style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Step 4 — Enter URL and token above</div>
-                <div class="hint">Guard URL: <code>http://deploy-guard:9876</code> (internal Docker network) or <code>http://127.0.0.1:9876</code> if on the same host. Paste the token from Step 1 into the Deploy Token field. Hit "Test Connection".</div>
+                <div class="hint">Guard URL: <code>http://deploy-guard:9876</code> (internal Docker network — both containers must be in the same Compose stack). Paste the token from Step 1 into the Deploy Token field. Hit "Test Connection" — the test runs server-side.</div>
               </div>
               <div>
                 <div style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Optional — GitHub Actions auto-deploy</div>
@@ -2296,17 +2296,18 @@ async function toggleDevMode(on) {
 async function testDeployGuard() {
   const btn = document.getElementById('btnTestGuard');
   const status = document.getElementById('deployGuardStatus');
-  const url = document.getElementById('s_deploy_guard_url')?.value?.trim();
-  const token = document.getElementById('s_deploy_token')?.value?.trim();
-  if (!url || !token) { status.textContent = '⚠ URL and token required'; status.style.color = 'var(--yellow)'; return; }
   btn.disabled = true; btn.textContent = 'Testing…'; status.textContent = '';
   try {
-    const r = await fetch(url + '/health?token=' + encodeURIComponent(token), { signal: AbortSignal.timeout(5000) });
-    if (r.ok) { status.textContent = '✓ Connected'; status.style.color = 'var(--green)'; }
-    else { status.textContent = '✗ HTTP ' + r.status; status.style.color = 'var(--red)'; }
+    const data = await api('/api/deploy/status');
+    if (data.guard_reachable) {
+      status.textContent = '✓ Connected'; status.style.color = 'var(--green)';
+    } else if (!data.guard_url) {
+      status.textContent = '⚠ URL not configured'; status.style.color = 'var(--yellow)';
+    } else {
+      status.textContent = '✗ Unreachable'; status.style.color = 'var(--red)';
+    }
   } catch (e) {
-    status.textContent = '✗ ' + (e.name === 'TimeoutError' ? 'Timeout' : 'Unreachable');
-    status.style.color = 'var(--red)';
+    status.textContent = '✗ ' + e.message; status.style.color = 'var(--red)';
   }
   btn.disabled = false; btn.textContent = 'Test Connection';
 }

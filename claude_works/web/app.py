@@ -497,10 +497,11 @@ async def get_deploy_status():
     dg = sys_cfg.get("deploy_guard", {})
     guard_url = dg.get("url", "")
     guard_reachable = False
-    if guard_url and dev_mode:
+    token = dg.get("token", "")
+    if guard_url and dev_mode and token:
         try:
             async with httpx.AsyncClient(timeout=3.0) as client:
-                r = await client.get(guard_url + "/health")
+                r = await client.get(f"{guard_url}/health?token={token}")
                 guard_reachable = r.status_code == 200
         except Exception:
             pass
