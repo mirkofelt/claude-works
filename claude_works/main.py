@@ -978,7 +978,13 @@ Rules:
                 reply = await self._mechanic.followup(text)
                 clean_reply, keyboard = _parse_buttons(reply)
                 reply_markup = {"inline_keyboard": keyboard} if keyboard else None
-                await self._api.send_message(chat_id, clean_reply[:4096], reply_markup=reply_markup)
+                try:
+                    await self._api.send_message(
+                        chat_id, _md_to_telegram_html(clean_reply)[:4096],
+                        parse_mode="HTML", reply_markup=reply_markup,
+                    )
+                except Exception:
+                    await self._api.send_message(chat_id, clean_reply[:4096], reply_markup=reply_markup)
                 return
             await self._api.send_message(
                 chat_id,
@@ -1713,7 +1719,11 @@ Rules:
                         result_data = await _github_api(method, endpoint, body or None, github_cfg)
                         import json as _json
                         result_preview = _json.dumps(result_data, ensure_ascii=False, indent=2)[:1200]
-                        await self._api.send_message(task.chat_id, f"GitHub `{method} {endpoint}`:\n```\n{result_preview}\n```")
+                        gh_msg = f"GitHub `{method} {endpoint}`:\n```\n{result_preview}\n```"
+                        try:
+                            await self._api.send_message(task.chat_id, _md_to_telegram_html(gh_msg), parse_mode="HTML")
+                        except Exception:
+                            await self._api.send_message(task.chat_id, gh_msg)
                     except KeyError:
                         logger.error("GitHub config missing — set github.personal_access_token in settings.json")
                         await self._api.send_message(task.chat_id, "GitHub access failed: token missing.")
@@ -2145,10 +2155,14 @@ Rules:
             )
             _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120.0)
             if proc.returncode == 0:
-                await self._api.send_message(chat_id, f"✓ Cloned to `{target}`")
+                clone_msg = f"✓ Cloned to `{target}`"
             else:
                 err = stderr.decode(errors="replace")[:300]
-                await self._api.send_message(chat_id, f"Git clone failed:\n`{err}`")
+                clone_msg = f"Git clone failed:\n`{err}`"
+            try:
+                await self._api.send_message(chat_id, _md_to_telegram_html(clone_msg), parse_mode="HTML")
+            except Exception:
+                await self._api.send_message(chat_id, clone_msg)
         except asyncio.TimeoutError:
             await self._api.send_message(chat_id, "Git clone timed out (120s).")
         except Exception as e:
