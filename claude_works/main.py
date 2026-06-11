@@ -152,6 +152,25 @@ _MAX_FETCH_URLS = 3
 _MAX_FETCH_CHARS = 4000
 _TOR_SOCKS_DEFAULT = "socks5://127.0.0.1:9050"
 
+_TASK_VERB_RE = re.compile(
+    r'\b(schreib|erstell|generier|entwickel|implementier|analysier|recherchier|'
+    r'migrier|repari|konvertier|deploy|extrahier|zusammenfass|berechne?|kalkulier|'
+    r'write|create|build|develop|implement|generate|analyse|analyze|research|'
+    r'migrate|repair|convert|extract|summarize|calculate|deploy)\b',
+    re.IGNORECASE,
+)
+_TASK_MAX_CHAT_LEN = 400
+
+
+def _is_task(content: str) -> bool:
+    """Returns True if content looks like work to track in kanban, not plain conversation."""
+    stripped = content.strip()
+    if len(stripped) > _TASK_MAX_CHAT_LEN:
+        return True
+    if _TASK_VERB_RE.search(stripped):
+        return True
+    return False
+
 
 async def _fetch_url_content(url: str, proxy: str | None = None) -> str | None:
     try:
@@ -201,6 +220,7 @@ class Daemon:
         self._user_backgrounds: dict[int, str] = {}
         self._pending_direct_fetches: dict[str, dict] = {}
         self._pending_reauth: dict[int, asyncio.subprocess.Process] = {}  # chat_id → proc
+        self._chat_agents: dict[int, GeneralistAgent] = {}  # chat_id → persistent chat agent
 
     # ──────────────────────────────────────────────────────────
     # Lifecycle
@@ -706,15 +726,21 @@ class Daemon:
                 )
                 return
 
-        task = KanbanTask(
-            id=None,
-            chat_id=chat_id,
-            user_id=telegram_id,
-            content=content,
-            priority=1 if content.startswith("!") else 0,
-        )
-        await self._board.push(task)
-        self._start_typing(chat_id)
+        if _is_task(content):
+            task = KanbanTask(
+                id=None,
+                chat_id=chat_id,
+                user_id=telegram_id,
+                content=content,
+                priority=1 if content.startswith("!") else 0,
+            )
+            await self._board.push(task)
+            self._start_typing(chat_id)
+        else:
+            asyncio.create_task(
+                self._handle_chat(chat_id, telegram_id, content),
+                name=f"chat-{chat_id}",
+            )
 
     async def _handle_reaction(self, reaction_data: dict) -> None:
         chat_id = reaction_data.get("chat", {}).get("id")
@@ -1112,6 +1138,39 @@ class Daemon:
 
     async def _on_task_requeued(self, task: KanbanTask) -> None:
         self._stop_typing(task.chat_id)
+
+    async def _handle_chat(self, chat_id: int, user_id: int, content: str) -> None:
+        """Handle a conversational message directly, bypassing kanban."""
+        self._start_typing(chat_id)
+        try:
+            agent = self._chat_agents.get(chat_id)
+            if agent is None:
+                persona = ""
+                if self._coordinator and self._coordinator._chief:
+                    persona = self._coordinator._chief.persona
+                provider = self._coordinator._get_provider() if self._coordinator else None
+                agent = GeneralistAgent(
+                    task_id=0,
+                    user_context={
+                        "user_id": user_id,
+                        "chat_id": chat_id,
+                        "background": self._user_backgrounds.get(user_id, ""),
+                    },
+                    provider=provider,
+                    token_tracker=self._token_tracker,
+                    persona=persona,
+                    agent_class="chief",
+                )
+                self._chat_agents[chat_id] = agent
+            result = await asyncio.wait_for(agent.run(content), timeout=300.0)
+            fake_task = KanbanTask(id=None, chat_id=chat_id, user_id=user_id, content=content)
+            await self._on_agent_result(fake_task, result, None)
+        except asyncio.TimeoutError:
+            self._stop_typing(chat_id)
+            await self._api.send_message(chat_id, "Timeout.")
+        except Exception:
+            self._stop_typing(chat_id)
+            logger.exception("Chat handler error for chat=%d", chat_id)
 
     async def _notify_admin_new_user(self, telegram_id: int, name: str | None) -> None:
         cfg = config.section("users")
