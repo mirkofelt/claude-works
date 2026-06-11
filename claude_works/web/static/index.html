@@ -734,6 +734,17 @@
       </div>
     </details>
 
+    <details class="cfg-section">
+      <summary>Plugin Config</summary>
+      <div class="cfg-body">
+        <div class="field wide">
+          <label>Plugin credentials and config (JSON object)</label>
+          <textarea id="s_plugins" rows="8" placeholder='{"loxone": {"url": "http://...", "username": "...", "password": "..."}, "fronius": {"url": "http://..."}}'></textarea>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px">Accessible via <code>GET /api/plugins/config/{plugin_name}</code> — use in MCP servers to avoid storing credentials in chat.</div>
+        </div>
+      </div>
+    </details>
+
     <div style="margin-top:12px;font-size:11px;color:var(--muted)">
       Changes apply immediately. Reload page if auth token or port changes.
     </div>
@@ -1670,6 +1681,7 @@ async function loadSettings() {
     _set('s_sv_backoff', JSON.stringify(sv.restart_backoff_seconds || []));
     _set('s_log_dir', log.dir); _set('s_log_level', log.level || 'INFO');
     _setb('s_mcp_enabled', mcp.enabled); _setj('s_mcp_servers', mcp.servers || []);
+    _setj('s_plugins', c.plugins || {});
     updateCliAuthVisibility();
     msg.style.display = 'none';
   } catch (e) {
@@ -1727,7 +1739,7 @@ async function saveSettings() {
   try {
     const tiers = _sj('s_ag_tiers'), models = _sj('s_ag_models');
     const secRules = _sj('s_sec_rules'), pricing = _sj('s_sp_pricing');
-    const reactionMap = reactionMapRead(), mcpServers = _sj('s_mcp_servers');
+    const reactionMap = reactionMapRead(), mcpServers = _sj('s_mcp_servers'), pluginsCfg = _sj('s_plugins');
     const backoff = _sj('s_sv_backoff');
     const adminIds = _sa('s_tg_admin_ids');
     cfg = {
@@ -1744,6 +1756,7 @@ async function saveSettings() {
       supervisor: { health_check_interval: _sn('s_sv_health'), max_restart_attempts: _sn('s_sv_restarts'), restart_backoff_seconds: backoff || [5,15,60] },
       logging: { dir: _sv('s_log_dir') || '/data/logs', level: _sv('s_log_level') || 'INFO' },
       mcp: { enabled: _sb('s_mcp_enabled'), servers: mcpServers || [] },
+      plugins: pluginsCfg || {},
     };
   } catch (e) {
     msg.textContent = 'Invalid JSON: ' + e.message; msg.style.color = 'var(--red)'; msg.style.display = 'inline'; return;

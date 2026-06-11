@@ -713,6 +713,19 @@ async def get_config():
     return {"config": cfg}
 
 
+@app.get("/api/plugins/config", dependencies=[Depends(_verify_token)])
+async def get_plugins_config():
+    return config.get().get("plugins", {})
+
+
+@app.get("/api/plugins/config/{plugin_name}", dependencies=[Depends(_verify_token)])
+async def get_plugin_config(plugin_name: str):
+    plugins = config.get().get("plugins", {})
+    if plugin_name not in plugins:
+        raise HTTPException(status_code=404, detail=f"Plugin '{plugin_name}' not configured")
+    return plugins[plugin_name]
+
+
 @app.post("/api/config/save", dependencies=[Depends(_verify_token)])
 async def save_config_endpoint(body: dict):
     cfg = body.get("config")
