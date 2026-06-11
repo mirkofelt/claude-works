@@ -66,8 +66,7 @@ class UsageStats:
     # Subscription percentage limits (Claude Max plan format)
     session_pct: float | None = None           # "Current session: X% used"
     weekly_all_pct: float | None = None        # "Current week (all models): X% used"
-    weekly_model_pct: float | None = None      # "Current week (Model only): X% used"
-    weekly_model_name: str | None = None       # model name captured from parentheses
+    weekly_models: list[tuple[str, float]] = field(default_factory=list)  # [(model_name, pct_0_to_1), ...]
 
     # Reset timestamps (unix)
     session_reset_at: int | None = None
@@ -109,8 +108,7 @@ class UsageStats:
             "usage_pct": round(self.usage_pct * 100, 1) if self.usage_pct is not None else None,
             "session_pct": round(self.session_pct * 100, 1) if self.session_pct is not None else None,
             "weekly_all_pct": round(self.weekly_all_pct * 100, 1) if self.weekly_all_pct is not None else None,
-            "weekly_model_pct": round(self.weekly_model_pct * 100, 1) if self.weekly_model_pct is not None else None,
-            "weekly_model_name": self.weekly_model_name,
+            "weekly_models": [{"name": n, "pct": round(p * 100, 1)} for n, p in self.weekly_models],
             "session_reset_at": self.session_reset_at,
             "weekly_reset_at": self.weekly_reset_at,
             "reset_in_seconds": self.reset_in_seconds,
@@ -153,8 +151,9 @@ def parse_usage_text(text: str) -> UsageStats:
             if m2:
                 model_name = m2.group(1).strip()
                 rest = _WEEKLY_MODEL_RE.sub("", line, count=1)
-                stats.weekly_model_pct = _parse_pct(rest)
-                stats.weekly_model_name = model_name
+                pct = _parse_pct(rest)
+                if pct is not None:
+                    stats.weekly_models.append((model_name, pct))
 
     # Legacy: token counts "1,234,567 / 5,000,000"
     if stats.session_pct is None and stats.tokens_used is None:

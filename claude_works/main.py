@@ -2087,19 +2087,24 @@ Rules:
                 )
                 if has_data:
                     try:
+                        import json as _json
+                        first_model_pct = round(stats.weekly_models[0][1] * 100, 1) if stats.weekly_models else None
+                        weekly_models_json = _json.dumps([{"name": n, "pct": round(p * 100, 1)} for n, p in stats.weekly_models]) if stats.weekly_models else None
                         await self._conn.execute(
                             """INSERT INTO usage_snapshots
                                (tokens_used, tokens_limit, usage_pct,
                                 session_pct, weekly_all_pct, weekly_sonnet_pct,
-                                session_reset_at, weekly_reset_at, sampled_at)
-                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                session_reset_at, weekly_reset_at,
+                                weekly_models_json, sampled_at)
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                             (
                                 stats.tokens_used, stats.tokens_limit,
                                 round(stats.usage_pct * 100, 1) if stats.usage_pct else None,
                                 round(stats.session_pct * 100, 1) if stats.session_pct else None,
                                 round(stats.weekly_all_pct * 100, 1) if stats.weekly_all_pct else None,
-                                round(stats.weekly_model_pct * 100, 1) if stats.weekly_model_pct else None,
+                                first_model_pct,
                                 stats.session_reset_at, stats.weekly_reset_at,
+                                weekly_models_json,
                                 int(time.time()),
                             ),
                         )

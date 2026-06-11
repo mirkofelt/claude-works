@@ -258,6 +258,7 @@ _MIGRATIONS = [
     "ALTER TABLE usage_snapshots ADD COLUMN weekly_sonnet_pct REAL",
     "ALTER TABLE usage_snapshots ADD COLUMN session_reset_at INTEGER",
     "ALTER TABLE usage_snapshots ADD COLUMN weekly_reset_at INTEGER",
+    "ALTER TABLE usage_snapshots ADD COLUMN weekly_models_json TEXT",
 ]
 
 

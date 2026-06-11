@@ -388,8 +388,8 @@ async def get_usage():
     if _daemon_ref and _daemon_ref._usage_state is not None:
         return _daemon_ref._usage_state.as_dict()
     return {"tokens_used": None, "tokens_limit": None, "usage_pct": None, "reset_in_seconds": None,
-            "session_pct": None, "weekly_all_pct": None, "weekly_model_pct": None,
-            "weekly_model_name": None, "session_reset_at": None, "weekly_reset_at": None}
+            "session_pct": None, "weekly_all_pct": None, "weekly_models": [],
+            "session_reset_at": None, "weekly_reset_at": None}
 
 
 @app.get("/api/tasks/{task_id}/logs", dependencies=[Depends(_verify_token)])
@@ -904,9 +904,11 @@ async def get_tokens(period: str = "24h"):
     # Subscription limit snapshots (Claude Max plan: session + weekly percentages)
     llm_cfg = config.section("llm")
     billing_since = int(time.time()) - 2592000
+    import json as _json_snap
     async with conn.execute(
         """SELECT sampled_at, session_pct, weekly_all_pct, weekly_sonnet_pct,
-                  session_reset_at, weekly_reset_at, tokens_used, tokens_limit
+                  session_reset_at, weekly_reset_at, tokens_used, tokens_limit,
+                  weekly_models_json
            FROM usage_snapshots WHERE sampled_at >= ?
            ORDER BY sampled_at ASC""",
         (billing_since,),
@@ -917,7 +919,7 @@ async def get_tokens(period: str = "24h"):
             "sampled_at": r["sampled_at"],
             "session_pct": r["session_pct"],
             "weekly_all_pct": r["weekly_all_pct"],
-            "weekly_sonnet_pct": r["weekly_sonnet_pct"],
+            "weekly_models": _json_snap.loads(r["weekly_models_json"]) if r["weekly_models_json"] else [],
             "session_reset_at": r["session_reset_at"],
             "weekly_reset_at": r["weekly_reset_at"],
             "tokens_used": r["tokens_used"],
