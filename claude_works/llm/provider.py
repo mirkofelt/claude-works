@@ -168,12 +168,6 @@ class CliProvider(LLMProvider):
                 mcp_config_path = f.name
             cmd += ["--mcp-config", mcp_config_path]
 
-        env = os.environ.copy()
-        tor_proxy = "socks5://127.0.0.1:9050"
-        env.setdefault("HTTP_PROXY", tor_proxy)
-        env.setdefault("HTTPS_PROXY", tor_proxy)
-        env.setdefault("ALL_PROXY", tor_proxy)
-
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
