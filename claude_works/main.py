@@ -241,6 +241,7 @@ class Daemon:
         self._chat_agents: dict[int, GeneralistAgent] = {}  # chat_id → persistent chat agent
         self._bot_username: str = ""  # loaded at startup via getMe
         self._mention_only_chats: set[int] = set()  # chat_ids where bot only responds to @mention
+        self._pending_reactions: dict[int, tuple[int, int]] = {}  # kanban task_id → (chat_id, tg_msg_id)
 
     # ──────────────────────────────────────────────────────────
     # Lifecycle
@@ -791,8 +792,13 @@ class Daemon:
                 content=task_content,
                 priority=1 if content.startswith("!") else 0,
             )
-            await self._board.push(task)
+            task_id = await self._board.push(task)
             self._start_typing(chat_id)
+            try:
+                await self._api.set_message_reaction(chat_id, incoming.telegram_message_id, "⏳")
+                self._pending_reactions[task_id] = (chat_id, incoming.telegram_message_id)
+            except Exception:
+                pass
         else:
             asyncio.create_task(
                 self._handle_chat(chat_id, telegram_id, content),
@@ -1096,6 +1102,12 @@ class Daemon:
 
     async def _on_agent_result(self, task: KanbanTask, result: str | None, error: str | None = None) -> None:
         self._stop_typing(task.chat_id)
+        reaction_info = self._pending_reactions.pop(task.id, None) if task.id else None
+        if reaction_info:
+            try:
+                await self._api.set_message_reaction(reaction_info[0], reaction_info[1], None)
+            except Exception:
+                pass
         if task.parent_id is not None:
             return
         if result:
@@ -1349,9 +1361,24 @@ class Daemon:
             if method == "GET":
                 result = clean
                 try:
-                    data = await _github_api(method, endpoint, body or None, config.section("github"))
-                    data_str = _json.dumps(data, ensure_ascii=False, indent=2)
-                    tool_results.append(f"GitHub GET {endpoint}:\n{data_str[:4000]}")
+                    # Use httpx directly for reads — avoids gh CLI dependency
+                    github_cfg = config.section("github")
+                    token = github_cfg.get("token", "")
+                    url = f"https://api.github.com{endpoint}"
+                    headers = {
+                        "Accept": "application/vnd.github+json",
+                        "X-GitHub-Api-Version": "2022-11-28",
+                    }
+                    if token:
+                        headers["Authorization"] = f"Bearer {token}"
+                    async with httpx.AsyncClient(timeout=30.0) as hc:
+                        resp = await hc.get(url, headers=headers)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        data_str = _json.dumps(data, ensure_ascii=False, indent=2)
+                        tool_results.append(f"GitHub GET {endpoint}:\n{data_str[:4000]}")
+                    else:
+                        tool_results.append(f"GitHub GET {endpoint}: HTTP {resp.status_code} — {resp.text[:200]}")
                 except Exception as e:
                     tool_results.append(f"GitHub GET {endpoint} failed: {e}")
             # Write ops: leave tag intact for _on_agent_result security check

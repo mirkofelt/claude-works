@@ -67,13 +67,14 @@ class TelegramAPI:
         return await self._call("sendChatAction", chat_id=chat_id, action=action)
 
     async def set_message_reaction(
-        self, chat_id: int, message_id: int, emoji: str
+        self, chat_id: int, message_id: int, emoji: str | None
     ) -> bool:
+        reaction = [{"type": "emoji", "emoji": emoji}] if emoji else []
         return await self._call(
             "setMessageReaction",
             chat_id=chat_id,
             message_id=message_id,
-            reaction=[{"type": "emoji", "emoji": emoji}],
+            reaction=reaction,
         )
 
     async def send_voice(self, chat_id: int, voice: bytes, caption: str | None = None) -> dict[str, Any]:
