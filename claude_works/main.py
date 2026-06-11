@@ -1630,7 +1630,11 @@ class Daemon:
                 # Send preliminary text while tool loop continues
                 if preliminary_msg_id is None and clean.strip():
                     try:
-                        init = await self._api.send_message(chat_id, clean + "\n\n✎ _working..._")
+                        init = await self._api.send_message(
+                            chat_id,
+                            _md_to_telegram_html(clean) + "\n\n<i>✎ working...</i>",
+                            parse_mode="HTML",
+                        )
                         preliminary_msg_id = init["message_id"]
                         if task_id:
                             self._pending_initial_msgs[task_id] = preliminary_msg_id
