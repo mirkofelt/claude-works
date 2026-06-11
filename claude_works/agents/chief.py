@@ -73,12 +73,18 @@ class ChiefAgent:
 
     async def _run_task(self, task, on_result) -> None:
         from .specialist.generalist import GeneralistAgent
+        user_context = {
+            "user_id": task.user_id,
+            "chat_id": task.chat_id,
+            "is_group": task.chat_id < 0,
+            "sender_name": getattr(task, "sender_name", None) or "",
+        }
         agent = GeneralistAgent(
             task_id=task.id,
-            user_context={"user_id": task.user_id, "chat_id": task.chat_id},
+            user_context=user_context,
             provider=self._get_provider(),
             token_tracker=self._token_tracker,
-            persona=self._system_prompt({"user_id": task.user_id, "chat_id": task.chat_id}),
+            persona=self._system_prompt(user_context),
             agent_class="chief",
         )
         cfg = section("agents")

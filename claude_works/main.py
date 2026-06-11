@@ -400,6 +400,7 @@ class Daemon:
         self._pending_reauth: dict[int, asyncio.subprocess.Process] = {}  # chat_id → proc
         self._chat_agents: dict[int, GeneralistAgent] = {}  # chat_id → persistent chat agent
         self._bot_username: str = ""  # loaded at startup via getMe
+        self._bot_id: int = 0  # loaded at startup via getMe
         self._mention_only_chats: set[int] = set()  # chat_ids where bot only responds to @mention
         self._pending_reactions: dict[int, tuple[int, int]] = {}  # kanban task_id → (chat_id, tg_msg_id)
         self._pending_initial_msgs: dict[int, int] = {}  # kanban task_id → preliminary tg_msg_id
@@ -476,12 +477,19 @@ class Daemon:
         tg_cfg = config.section("telegram")
         self._api = TelegramAPI(tg_cfg["token"])
 
-        try:
-            me = await self._api.get_me()
-            self._bot_username = me.get("result", {}).get("username", "") or me.get("username", "")
-            logger.info("Bot username: @%s", self._bot_username)
-        except Exception as e:
-            logger.warning("getMe failed: %s", e)
+        for _attempt in range(3):
+            try:
+                me = await self._api.get_me()
+                self._bot_username = me.get("result", {}).get("username", "") or me.get("username", "")
+                self._bot_id = me.get("result", {}).get("id", 0) or me.get("id", 0)
+                logger.info("Bot username: @%s id=%d", self._bot_username, self._bot_id)
+                break
+            except Exception as e:
+                logger.warning("getMe attempt %d failed: %s", _attempt + 1, e)
+                if _attempt < 2:
+                    await asyncio.sleep(2 ** _attempt)
+        else:
+            logger.error("getMe failed after 3 attempts — bot will be silent in mention-only groups")
 
         await self._load_mention_only_chats()
 
@@ -999,16 +1007,32 @@ Rules:
 
         # Mention-only mode: log message to DB (done above) but skip response unless @mentioned
         if chat_id in self._mention_only_chats:
-            is_reply_to_bot = bool(msg.get("reply_to_message", {}).get("from", {}).get("is_bot"))
-            is_mentioned = bool(
-                self._bot_username and text and f"@{self._bot_username}" in text
-            )
+            # Reply-to check: only match replies to THIS bot (not any bot)
+            reply_from_id = msg.get("reply_to_message", {}).get("from", {}).get("id", 0)
+            is_reply_to_bot = bool(self._bot_id and reply_from_id == self._bot_id)
+
+            # Mention check: use entities (authoritative) with substring fallback, case-insensitive
+            is_mentioned = False
+            bot_lower = self._bot_username.lower() if self._bot_username else ""
+            if bot_lower and text:
+                entities = msg.get("entities", [])
+                for ent in entities:
+                    if ent.get("type") == "mention":
+                        offset, length = ent.get("offset", 0), ent.get("length", 0)
+                        mention_text = text[offset:offset + length].lstrip("@").lower()
+                        if mention_text == bot_lower:
+                            is_mentioned = True
+                            break
+                if not is_mentioned:
+                    # Fallback: case-insensitive substring
+                    is_mentioned = f"@{bot_lower}" in text.lower()
+
             if not is_mentioned and not is_reply_to_bot:
                 logger.debug("Mention-only: silently logged msg in chat=%d", chat_id)
                 return
-            # Strip @mention from text so agent doesn't see it as part of the request
-            if self._bot_username and text:
-                text = text.replace(f"@{self._bot_username}", "").strip()
+            # Strip @mention from text (case-insensitive) so agent doesn't see it
+            if bot_lower and text:
+                text = re.sub(re.escape(f"@{self._bot_username}"), "", text, flags=re.IGNORECASE).strip()
 
         pending = self._pending_messages.get(chat_id)
         if pending and should_bundle(pending, incoming):
