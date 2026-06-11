@@ -175,7 +175,6 @@ class CliProvider(LLMProvider):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=projects_dir,
-                env=env,
             )
             stdout, stderr = await proc.communicate(input=user_msg.encode())
         finally:
