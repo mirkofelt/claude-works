@@ -78,9 +78,9 @@ class TelegramPoller:
                 for update in updates:
                     uid = update["update_id"]
                     self._offset = uid + 1
-                    # Extract timestamp — callback_query uses its nested message's date
+                    # callback_query is always intentional — never skip based on timestamp
                     if "callback_query" in update:
-                        msg_ts = (update["callback_query"].get("message") or {}).get("date", 0)
+                        msg_ts = 0
                     else:
                         msg_ts = (update.get("message") or update.get("edited_message") or {}).get("date", 0)
                     if msg_ts and msg_ts <= self._skip_before_ts:
