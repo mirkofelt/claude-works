@@ -159,6 +159,23 @@ class KanbanBoard:
             rows = await cur.fetchall()
         return [_row_to_task(r) for r in rows]
 
+    async def push_active(self, task: KanbanTask, agent_id: str) -> int:
+        """Insert task directly into IN_PROGRESS — for direct-chat tasks bypassing controller."""
+        now = int(time.time())
+        async with self._conn.execute(
+            """INSERT INTO kanban_tasks
+               (chat_id, user_id, content, lane, agent_class, agent_id, priority,
+                created_at, assigned_at, started_at, message_id, parent_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (task.chat_id, task.user_id, task.content, Lane.IN_PROGRESS.value,
+             "chief", agent_id, task.priority, now, now, now,
+             task.message_id, task.parent_id),
+        ) as cur:
+            task_id = cur.lastrowid
+        await self._conn.commit()
+        logger.info("Kanban push_active id=%d chat=%d agent=%s", task_id, task.chat_id, agent_id)
+        return task_id  # type: ignore[return-value]
+
     async def push_child(self, task: KanbanTask, agent_class: AgentClass) -> int:
         """Insert child task directly into ASSIGNED lane, bypassing controller routing."""
         now = int(time.time())

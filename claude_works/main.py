@@ -1489,8 +1489,9 @@ class Daemon:
         return [{"role": r["role"], "content": r["text"]} for r in reversed(rows)]
 
     async def _handle_chat(self, chat_id: int, user_id: int, content: str) -> None:
-        """Handle a conversational message directly, bypassing kanban."""
+        """Handle a conversational message directly, bypassing kanban controller."""
         self._start_typing(chat_id)
+        task_id: int | None = None
         try:
             agent = self._chat_agents.get(chat_id)
             if agent is None:
@@ -1515,6 +1516,10 @@ class Daemon:
                     agent._messages = history
                     logger.info("Chat %d: restored %d history messages from DB", chat_id, len(history))
                 self._chat_agents[chat_id] = agent
+            # Insert real kanban task so it's visible in Web UI
+            if self._board:
+                proto = KanbanTask(id=None, chat_id=chat_id, user_id=user_id, content=content)
+                task_id = await self._board.push_active(proto, agent_id="chat")
             result = await asyncio.wait_for(agent.run(content), timeout=300.0)
             for _ in range(5):
                 clean, tool_feedback = await self._exec_tool_tags(result)
@@ -1526,13 +1531,22 @@ class Daemon:
                     agent.run(f"[Tool results]\n{tool_feedback}\n\nContinue with the task."),
                     timeout=300.0,
                 )
-            fake_task = KanbanTask(id=None, chat_id=chat_id, user_id=user_id, content=content)
-            await self._on_agent_result(fake_task, result, None)
+            if task_id and self._board:
+                await self._board.complete(task_id, result[:2000] if result else "")
+            real_task = KanbanTask(id=task_id, chat_id=chat_id, user_id=user_id, content=content)
+            await self._on_agent_result(real_task, result, None)
         except asyncio.TimeoutError:
             self._stop_typing(chat_id)
+            if task_id and self._board:
+                await self._board.fail(task_id, "timeout (300s)")
             await self._api.send_message(chat_id, "Timeout.")
         except Exception:
             self._stop_typing(chat_id)
+            if task_id and self._board:
+                try:
+                    await self._board.fail(task_id, "exception in chat handler")
+                except Exception:
+                    pass
             logger.exception("Chat handler error for chat=%d", chat_id)
 
     async def _exec_tool_tags(self, result: str) -> "tuple[str, str | None]":
