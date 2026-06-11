@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import json
 import logging
 import re
 import urllib.parse
@@ -285,12 +286,18 @@ class Daemon:
         )
         self._coordinator.start()
 
-        self._poller = TelegramPoller(self._api, self._on_update)
+        startup_ts = int(time.time())
+        self._poller = TelegramPoller(self._api, self._on_update, skip_before_ts=startup_ts)
         self._poller.start()
 
         cfg = config.section("users")
         tg_cfg = config.section("telegram")
         admin_ids = cfg.get("admin_ids", tg_cfg.get("admin_chat_ids", []))
+
+        # Startup CLI auth check
+        llm_cfg = config.section("llm")
+        if llm_cfg.get("provider") == "cli":
+            asyncio.create_task(self._check_cli_auth_on_startup(admin_ids), name="startup-auth-check")
         self._security.configure(self._api.send_message, admin_ids)
 
         asyncio.create_task(self._config_watcher_loop(), name="config-watcher")
@@ -855,6 +862,36 @@ class Daemon:
                 return
             await self._start_telegram_reauth(chat_id)
             return
+
+    async def _check_cli_auth_on_startup(self, admin_ids: list[int]) -> None:
+        """Check CLI auth on startup and notify admins if not authenticated."""
+        await asyncio.sleep(3.0)  # let poller settle first
+        llm_cfg = config.section("llm")
+        binary = llm_cfg.get("cli_binary") or "claude"
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                binary, "-p", "ping", "--output-format", "json",
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15.0)
+            if proc.returncode != 0:
+                try:
+                    result_text = json.loads(stdout.decode()).get("result", "")
+                except Exception:
+                    result_text = ""
+                if re.search(r"not logged in|login|auth", result_text, re.IGNORECASE):
+                    for admin_id in admin_ids:
+                        try:
+                            await self._api.send_message(
+                                admin_id,
+                                "⚠️ Claude CLI nicht eingeloggt. Bitte /reauth ausführen."
+                            )
+                        except Exception:
+                            pass
+        except Exception as e:
+            logger.warning("Startup CLI auth check failed: %s", e)
 
     async def _start_telegram_reauth(self, chat_id: int) -> None:
         cfg = config.section("llm")

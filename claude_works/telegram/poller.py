@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from typing import Callable, Awaitable
 
 from .api import TelegramAPI
@@ -12,17 +13,18 @@ _ALLOWED_UPDATES = ["message", "edited_message", "message_reaction", "callback_q
 
 
 class TelegramPoller:
-    def __init__(self, api: TelegramAPI, on_update: UpdateHandler) -> None:
+    def __init__(self, api: TelegramAPI, on_update: UpdateHandler, skip_before_ts: int | None = None) -> None:
         self._api = api
         self._on_update = on_update
         self._offset: int = 0
         self._running = False
         self._task: asyncio.Task | None = None
+        self._skip_before_ts: int = skip_before_ts if skip_before_ts is not None else int(time.time())
 
     def start(self) -> None:
         self._running = True
         self._task = asyncio.create_task(self._poll_loop(), name="telegram-poller")
-        logger.info("Poller started")
+        logger.info("Poller started (skipping messages before ts=%d)", self._skip_before_ts)
 
     async def stop(self) -> None:
         self._running = False
@@ -50,9 +52,14 @@ class TelegramPoller:
                 backoff = 1
                 for update in updates:
                     uid = update["update_id"]
+                    self._offset = uid + 1
+                    # Skip messages that arrived before bot startup
+                    msg_ts = (update.get("message") or update.get("edited_message") or {}).get("date", 0)
+                    if msg_ts and msg_ts < self._skip_before_ts:
+                        logger.debug("Skipping stale update %d (ts=%d < %d)", uid, msg_ts, self._skip_before_ts)
+                        continue
                     utype = next((k for k in update if k != "update_id"), "unknown")
                     logger.debug("Update %d type=%s", uid, utype)
-                    self._offset = uid + 1
                     asyncio.create_task(
                         self._dispatch(update),
                         name=f"update-{uid}",
