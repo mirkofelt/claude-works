@@ -31,14 +31,31 @@ if [ ! -L /root/.claude ]; then
 fi
 
 # Start Tor daemon in background (provides SOCKS5 proxy at 127.0.0.1:9050)
-# --User root required because container runs as root
 if command -v tor >/dev/null 2>&1; then
     mkdir -p /var/lib/tor /run/tor
-    tor --RunAsDaemon 1 --User root \
+    tor --RunAsDaemon 1 \
         --DataDirectory /var/lib/tor \
         --PidFile /run/tor/tor.pid \
-        --Log "warn file $LOG_DIR/tor.log" >> "$INIT_LOG" 2>&1 || \
-        echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] tor failed to start (non-fatal)" >> "$INIT_LOG"
+        --Log "warn file $LOG_DIR/tor.log" >> "$INIT_LOG" 2>&1
+    TOR_EXIT=$?
+    if [ $TOR_EXIT -ne 0 ]; then
+        echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] tor failed to start (exit $TOR_EXIT)" >> "$INIT_LOG"
+    else
+        # Wait until Tor's SOCKS port is accepting connections (max 90s)
+        echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] waiting for Tor bootstrap..." >> "$INIT_LOG"
+        i=0
+        while [ $i -lt 90 ]; do
+            if (echo "" | nc -w1 127.0.0.1 9050) >/dev/null 2>&1; then
+                echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Tor ready on :9050 (${i}s)" >> "$INIT_LOG"
+                break
+            fi
+            sleep 1
+            i=$((i + 1))
+        done
+        if [ $i -ge 90 ]; then
+            echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Tor not ready after 90s (continuing anyway)" >> "$INIT_LOG"
+        fi
+    fi
 fi
 
 exec "$@"
