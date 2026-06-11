@@ -1365,6 +1365,18 @@ function _fmtResetIn(secs) {
   const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60);
   return h > 0 ? h + 'h ' + m + 'm' : m + 'm';
 }
+function _fmtResetAt(unix) {
+  if (!unix) return '';
+  const d = new Date(unix * 1000);
+  return d.toLocaleString([], {weekday:'short', month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'});
+}
+function _resetLabel(secs, unix) {
+  if (secs == null && !unix) return '';
+  const parts = [];
+  if (secs != null) parts.push('in ' + _fmtResetIn(secs));
+  if (unix) parts.push(_fmtResetAt(unix));
+  return 'resets ' + parts.join(' · ');
+}
 function _gauge(pct, color) {
   return `<div style="flex:1;background:var(--border);border-radius:3px;height:6px;overflow:hidden">
     <div style="height:100%;border-radius:3px;width:${Math.min(100,pct)}%;background:${color}"></div></div>
@@ -1385,15 +1397,15 @@ async function loadLimitGauge() {
     const rows = [];
     if (d.session_pct != null) {
       const c = d.session_pct >= 90 ? 'var(--red)' : d.session_pct >= 70 ? 'var(--yellow)' : 'var(--green)';
-      rows.push(`<div style="margin-bottom:8px"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px"><span style="font-size:11px;color:var(--muted)">Session</span><span style="font-size:11px;color:var(--muted)">${sesReset != null ? 'resets in ' + _fmtResetIn(sesReset) : ''}</span></div><div style="display:flex;align-items:center;gap:8px">${_gauge(d.session_pct, c)}</div></div>`);
+      rows.push(`<div style="margin-bottom:8px"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px"><span style="font-size:11px;color:var(--muted)">Session</span><span style="font-size:11px;color:var(--muted)">${_resetLabel(sesReset, d.session_reset_at)}</span></div><div style="display:flex;align-items:center;gap:8px">${_gauge(d.session_pct, c)}</div></div>`);
     }
     if (d.weekly_all_pct != null) {
       const c = d.weekly_all_pct >= 90 ? 'var(--red)' : d.weekly_all_pct >= 70 ? 'var(--yellow)' : 'var(--green)';
-      rows.push(`<div style="margin-bottom:8px"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px"><span style="font-size:11px;color:var(--muted)">Week (all models)</span><span style="font-size:11px;color:var(--muted)">${wkReset != null ? 'resets in ' + _fmtResetIn(wkReset) : ''}</span></div><div style="display:flex;align-items:center;gap:8px">${_gauge(d.weekly_all_pct, c)}</div></div>`);
+      rows.push(`<div style="margin-bottom:8px"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px"><span style="font-size:11px;color:var(--muted)">Week (all models)</span><span style="font-size:11px;color:var(--muted)">${_resetLabel(wkReset, d.weekly_reset_at)}</span></div><div style="display:flex;align-items:center;gap:8px">${_gauge(d.weekly_all_pct, c)}</div></div>`);
     }
     (d.weekly_models || []).forEach(wm => {
       const c = wm.pct >= 90 ? 'var(--red)' : wm.pct >= 70 ? 'var(--yellow)' : 'var(--green)';
-      rows.push(`<div style="margin-bottom:8px"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px"><span style="font-size:11px;color:var(--muted)">Week (${wm.name} only)</span></div><div style="display:flex;align-items:center;gap:8px">${_gauge(wm.pct, c)}</div></div>`);
+      rows.push(`<div style="margin-bottom:8px"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px"><span style="font-size:11px;color:var(--muted)">Week (${wm.name} only)</span><span style="font-size:11px;color:var(--muted)">${_resetLabel(wkReset, d.weekly_reset_at)}</span></div><div style="display:flex;align-items:center;gap:8px">${_gauge(wm.pct, c)}</div></div>`);
     });
     // Replace card innards
     const inner = card.querySelector('div');
