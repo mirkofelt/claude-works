@@ -734,14 +734,15 @@
       </div>
     </details>
 
-    <details class="cfg-section">
+    <details class="cfg-section" id="pluginConfigSection">
       <summary>Plugin Config</summary>
       <div class="cfg-body">
-        <div class="field wide">
-          <label>Plugin credentials and config (JSON object)</label>
-          <textarea id="s_plugins" rows="8" placeholder='{"loxone": {"url": "http://...", "username": "...", "password": "..."}, "fronius": {"url": "http://..."}}'></textarea>
-          <div style="font-size:11px;color:var(--muted);margin-top:4px">Accessible via <code>GET /api/plugins/config/{plugin_name}</code> — use in MCP servers to avoid storing credentials in chat.</div>
+        <div id="pluginConfigForm" style="display:flex;flex-direction:column;gap:12px"></div>
+        <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
+          <input type="text" id="newPluginName" placeholder="Plugin name (e.g. loxone)" style="width:180px;padding:.4rem .6rem;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px;font-size:.85rem">
+          <button class="btn btn-ghost" onclick="pluginAddPlugin()" style="font-size:.85rem">+ Add plugin</button>
         </div>
+        <div style="font-size:11px;color:var(--muted);margin-top:8px">Agents set field templates via <code>PLUGIN_CONFIG_SET</code>. Readable via <code>GET /api/plugins/config/{name}</code>.</div>
       </div>
     </details>
 
@@ -1646,6 +1647,78 @@ function _set(id, v) { const e = document.getElementById(id); if (e && v != null
 function _setj(id, v) { _set(id, v != null ? JSON.stringify(v, null, 2) : ''); }
 function _setb(id, v) { const e = document.getElementById(id); if (e) e.value = v ? 'true' : 'false'; }
 
+function _isSecretField(key) {
+  return /password|secret|token|key|api_key|apikey/i.test(key);
+}
+
+function pluginRender(plugins) {
+  const form = document.getElementById('pluginConfigForm');
+  form.innerHTML = '';
+  for (const [name, fields] of Object.entries(plugins || {})) {
+    form.appendChild(_pluginBlock(name, fields));
+  }
+}
+
+function _pluginBlock(name, fields) {
+  const wrap = document.createElement('div');
+  wrap.dataset.pluginName = name;
+  wrap.style.cssText = 'background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px 12px';
+  const header = document.createElement('div');
+  header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:8px';
+  header.innerHTML = `<span style="font-weight:600;color:var(--accent);font-size:.9rem">${esc(name)}</span>
+    <div style="display:flex;gap:6px">
+      <button class="btn btn-ghost" style="font-size:.75rem;padding:.1rem .4rem" onclick="pluginAddField(this)">+ field</button>
+      <button class="btn btn-ghost" style="font-size:.75rem;padding:.1rem .4rem;color:var(--red)" onclick="this.closest('[data-plugin-name]').remove()">✕</button>
+    </div>`;
+  wrap.appendChild(header);
+  const fieldsDiv = document.createElement('div');
+  fieldsDiv.className = 'plugin-fields';
+  fieldsDiv.style.cssText = 'display:flex;flex-direction:column;gap:6px';
+  for (const [k, v] of Object.entries(fields || {})) {
+    fieldsDiv.appendChild(_pluginFieldRow(k, v));
+  }
+  wrap.appendChild(fieldsDiv);
+  return wrap;
+}
+
+function _pluginFieldRow(key, value) {
+  const row = document.createElement('div');
+  row.style.cssText = 'display:grid;grid-template-columns:140px 1fr 24px;gap:6px;align-items:center';
+  const isSecret = _isSecretField(key);
+  row.innerHTML = `<input type="text" value="${esc(key)}" placeholder="field name" style="padding:.35rem .5rem;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:4px;font-size:.82rem" class="plugin-field-key">
+    <input type="${isSecret ? 'password' : 'text'}" value="${esc(String(value ?? ''))}" placeholder="${isSecret ? '••••••••' : 'value'}" style="padding:.35rem .5rem;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:4px;font-size:.82rem" class="plugin-field-val">
+    <button style="background:none;border:none;color:var(--red);cursor:pointer;font-size:14px;padding:0;line-height:1" onclick="this.parentNode.remove()">✕</button>`;
+  return row;
+}
+
+function pluginAddPlugin() {
+  const name = document.getElementById('newPluginName').value.trim();
+  if (!name) return;
+  document.getElementById('newPluginName').value = '';
+  const form = document.getElementById('pluginConfigForm');
+  form.appendChild(_pluginBlock(name, {}));
+}
+
+function pluginAddField(btn) {
+  const fieldsDiv = btn.closest('[data-plugin-name]').querySelector('.plugin-fields');
+  fieldsDiv.appendChild(_pluginFieldRow('', ''));
+}
+
+function pluginRead() {
+  const result = {};
+  for (const block of document.querySelectorAll('#pluginConfigForm [data-plugin-name]')) {
+    const name = block.dataset.pluginName;
+    const fields = {};
+    for (const row of block.querySelectorAll('.plugin-fields > div')) {
+      const k = row.querySelector('.plugin-field-key').value.trim();
+      const v = row.querySelector('.plugin-field-val').value;
+      if (k) fields[k] = v;
+    }
+    result[name] = fields;
+  }
+  return result;
+}
+
 async function loadSettings() {
   const msg = document.getElementById('settingsMsg');
   try {
@@ -1685,7 +1758,7 @@ async function loadSettings() {
     _set('s_sv_backoff', JSON.stringify(sv.restart_backoff_seconds || []));
     _set('s_log_dir', log.dir); _set('s_log_level', log.level || 'INFO');
     _setb('s_mcp_enabled', mcp.enabled); _setj('s_mcp_servers', mcp.servers || []);
-    _setj('s_plugins', c.plugins || {});
+    pluginRender(c.plugins || {});
     updateCliAuthVisibility();
     msg.style.display = 'none';
   } catch (e) {
@@ -1743,7 +1816,7 @@ async function saveSettings() {
   try {
     const tiers = _sj('s_ag_tiers'), models = _sj('s_ag_models');
     const secRules = _sj('s_sec_rules'), pricing = _sj('s_sp_pricing');
-    const reactionMap = reactionMapRead(), mcpServers = _sj('s_mcp_servers'), pluginsCfg = _sj('s_plugins');
+    const reactionMap = reactionMapRead(), mcpServers = _sj('s_mcp_servers');
     const backoff = _sj('s_sv_backoff');
     const adminIds = _sa('s_tg_admin_ids');
     cfg = {
@@ -1760,7 +1833,7 @@ async function saveSettings() {
       supervisor: { health_check_interval: _sn('s_sv_health'), max_restart_attempts: _sn('s_sv_restarts'), restart_backoff_seconds: backoff || [5,15,60] },
       logging: { dir: _sv('s_log_dir') || '/data/logs', level: _sv('s_log_level') || 'INFO' },
       mcp: { enabled: _sb('s_mcp_enabled'), servers: mcpServers || [] },
-      plugins: pluginsCfg || {},
+      plugins: pluginRead(),
     };
   } catch (e) {
     msg.textContent = 'Invalid JSON: ' + e.message; msg.style.color = 'var(--red)'; msg.style.display = 'inline'; return;

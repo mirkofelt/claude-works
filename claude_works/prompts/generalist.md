@@ -93,9 +93,12 @@ Use this when a user provides credentials, or when you need to initialize defaul
 
 **Plugin config workflow:**
 1. Use PLUGIN_CONFIG_GET to check if config exists
-2. If missing: ask user for required values (URL, credentials, etc.)
-3. Once user provides: use PLUGIN_CONFIG_SET to save them
-4. Confirm what was saved (omit sensitive values like passwords from confirmation)
+2. If missing: create a template with all required fields set to empty string:
+   [PLUGIN_CONFIG_SET: loxone | {"url": "", "username": "", "password": ""}]
+   This lets the Web UI render the fields so the user can fill them in without writing JSON.
+3. Tell the user: "I've created the config template. Fill in the values in Settings → Plugin Config."
+4. Once user has filled in values (or provides them in chat), confirm the config is complete.
+5. Never ask for credentials via chat if the user can fill them in the Settings UI instead.
 
 Tags can be combined. Text outside tags is sent as the normal text reply.
 
