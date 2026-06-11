@@ -45,8 +45,8 @@ async def _inject_knowledge(content: str, user_id: int | None) -> str:
         body = e["content"][:_KB_ENTRY_MAX_CHARS]
         if len(e["content"]) > _KB_ENTRY_MAX_CHARS:
             body += "…"
-        lines.append(f"- [{e['type']}]{tag_str} **{e['title']}**: {body}")
-    kb_block = "## Relevant knowledge\n" + "\n".join(lines)
+        lines.append(f"- ID:{e['id']} [{e['type']}]{tag_str} **{e['title']}**: {body}")
+    kb_block = "## Relevant knowledge\n(use KB_UPDATE:<id> to update, KB_SAVE to add new)\n" + "\n".join(lines)
     return f"{kb_block}\n\n---\n\n{content}"
 
 

@@ -156,6 +156,51 @@ def _extract_git_clone_tag(text: str) -> "tuple[str, tuple[str, str] | None]":
     return clean, (m.group(1).strip(), m.group(2).strip())
 
 
+def _extract_kb_search_tag(text: str) -> "tuple[str, str | None]":
+    """Extract [KB_SEARCH: query]. Returns (clean_text, query or None)."""
+    m = re.search(r'\[KB_SEARCH:\s*([^\]]+)\]', text)
+    if not m:
+        return text, None
+    clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
+    return clean, m.group(1).strip()
+
+
+def _extract_kb_save_tag(text: str) -> "tuple[str, tuple[str, str, list, str] | None]":
+    """Extract [KB_SAVE: title | type | tags | content]. Returns (clean_text, (title, type, tags, content) or None)."""
+    m = re.search(r'\[KB_SAVE:\s*([^\]]+)\]', text, re.DOTALL)
+    if not m:
+        return text, None
+    clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
+    parts = [p.strip() for p in m.group(1).split('|', 3)]
+    if not parts[0]:
+        return text, None
+    title = parts[0]
+    entry_type = parts[1] if len(parts) > 1 and parts[1] else "note"
+    raw_tags = parts[2] if len(parts) > 2 else ""
+    content = parts[3] if len(parts) > 3 else ""
+    tags = [t.strip() for t in raw_tags.split(',') if t.strip()]
+    return clean, (title, entry_type, tags, content)
+
+
+def _extract_kb_update_tag(text: str) -> "tuple[str, tuple | None]":
+    """Extract [KB_UPDATE: id | title | type | tags | content]. Returns (clean_text, (id, title, type, tags, content) or None)."""
+    m = re.search(r'\[KB_UPDATE:\s*([^\]]+)\]', text, re.DOTALL)
+    if not m:
+        return text, None
+    clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
+    parts = [p.strip() for p in m.group(1).split('|', 4)]
+    try:
+        entry_id = int(parts[0])
+    except (ValueError, IndexError):
+        return text, None
+    title = parts[1] if len(parts) > 1 and parts[1] else None
+    entry_type = parts[2] if len(parts) > 2 and parts[2] else None
+    raw_tags = parts[3] if len(parts) > 3 else None
+    tags = [t.strip() for t in raw_tags.split(',') if t.strip()] if raw_tags else None
+    content = parts[4] if len(parts) > 4 and parts[4] else None
+    return clean, (entry_id, title, entry_type, tags, content)
+
+
 _PLUGINS_DIR = os.environ.get("PLUGINS_DIR", "/data/plugins")
 _URL_RE = re.compile(r'https?://[^\s<>"\']+')
 _MAX_FETCH_URLS = 3
@@ -1124,6 +1169,8 @@ class Daemon:
             clean_result, read_email_args = _extract_read_email_tag(clean_result)
             clean_result, github_args = _extract_github_api_tag(clean_result)
             clean_result, git_clone_args = _extract_git_clone_tag(clean_result)
+            clean_result, kb_save_args = _extract_kb_save_tag(clean_result)
+            clean_result, kb_update_args = _extract_kb_update_tag(clean_result)
             reply_markup = {"inline_keyboard": keyboard} if keyboard is not None else None
 
             if clean_result.strip():
@@ -1244,6 +1291,37 @@ class Daemon:
                     self._do_git_clone(task.chat_id, repo_url, target),
                     name=f"git-clone-{safe_name}",
                 )
+
+            if kb_save_args:
+                title, entry_type, tags, content = kb_save_args
+                if title and content:
+                    try:
+                        conn = await db.get_conn()
+                        entry_id = await knowledge_store.add(
+                            conn, title=title, content=content,
+                            type=entry_type, tags=tags, source="agent",
+                            user_id=task.user_id,
+                        )
+                        await conn.close()
+                        logger.info("KB_SAVE: created entry %d by agent for task=%d", entry_id, task.id)
+                    except Exception as e:
+                        logger.warning("KB_SAVE failed for task=%d: %s", task.id, e)
+
+            if kb_update_args:
+                entry_id, title, entry_type, tags, content = kb_update_args
+                try:
+                    conn = await db.get_conn()
+                    ok = await knowledge_store.update(
+                        conn, entry_id,
+                        title=title, content=content, type=entry_type, tags=tags,
+                    )
+                    await conn.close()
+                    if ok:
+                        logger.info("KB_UPDATE: entry %d updated by agent for task=%d", entry_id, task.id)
+                    else:
+                        logger.warning("KB_UPDATE: entry %d not found for task=%d", entry_id, task.id)
+                except Exception as e:
+                    logger.warning("KB_UPDATE failed for task=%d: %s", task.id, e)
 
             await self._conn.execute(
                 """INSERT INTO bot_messages (telegram_message_id, chat_id, task_id, text, sent_at)
@@ -1418,6 +1496,28 @@ class Daemon:
                 tool_results.append(f"GIT_CLONE {repo_url}: timeout (120s)")
             except Exception as e:
                 tool_results.append(f"GIT_CLONE {repo_url}: error: {e}")
+
+        clean, kb_query = _extract_kb_search_tag(result)
+        if kb_query:
+            result = clean
+            try:
+                conn = await db.get_conn()
+                entries = await knowledge_store.search(conn, kb_query, limit=10)
+                await conn.close()
+                if entries:
+                    lines = []
+                    for e in entries:
+                        tags = ", ".join(e.get("tags") or [])
+                        tag_str = f" [{tags}]" if tags else ""
+                        body = e["content"][:400]
+                        if len(e["content"]) > 400:
+                            body += "…"
+                        lines.append(f"- ID:{e['id']} [{e['type']}]{tag_str} **{e['title']}**: {body}")
+                    tool_results.append(f"KB_SEARCH '{kb_query}' ({len(entries)} results):\n" + "\n".join(lines))
+                else:
+                    tool_results.append(f"KB_SEARCH '{kb_query}': no results found")
+            except Exception as e:
+                tool_results.append(f"KB_SEARCH failed: {e}")
 
         return result, "\n\n".join(tool_results) if tool_results else None
 
