@@ -30,6 +30,53 @@ if [ ! -L /root/.claude ]; then
     ln -s "$DATA_DIR/.claude" /root/.claude
 fi
 
+# Bootstrap ClaudeClaw permissions so the agent can write to /data and run tools.
+# Merges into existing settings.json — never removes existing entries.
+python3 - <<'PYEOF'
+import json, os
+path = "/data/.claude/settings.json"
+settings = {}
+if os.path.exists(path):
+    try:
+        with open(path) as f:
+            settings = json.load(f)
+    except Exception:
+        pass
+perms = settings.setdefault("permissions", {})
+allow = perms.setdefault("allow", [])
+required = [
+    "Write(/data/**)",
+    "Edit(/data/**)",
+    "Bash(mkdir *)",
+    "Bash(git *)",
+    "Bash(uv *)",
+    "Bash(python *)",
+    "Bash(python3 *)",
+    "Bash(pip *)",
+    "Bash(pip3 *)",
+    "Bash(curl *)",
+    "Bash(nc *)",
+    "Bash(cat *)",
+    "Bash(ls *)",
+    "Bash(find *)",
+    "Bash(grep *)",
+    "Bash(echo *)",
+    "Bash(cp *)",
+    "Bash(mv *)",
+    "Bash(rm *)",
+    "Bash(chmod *)",
+    "Bash(touch *)",
+    "Bash(tar *)",
+    "Bash(unzip *)",
+]
+for p in required:
+    if p not in allow:
+        allow.append(p)
+os.makedirs(os.path.dirname(path), exist_ok=True)
+with open(path, "w") as f:
+    json.dump(settings, f, indent=2)
+PYEOF
+
 # Start Tor daemon in background (provides SOCKS5 proxy at 127.0.0.1:9050)
 if command -v tor >/dev/null 2>&1; then
     mkdir -p /var/lib/tor /run/tor
