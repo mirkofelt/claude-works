@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Architecture — Claude Works</title>
+  <title>Claude Works — Architecture — Claude Works</title>
   <link rel="icon" type="image/png" href="icon.png">
   <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -11,7 +11,9 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, Bl
 a { color: var(--accent); text-decoration: none; } a:hover { text-decoration: underline; }
 header { border-bottom: 1px solid var(--border); padding: 1rem 2rem; display: flex; align-items: center; gap: .75rem; }
 header nav { margin-left: auto; display: flex; gap: 1.5rem; font-size: .9rem; }
-header nav a { color: var(--muted); } header nav a:hover { color: var(--text); text-decoration: none; } header nav a.ext { color: var(--accent); }
+header nav a { color: var(--muted); } header nav a:hover { color: var(--text); text-decoration: none; }
+header nav a.active { color: var(--text); font-weight: 600; }
+header nav a.ext { color: var(--accent); }
 .content { max-width: 860px; margin: 0 auto; padding: 3rem 2rem 5rem; }
 h1 { font-size: 2rem; font-weight: 700; margin-bottom: 1.5rem; letter-spacing: -.02em; }
 h2 { font-size: 1.35rem; font-weight: 600; margin: 2.5rem 0 .75rem; padding-bottom: .4rem; border-bottom: 1px solid var(--border); }
@@ -27,7 +29,8 @@ td { padding: .55rem 1rem; border: 1px solid var(--border); }
 tr:nth-child(even) td { background: rgba(255,255,255,.02); }
 hr { border: none; border-top: 1px solid var(--border); margin: 2rem 0; }
 footer { border-top: 1px solid var(--border); padding: 1.5rem 2rem; text-align: center; font-size: .85rem; color: var(--muted); }
-</style>
+.badge { display:inline-block; background:var(--surface); border:1px solid var(--border); border-radius:4px; padding:.1em .5em; font-size:.8em; font-family:monospace; }
+  </style>
 </head>
 <body>
 
@@ -39,16 +42,20 @@ footer { border-top: 1px solid var(--border); padding: 1.5rem 2rem; text-align: 
   <nav>
     <a href="index.html">Home</a>
     <a href="setup.html">Setup</a>
-    <a href="architecture.html">Architecture</a>
+    <a href="architecture.html" class="active">Architecture</a>
     <a href="requirements.html">Requirements</a>
+    <a href="dev-mode.html">Dev Mode</a>
     <a href="https://github.com/mirkofelt/claude-works" target="_blank" rel="noopener" class="ext">GitHub ↗</a>
   </nav>
 </header>
 
 <div class="content">
 <h1>Claude Works — Architecture</h1>
+
 <h2>Process Structure</h2>
-<pre><code>supervisor/supervisor.py     ← watchdog process (separate)
+
+<pre><code>
+supervisor/supervisor.py     ← watchdog process (separate)
 └── claude_works/main.py            ← Daemon (mode state machine)
     ├── ModeManager           ← daemon mode lifecycle (STARTUP→INITIALIZE|MIGRATE|RUN↔REPAIR)
     ├── TelegramPoller        ← long-poll loop (RUN mode only)
@@ -64,61 +71,29 @@ footer { border-top: 1px solid var(--border); padding: 1.5rem 2rem; text-align: 
     ├── SecuritySupervisor    ← approval gating
     └── uvicorn (FastAPI)     ← Web UI + REST API (available in ALL modes)
 </code></pre>
+
 <p>The supervisor is optional. Daemon runs standalone via <code>python -m claude_works.main</code>.</p>
-<hr />
+
+<hr>
+
 <h2>Daemon Modes</h2>
+
 <p>Daemon runs a state machine with five modes:</p>
-<table>
-<thead>
-<tr>
-<th>Mode</th>
-<th>Trigger</th>
-<th>Web UI</th>
-<th>Poller</th>
-<th>Coordinator</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>STARTUP</td>
-<td>Process start</td>
-<td>✓ (default port)</td>
-<td>✗</td>
-<td>✗</td>
-</tr>
-<tr>
-<td>INITIALIZE</td>
-<td>No valid config/DB</td>
-<td>✓</td>
-<td>✗</td>
-<td>✗</td>
-</tr>
-<tr>
-<td>MIGRATE</td>
-<td>Config/DB exists but wrong schema</td>
-<td>✓</td>
-<td>✗</td>
-<td>✗</td>
-</tr>
-<tr>
-<td>RUN</td>
-<td>All checks pass</td>
-<td>✓</td>
-<td>✓</td>
-<td>✓</td>
-</tr>
-<tr>
-<td>REPAIR</td>
-<td>Runtime error detected</td>
-<td>✓</td>
-<td>✗</td>
-<td>✗</td>
-</tr>
-</tbody>
-</table>
+
+<table><thead><tr><th>Mode</th><th>Trigger</th><th>Web UI</th><th>Poller</th><th>Coordinator</th></tr></thead><tbody>
+<tr><td>STARTUP</td><td>Process start</td><td>✓ (default port)</td><td>✗</td><td>✗</td></tr>
+<tr><td>INITIALIZE</td><td>No valid config/DB</td><td>✓</td><td>✗</td><td>✗</td></tr>
+<tr><td>MIGRATE</td><td>Config/DB exists but wrong schema</td><td>✓</td><td>✗</td><td>✗</td></tr>
+<tr><td>RUN</td><td>All checks pass</td><td>✓</td><td>✓</td><td>✓</td></tr>
+<tr><td>REPAIR</td><td>Runtime error detected</td><td>✓</td><td>✗</td><td>✗</td></tr>
+</tbody></table>
+
 <p>Web UI starts <strong>first</strong> (before mode detection) — always available.</p>
+
 <h3>Mode Transitions</h3>
-<pre><code>STARTUP → detect_startup_mode()
+
+<pre><code>
+STARTUP → detect_startup_mode()
          → INITIALIZE  (no config file, OR telegram/auth token is placeholder, OR DB init fails + no DB)
          → MIGRATE     (DB init fails + DB exists → schema mismatch)
          → RUN         (all checks pass)
@@ -129,20 +104,30 @@ REPAIR → RUN           (exit_repair() called after fix)
 INITIALIZE → RUN       (config becomes valid; _init_poll_loop() polls every 10s)
 MIGRATE → *            (MechanicAgent applies migration → re-runs detect_startup_mode())
 </code></pre>
+
 <h3>INITIALIZE mode</h3>
+
 <p>Polls <code>detect_startup_mode()</code> every 10 seconds. No restart required — when config becomes valid, automatically transitions to RUN and starts all subsystems.</p>
+
 <p>On entry: generates a single-use <code>setup_token</code> (32-char hex), logs it to stdout, registers it with the web server via <code>set_setup_token()</code>. The Web UI detects INITIALIZE mode on load and shows a setup overlay where the operator enters the token and configures the instance. <code>POST /api/setup/save</code> validates fields, writes to the <code>daemon_config</code> DB table, and invalidates the token. The next <code>_init_poll_loop</code> tick picks up the saved config and auto-transitions to RUN.</p>
+
 <h3>MIGRATE mode</h3>
+
 <p>MechanicAgent invoked with <code>MechanicContext.MIGRATE</code>. Diagnoses schema/config mismatch, applies migration (ALTER TABLE, missing config keys). After completion, re-runs mode detection.</p>
+
 <h3>REPAIR mode</h3>
+
 <p>AgentCoordinator stopped. MechanicAgent invoked with <code>MechanicContext.REPAIR</code>. Admin messages (Telegram) routed to <code>mechanic.followup()</code>. Exit via <code>/exit_repair</code> command or Web UI.</p>
+
 <h3><code>claude_works/mode.py</code></h3>
-<pre><code class="language-python">class DaemonMode(str, Enum):
-    STARTUP = &quot;startup&quot;
-    INITIALIZE = &quot;initialize&quot;
-    MIGRATE = &quot;migrate&quot;
-    RUN = &quot;run&quot;
-    REPAIR = &quot;repair&quot;
+
+<pre><code class="language-python">
+class DaemonMode(str, Enum):
+    STARTUP = "startup"
+    INITIALIZE = "initialize"
+    MIGRATE = "migrate"
+    RUN = "run"
+    REPAIR = "repair"
 
 class ModeManager:
     current: DaemonMode
@@ -152,15 +137,22 @@ class ModeManager:
     def as_dict(self) -&gt; dict: ...
 
 async def detect_startup_mode() -&gt; tuple[DaemonMode, str | None]:
-    # 1. db.init_config() → load daemon_config row → _config_valid() → RUN
-    # 2. config row missing or invalid → INITIALIZE (fresh install / reset)
-    # 3. db.init() (data DB) + schema mismatch → MIGRATE
-    # 4. all OK → RUN
+    # 1. db.init_config() → load daemon_config row → _config_valid() → RUN (config DB takes priority)
+    # 2. config.load() (settings.json) — FileNotFoundError → INITIALIZE
+    # 3. _config_valid() fails on file config → INITIALIZE
+    # 4. db.init() (data DB) + DB exists → MIGRATE (schema mismatch; data DB separate from config DB)
+    # 5. no valid config anywhere → INITIALIZE (fresh install)
+    # 6. all OK → RUN
 </code></pre>
-<hr />
+
+<hr>
+
 <h2>Module Breakdown</h2>
+
 <h3><code>claude_works/main.py</code> — Daemon</h3>
+
 <p>Central coordinator. Owns all subsystems, wires them together.</p>
+
 <ul>
 <li><code>start()</code> — web server starts first, then <code>detect_startup_mode()</code> → transition to INITIALIZE/MIGRATE/RUN</li>
 <li><code>_init_run_components()</code> — init DB, TelegramAPI, KanbanBoard, Coordinator, Poller, config watcher → transition to RUN</li>
@@ -173,75 +165,80 @@ async def detect_startup_mode() -&gt; tuple[DaemonMode, str | None]:
 <li><code>_handle_message()</code> — auth check → bundling → <code>KanbanTask</code> push → typing indicator</li>
 <li><code>_handle_reaction()</code> — persist reaction, resolve action</li>
 <li><code>_handle_command()</code> — <code>/auth</code>, <code>/block</code>, <code>/approve N</code>, <code>/deny N</code>, <code>/status</code>, <code>/reload_persona</code>, <code>/reload_config</code>, <code>/repair &lt;desc&gt;</code> (admin), <code>/exit_repair</code> (admin)</li>
-<li><code>_on_agent_result(task: KanbanTask, result, error)</code> — security gate → send response → persist bot message</li>
+<li><code>_on_agent_result(task: KanbanTask, result, error)</code> — security gate → send response → persist bot message → clear pending reaction (DB + Telegram)</li>
 <li>In REPAIR/MIGRATE mode: admin messages routed to <code>mechanic.followup(text)</code></li>
 <li><code>health()</code> → <code>{status, poller, active_agents, security_pending, mode, mode_error?, mechanic_report?, rate_limited_until?, llm_usage?}</code></li>
 <li><code>_usage_poll_loop()</code> — polls <code>coordinator.query_usage()</code> every <code>llm.usage_poll_interval_seconds</code> (default 300s); notifies admins once when <code>usage_pct &gt;= 0.8</code>; resets notification flag when usage drops below threshold</li>
 </ul>
+
 <h3><code>claude_works/llm/</code> — Provider Abstraction</h3>
+
 <p>Provider-agnostic LLM interface. All agents go through this layer — never direct SDK calls.</p>
-<table>
-<thead>
-<tr>
-<th>File</th>
-<th>Responsibility</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>provider.py</code></td>
-<td><code>LLMProvider</code> ABC, <code>LLMResponse</code>, <code>LLMUsage</code> dataclasses, <code>APIProvider</code>, <code>CliProvider</code>, <code>get_provider(cfg)</code> factory</td>
-</tr>
-<tr>
-<td><code>errors.py</code></td>
-<td><code>RateLimitError(message, retry_after?)</code> — typed exception for provider 429s</td>
-</tr>
-<tr>
-<td><code>usage.py</code></td>
-<td><code>UsageStats</code> dataclass, <code>parse_usage_text()</code> — parse <code>/usage</code> CLI output</td>
-</tr>
-</tbody>
-</table>
+
+<table><thead><tr><th>File</th><th>Responsibility</th></tr></thead><tbody>
+<tr><td><code>provider.py</code></td><td><code>LLMProvider</code> ABC, <code>LLMResponse</code>, <code>LLMUsage</code> dataclasses, <code>APIProvider</code>, <code>CliProvider</code>, <code>get_provider(cfg)</code> factory</td></tr>
+<tr><td><code>errors.py</code></td><td><code>RateLimitError(message, retry_after?)</code> — typed exception for provider 429s</td></tr>
+<tr><td><code>usage.py</code></td><td><code>UsageStats</code> dataclass, <code>parse_usage_text()</code> — parse <code>/usage</code> CLI output</td></tr>
+</tbody></table>
+
 <p><strong>Key types:</strong></p>
-<pre><code class="language-python">@dataclass class LLMUsage:
+
+<pre><code class="language-python">
+@dataclass class LLMUsage:
     input_tokens: int; output_tokens: int
     cache_read_tokens: int = 0; cache_write_tokens: int = 0
 
 @dataclass class LLMResponse:
-    text: str; usage: LLMUsage; stop_reason: str = &quot;end_turn&quot;
+    text: str; usage: LLMUsage; stop_reason: str = "end_turn"
 
 class LLMProvider(ABC):
     async def complete(self, messages, *, system, model, max_tokens,
                        mcp_servers=None) -&gt; LLMResponse: ...
     async def close(self) -&gt; None: ...
 </code></pre>
-<p><code>get_provider(cfg)</code> reads <code>cfg["provider"]</code> (default <code>"api"</code>) → returns matching <code>LLMProvider</code>.
-Adding a provider: implement <code>LLMProvider</code>, register in <code>get_provider</code>.</p>
+
+<p><code>get_provider(cfg)</code> reads <code>cfg["provider"]</code> (default <code>"api"</code>) → returns matching <code>LLMProvider</code>.</p>
+<p>Adding a provider: implement <code>LLMProvider</code>, register in <code>get_provider</code>.</p>
+
 <p><strong>Rate limiting:</strong> Both providers raise <code>RateLimitError(message, retry_after?)</code> on HTTP 429 / CLI rate limit detection. Callers never see raw SDK exceptions — only <code>RateLimitError</code>.</p>
+
 <p><strong>Usage monitoring</strong> (<code>CliProvider</code> only): <code>query_usage() -&gt; UsageStats | None</code> sends <code>/usage</code> as stdin to the CLI binary. Returns parsed <code>UsageStats</code> or <code>None</code> if unavailable.</p>
+
 <p><strong>CliProvider</strong> — uses a CLI binary instead of the direct API. No API key required; uses the subscription associated with the CLI installation.</p>
-<pre><code class="language-python">class CliProvider(LLMProvider):
+
+<pre><code class="language-python">
+class CliProvider(LLMProvider):
     async def complete(self, messages, *, system, model, max_tokens, mcp_servers=None):
-        # cmd: [&quot;&lt;cli-binary&gt;&quot;, &quot;--print&quot;, &quot;--output-format&quot;, &quot;json&quot;, &quot;--model&quot;, model, &quot;--system-prompt&quot;, full_system]
+        # cmd: ["&lt;cli-binary&gt;", "--print", "--output-format", "json", "--model", model, "--system-prompt", full_system]
         # user message via stdin
         # multi-turn: history embedded in system prompt preamble (len(messages) &gt; 1)
-        # parses: data[&quot;result&quot;], data[&quot;usage&quot;][&quot;input_tokens&quot;], etc.
+        # parses: data["result"], data["usage"]["input_tokens"], etc.
         # cache keys: cache_read_input_tokens, cache_creation_input_tokens
 </code></pre>
-<p><code>get_provider(cfg)</code> factory:
-- <code>"api"</code> → <code>APIProvider(api_key=cfg["api_key"])</code>
-- <code>"cli"</code> → <code>CliProvider()</code></p>
+
+<p><code>get_provider(cfg)</code> factory:</p>
+<ul>
+<li><code>"api"</code> → <code>APIProvider(api_key=cfg["api_key"])</code></li>
+<li><code>"cli"</code> → <code>CliProvider()</code></li>
+</ul>
+
 <h3><code>claude_works/agents/</code> — Multi-Layer Agent Architecture</h3>
+
 <h4><code>base.py</code> — BaseAgent ABC</h4>
+
 <p>All agents inherit from <code>BaseAgent</code>. Handles message history, token tracking, context compaction.</p>
+
 <ul>
 <li><code>__init__(task_id, user_context, agent_class, provider, token_tracker)</code> — accepts injected provider; <code>_owns_provider=True</code> only when provider=None (self-created)</li>
 <li><code>_system_prompt() -&gt; str</code> — abstract; each subclass defines its prompt</li>
 <li><code>run(content) -&gt; str</code> — append message, call <code>provider.complete()</code>, log to <code>token_tracker</code>, compact at 90% context</li>
 <li><code>close()</code> — closes provider only if <code>_owns_provider</code></li>
 </ul>
+
 <h4><code>coordinator.py</code> — AgentCoordinator</h4>
+
 <p>Replaces <code>AgentPool</code>. Shared <code>LLMProvider</code> across all agents (single connection pool).</p>
+
 <ul>
 <li><code>start()</code> — creates shared provider via <code>get_provider(cfg)</code>, spawns asyncio tasks: controller loop, chief loop, PO loop, N specialist loops</li>
 <li><code>_specialist_loop(agent_class)</code> — respects per-class <code>max_parallel</code>; pauses loop when <code>_rate_limit_until</code> in the future (checks every 30s max)</li>
@@ -250,36 +247,51 @@ Adding a provider: implement <code>LLMProvider</code>, register in <code>get_pro
 <li><code>is_rate_limited</code> / <code>rate_limit_until</code> properties — cooldown state exposed for <code>health()</code></li>
 <li><code>stop()</code> — cancels all tasks, closes shared provider</li>
 </ul>
-<p><strong>Rate limit cooldown strategy:</strong>
-- Hit → <code>_rate_limit_count++</code>, cooldown = <code>min(retry_after * 2^(count-1), 900s)</code>, task requeued to ASSIGNED
-- All specialist loops pause until <code>_rate_limit_until</code> passes
-- Any successful LLM call resets <code>_rate_limit_count = 0</code> (prevents permanent backoff growth)
-- Max cooldown: 900s (15 min) regardless of hit count
-- REPAIR mode is NOT triggered for rate limits — this is expected operational state, not a failure</p>
+
+<p><strong>Rate limit cooldown strategy:</strong></p>
+<ul>
+<li>Hit → <code>_rate_limit_count++</code>, cooldown = <code>min(retry_after * 2^(count-1), 900s)</code>, task requeued to ASSIGNED</li>
+<li>All specialist loops pause until <code>_rate_limit_until</code> passes</li>
+<li>Any successful LLM call resets <code>_rate_limit_count = 0</code> (prevents permanent backoff growth)</li>
+<li>Max cooldown: 900s (15 min) regardless of hit count</li>
+<li>REPAIR mode is NOT triggered for rate limits — this is expected operational state, not a failure</li>
+</ul>
+
 <p>Specialist map:</p>
-<pre><code class="language-python">GENERALIST → GeneralistAgent
+<pre><code class="language-python">
+GENERALIST → GeneralistAgent
 RESEARCHER → ResearchAgent
 CODER      → CodeTeam          # 4-stage pipeline, not a BaseAgent
 MEMORY     → MemoryAgent
 </code></pre>
+
 <h4><code>controller.py</code> — ControllerAgent</h4>
+
 <p>Stateless LLM router. Reads BACKLOG, classifies each task, calls <code>board.assign(task_id, agent_class)</code>.</p>
+
 <ul>
 <li>One stateless LLM call per task (<code>max_tokens=128</code>), JSON response <code>{"agent_class": "...", "reason": "..."}</code></li>
 <li>Fallback to <code>GENERALIST</code> on parse error or unknown class</li>
 <li>Classes: <code>generalist / researcher / coder / memory / chief / po</code></li>
 <li>Routes to <code>po</code> for complex multi-step projects requiring decomposition; uses direct specialist for simple tasks</li>
 </ul>
+
 <h4><code>chief.py</code> — ChiefAgent</h4>
+
 <p>Handles CHIEF-class tasks with persona awareness.</p>
+
 <ul>
 <li><code>load_persona()</code> — reads <code>PERSONA_FILE</code> env (default <code>/data/persona.md</code>), falls back to <code>""</code></li>
 <li><code>reload_persona()</code> — hot-reload without restart (triggered by <code>/reload_persona</code> command)</li>
 <li><code>run_loop(on_result)</code> — picks up tasks assigned to <code>AgentClass.CHIEF</code>, runs via <code>GeneralistAgent</code> with chief prompt + persona</li>
 </ul>
+
 <h4><code>po.py</code> — ProductOwnerAgent</h4>
+
 <p>Handles <code>AgentClass.PO</code> tasks. Decomposes complex goals into subtasks, tracks completion, synthesizes results.</p>
+
 <p>Lifecycle: <code>ASSIGNED → IN_PROGRESS</code> (decompose) → <code>REVIEW</code> (waiting children) → <code>DONE/FAILED</code></p>
+
 <ul>
 <li><code>_decompose(task)</code> — LLM call → JSON array of <code>{title, description, agent_class}</code>; caps at 8 subtasks; falls back to single generalist task on parse error</li>
 <li><code>_synthesize(goal, children)</code> — formats child results (including failures) → LLM synthesis call</li>
@@ -287,77 +299,74 @@ MEMORY     → MemoryAgent
 <li><code>run_loop(on_result)</code> — picks up <code>ASSIGNED / PO</code> tasks, spawns <code>asyncio.create_task</code> per project (non-blocking)</li>
 <li>Timeout from <code>agents.po_timeout_seconds</code> (default 3600s)</li>
 </ul>
+
 <p>Child tasks are inserted directly into <code>ASSIGNED</code> lane via <code>board.push_child()</code>, bypassing controller routing.</p>
+
 <h4><code>mechanic.py</code> — MechanicAgent</h4>
+
 <p>Handles <code>MechanicContext.MIGRATE</code> (schema/config migration) and <code>MechanicContext.REPAIR</code> (runtime error recovery). Invoked by Daemon, not by AgentCoordinator.</p>
-<pre><code class="language-python">class MechanicContext(str, Enum):
-    MIGRATE = &quot;migrate&quot;
-    REPAIR = &quot;repair&quot;
+
+<pre><code class="language-python">
+class MechanicContext(str, Enum):
+    MIGRATE = "migrate"
+    REPAIR = "repair"
 
 class MechanicAgent(BaseAgent):
     async def run_initial(self) -&gt; str: ...    # first invocation with context
     async def followup(self, message: str) -&gt; str: ...  # multi-turn continuation
 </code></pre>
+
 <p>System prompt loaded from <code>agents/mechanic.md</code> (strips YAML frontmatter). Output format: <strong>Mode</strong> / <strong>Diagnosis</strong> / <strong>Evidence</strong> / <strong>Fix</strong> / <strong>Action</strong> / <strong>Verify</strong>.</p>
+
 <h4><code>specialist/</code> — Specialist Agents</h4>
+
 <p>All extend <code>BaseAgent</code>, differ only in <code>_system_prompt()</code>:</p>
-<table>
-<thead>
-<tr>
-<th>Class</th>
-<th>File</th>
-<th>Addendum</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>GeneralistAgent</code></td>
-<td><code>generalist.py</code></td>
-<td>Base system prompt + optional caveman mode</td>
-</tr>
-<tr>
-<td><code>ResearchAgent</code></td>
-<td><code>researcher.py</code></td>
-<td>Research-specific instructions</td>
-</tr>
-<tr>
-<td><code>CoderAgent</code></td>
-<td><code>coder.py</code></td>
-<td>Security standards (OWASP), code quality rules (kept for direct routing)</td>
-</tr>
-<tr>
-<td><code>MemoryAgent</code></td>
-<td><code>memory.py</code></td>
-<td>Memory retrieval/storage behavior</td>
-</tr>
-</tbody>
-</table>
+
+<table><thead><tr><th>Class</th><th>File</th><th>Addendum</th></tr></thead><tbody>
+<tr><td><code>GeneralistAgent</code></td><td><code>generalist.py</code></td><td>Base system prompt + optional caveman mode</td></tr>
+<tr><td><code>ResearchAgent</code></td><td><code>researcher.py</code></td><td>Research-specific instructions</td></tr>
+<tr><td><code>CoderAgent</code></td><td><code>coder.py</code></td><td>Security standards (OWASP), code quality rules (kept for direct routing)</td></tr>
+<tr><td><code>MemoryAgent</code></td><td><code>memory.py</code></td><td>Memory retrieval/storage behavior</td></tr>
+</tbody></table>
+
 <h4><code>specialist/code_team.py</code> — CodeTeam</h4>
+
 <p>Replaces <code>CoderAgent</code> in the coordinator's specialist map for <code>CODER</code>-class tasks. Runs a sequential 4-stage pipeline using internal <code>_TeamMember(BaseAgent)</code> instances sharing the same provider and token_tracker.</p>
-<p>Stages:
-1. <strong>Architect</strong> — produces technical spec from task content
-2. <strong>Developer</strong> — implements based on spec
-3. <strong>Tester</strong> — writes tests for spec + implementation
-4. <strong>QA</strong> — reviews all outputs, produces final deliverable</p>
+
+<p>Stages:</p>
+<ul>
+<li><strong>Architect</strong> — produces technical spec from task content</li>
+<li><strong>Developer</strong> — implements based on spec</li>
+<li><strong>Tester</strong> — writes tests for spec + implementation</li>
+<li><strong>QA</strong> — reviews all outputs, produces final deliverable</li>
+</ul>
+
 <p>All 4 stages log to <code>token_usage</code> under <code>agent_class="coder"</code>. Constructor signature matches specialist agents (<code>task_id, user_context, provider, token_tracker, persona</code>) so coordinator's <code>_run_specialist()</code> needs no changes.</p>
+
 <h3><code>claude_works/kanban/</code> — Task Lifecycle</h3>
+
 <h4><code>models.py</code></h4>
-<pre><code class="language-python">class Lane(Enum):
-    BACKLOG = &quot;backlog&quot;
-    ASSIGNED = &quot;assigned&quot;
-    IN_PROGRESS = &quot;in_progress&quot;
-    REVIEW = &quot;review&quot;
-    DONE = &quot;done&quot;
-    FAILED = &quot;failed&quot;
-    BLOCKED = &quot;blocked&quot;
+
+<pre><code class="language-python">
+class Lane(Enum):
+    BACKLOG = "backlog"
+    ASSIGNED = "assigned"
+    IN_PROGRESS = "in_progress"
+    REVIEW = "review"
+    DONE = "done"
+    FAILED = "failed"
+    BLOCKED = "blocked"
 
 @dataclass class KanbanTask:
     id, chat_id, user_id, content, lane, agent_class, agent_id,
     parent_id, priority, created_at, assigned_at, started_at,
     completed_at, result, error, message_id
 </code></pre>
+
 <h4><code>board.py</code> — KanbanBoard</h4>
+
 <p>SQLite-backed. <code>asyncio.Event</code> wakes waiting loops when tasks enter a lane.</p>
+
 <ul>
 <li><code>push(task)</code> → insert at <code>BACKLOG</code>, notify</li>
 <li><code>assign(task_id, agent_class)</code> → <code>BACKLOG → ASSIGNED</code>, notify</li>
@@ -373,9 +382,13 @@ class MechanicAgent(BaseAgent):
 <li><code>await_children(parent_id, child_ids)</code> → polls every 2s until all <code>child_ids</code> reach terminal lane (<code>DONE</code>/<code>FAILED</code>/<code>BLOCKED</code>); returns <code>list[KanbanTask]</code></li>
 <li><code>wait_for_work(timeout)</code> → yields until <code>asyncio.Event</code> set or timeout</li>
 </ul>
+
 <h3><code>claude_works/telemetry/</code> — Token Tracking + Cost Control</h3>
+
 <h4><code>tokens.py</code> — TokenTracker</h4>
+
 <p>Persists every LLM call to <code>token_usage</code> table. Calculates cost at insert time via <code>estimate_cost()</code>. Enforces spending limits before each API call.</p>
+
 <ul>
 <li><code>log(...)</code> — insert row including <code>cost_usd</code> (calculated from model pricing)</li>
 <li><code>get_allowed_model(requested_model)</code> → model to use or <code>None</code> (reject). Checks daily/monthly limits; returns cheaper model on <code>on_limit_exceeded=downgrade</code>, <code>None</code> on <code>reject</code>. Called by <code>BaseAgent.run()</code> before every API call.</li>
@@ -383,295 +396,194 @@ class MechanicAgent(BaseAgent):
 <li><code>stats(since?)</code> → per-class aggregates including <code>cost_usd</code></li>
 <li><code>timeseries(since, bucket_seconds)</code> → <code>[{bucket, agent_class, tokens, cost_usd}]</code></li>
 </ul>
+
 <p><code>BudgetExceededError</code> raised by <code>BaseAgent.run()</code> when <code>get_allowed_model()</code> returns <code>None</code>.</p>
+
 <h3><code>claude_works/knowledge/</code> — Knowledge Base</h3>
+
 <h4><code>store.py</code> — KnowledgeStore</h4>
-<p>Structured knowledge entries in SQLite.</p>
+
+<p>Structured, FTS5-indexed knowledge documents in SQLite. Auto-injected as context into every agent run.</p>
+
 <ul>
-<li><code>add(type, title, content, tags, source, user_id)</code> → insert</li>
-<li><code>search(query, user_id=None)</code> → LIKE search on title + content</li>
-<li><code>list_all(user_id=None)</code> → all entries, optional user filter</li>
-<li><code>delete(id)</code> → remove entry</li>
+<li><code>add(type, title, content, tags, source, user_id)</code> → insert; FTS index updated via trigger</li>
+<li><code>update(id, *, title, content, type, tags)</code> → partial update; any field can be <code>None</code> to skip; FTS index updated via trigger</li>
+<li><code>search(query, user_id=None, limit=5)</code> → FTS5 BM25 full-text search with LIKE fallback; returns <code>list[dict]</code> with entry IDs</li>
+<li><code>list_all(user_id=None, page, page_size, type)</code> → paginated browse</li>
+<li><code>delete(id)</code> → remove entry and FTS index row</li>
+<li><code>import_from_directory(conn, path)</code> → scan <code>/data/knowledge/</code> for <code>.md</code>/<code>.txt</code> files, re-import on mtime change; <code>source="file::&lt;filename&gt;"</code></li>
+<li><code>count(user_id=None, type=None)</code> → filtered count</li>
 </ul>
-<p>Schema: <code>id, type, title, content, tags, source, user_id, created_at, updated_at</code></p>
+
+<p>Schema: <code>id, type, title, content, tags (JSON array), source, user_id, created_at, updated_at</code>  </p>
+<p>FTS5 virtual table <code>knowledge_fts</code> on <code>title, content, tags</code> — kept in sync via <code>AFTER INSERT/UPDATE/DELETE</code> triggers.</p>
+
+<p><strong>Types:</strong> <code>note</code> / <code>fact</code> / <code>procedure</code> / <code>context</code> / <code>document</code></p>
+
+<p><strong>Agent interaction via output tags:</strong></p>
+<ul>
+<li><code>[KB_SEARCH: query]</code> — execute FTS search during agent tool loop; results (with IDs) fed back to agent</li>
+<li><code>[KB_SAVE: title | type | tags | content]</code> — create new entry (<code>source="agent"</code>)</li>
+<li><code>[KB_UPDATE: id | title | type | tags | content]</code> — partial update; leave any field empty to skip</li>
+</ul>
+
+<p><strong>Auto-inject:</strong> <code>_inject_knowledge()</code> in <code>coordinator.py</code> prepends top-5 FTS results to every task, including entry IDs and a KB tag hint.</p>
+
+<p><strong>Startup migration check:</strong> If file-imported entries (<code>source LIKE 'file::%'</code>) have no tags, a MemoryAgent classification task is automatically pushed to the Kanban backlog.</p>
+
+<h4>Memory vs Knowledge</h4>
+
+<table><thead><tr><th></th><th>Memory (<code>memory</code> table)</th><th>Knowledge (<code>knowledge</code> table)</th></tr></thead><tbody>
+<tr><td>Structure</td><td>Key-value (<code>user_id + key → value</code>)</td><td>Typed documents (<code>title, content, type, tags</code>)</td></tr>
+<tr><td>Search</td><td>LIKE only</td><td>FTS5 (BM25)</td></tr>
+<tr><td>Auto-inject to agents</td><td>No</td><td>Yes (top-5 per task)</td></tr>
+<tr><td>Source</td><td>Agent/user writes</td><td>File import + agent/UI writes</td></tr>
+<tr><td>Agent tags</td><td>None</td><td><code>KB_SEARCH</code>, <code>KB_SAVE</code>, <code>KB_UPDATE</code></td></tr>
+</tbody></table>
+
+<p>The <code>memory</code> table exists for per-user key-value state. The <code>knowledge</code> table is the primary shared knowledge store used by all agents.</p>
+
 <h3><code>claude_works/telegram/</code></h3>
-<table>
-<thead>
-<tr>
-<th>File</th>
-<th>Responsibility</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>api.py</code></td>
-<td>httpx-based Telegram Bot API client (send_message, set_reaction, send_chat_action, get_file)</td>
-</tr>
-<tr>
-<td><code>poller.py</code></td>
-<td>Long-poll loop via <code>getUpdates</code>, dispatches to <code>_on_update</code> callback</td>
-</tr>
-<tr>
-<td><code>reactions.py</code></td>
-<td>Emoji → action mapping, extract reaction from update payload</td>
-</tr>
-</tbody>
-</table>
+
+<table><thead><tr><th>File</th><th>Responsibility</th></tr></thead><tbody>
+<tr><td><code>api.py</code></td><td>httpx-based Telegram Bot API client (send_message, set_reaction, send_chat_action, get_file)</td></tr>
+<tr><td><code>poller.py</code></td><td>Long-poll loop via <code>getUpdates</code>, dispatches to <code>_on_update</code> callback</td></tr>
+<tr><td><code>reactions.py</code></td><td>Emoji → action mapping, extract reaction from update payload</td></tr>
+</tbody></table>
+
 <h3><code>claude_works/tasks/</code></h3>
-<table>
-<thead>
-<tr>
-<th>File</th>
-<th>Responsibility</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>models.py</code></td>
-<td><code>Task</code> and <code>IncomingMessage</code> dataclasses</td>
-</tr>
-<tr>
-<td><code>queue.py</code></td>
-<td>Legacy SQLite task queue (kept for compatibility)</td>
-</tr>
-<tr>
-<td><code>bundler.py</code></td>
-<td><code>should_bundle()</code> + <code>merge_content()</code> — time + context heuristic for message merging</td>
-</tr>
-</tbody>
-</table>
+
+<table><thead><tr><th>File</th><th>Responsibility</th></tr></thead><tbody>
+<tr><td><code>models.py</code></td><td><code>Task</code> and <code>IncomingMessage</code> dataclasses</td></tr>
+<tr><td><code>queue.py</code></td><td>Legacy SQLite task queue (kept for compatibility)</td></tr>
+<tr><td><code>bundler.py</code></td><td><code>should_bundle()</code> + <code>merge_content()</code> — time + context heuristic for message merging</td></tr>
+</tbody></table>
+
 <h3><code>claude_works/auth/</code></h3>
+
 <p><code>users.py</code> — SQLite user table: <code>upsert_user</code>, <code>is_allowed</code>, <code>is_admin</code>, <code>set_role</code></p>
+
 <p>Roles: <code>admin</code> (full access) | <code>user</code> (allowed) | <code>blocked</code> (ignored)</p>
+
 <p>New users land as <code>blocked</code>; admin notified via Telegram.</p>
+
 <h3><code>claude_works/memory/</code></h3>
+
 <p><code>store.py</code> — per-user key/value store in SQLite: <code>set</code>, <code>get</code>, <code>search</code>, <code>list_all</code>, <code>delete</code></p>
+
 <h3><code>claude_works/security/</code></h3>
+
 <p>Approval gating for critical agent outputs. Disabled by default (<code>security.enabled: false</code>).</p>
-<table>
-<thead>
-<tr>
-<th>File</th>
-<th>Responsibility</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>rules.py</code></td>
-<td><code>Rule</code> dataclass, regex matching, <code>DEFAULT_RULES</code>, <code>build_rules()</code>, <code>check_content()</code></td>
-</tr>
-<tr>
-<td><code>supervisor.py</code></td>
-<td><code>SecuritySupervisor</code>: <code>check()</code> → triggers on rule match, awaits <code>asyncio.Event</code> with timeout; <code>approve()</code>/<code>deny()</code></td>
-</tr>
-</tbody>
-</table>
+
+<table><thead><tr><th>File</th><th>Responsibility</th></tr></thead><tbody>
+<tr><td><code>rules.py</code></td><td><code>Rule</code> dataclass, regex matching, <code>DEFAULT_RULES</code>, <code>build_rules()</code>, <code>check_content()</code></td></tr>
+<tr><td><code>supervisor.py</code></td><td><code>SecuritySupervisor</code>: <code>check()</code> → triggers on rule match, awaits <code>asyncio.Event</code> with timeout; <code>approve()</code>/<code>deny()</code></td></tr>
+</tbody></table>
+
 <p><strong>Default rules</strong> (all regex, <code>IGNORECASE|MULTILINE</code>):</p>
-<table>
-<thead>
-<tr>
-<th>Type</th>
-<th>Pattern</th>
-<th>Default</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>internet_access</code></td>
-<td><code>https?://\S+</code></td>
-<td>enabled</td>
-</tr>
-<tr>
-<td><code>data_deletion</code></td>
-<td><code>\b(delete\|drop\|truncate\|wipe\|purge)\b</code></td>
-<td>enabled</td>
-</tr>
-<tr>
-<td><code>command_execution</code></td>
-<td><code>\b(execute\|subprocess\|shell\|eval)\b</code></td>
-<td>enabled</td>
-</tr>
-<tr>
-<td><code>external_api</code></td>
-<td><code>\b(webhook\|api_call\|post_to)\b</code></td>
-<td>disabled</td>
-</tr>
-<tr>
-<td><code>publication</code></td>
-<td><code>\b(publish\|broadcast\|announcement)\b</code></td>
-<td>disabled</td>
-</tr>
-</tbody>
-</table>
-<p><strong>Approval flow:</strong>
-1. Agent produces result → <code>Daemon._on_agent_result()</code> calls <code>security.check()</code>
-2. Rules match → <code>PendingApproval</code> created, admins notified via Telegram
-3. Admin approves via <code>/approve N</code> (Telegram) or Web UI → <code>asyncio.Event</code> set
-4. Timeout (default 300s) → auto-deny
-5. Audit trail in <code>security_approvals</code> SQLite table</p>
+
+<table><thead><tr><th>Type</th><th>Pattern</th><th>Default</th></tr></thead><tbody>
+<tr><td><code>internet_access</code></td><td><code>https?://\S+</code></td><td>enabled</td></tr>
+<tr><td><code>data_deletion</code></td><td>`\b(delete\</td><td>drop\</td><td>truncate\</td><td>wipe\</td><td>purge)\b`</td><td>enabled</td></tr>
+<tr><td><code>command_execution</code></td><td>`\b(execute\</td><td>subprocess\</td><td>shell\</td><td>eval)\b`</td><td>enabled</td></tr>
+<tr><td><code>external_api</code></td><td>`\b(webhook\</td><td>api_call\</td><td>post_to)\b`</td><td>disabled</td></tr>
+<tr><td><code>publication</code></td><td>`\b(publish\</td><td>broadcast\</td><td>announcement)\b`</td><td>disabled</td></tr>
+</tbody></table>
+
+<p><strong>Approval flow:</strong></p>
+<ul>
+<li>Agent produces result → <code>Daemon._on_agent_result()</code> calls <code>security.check()</code></li>
+<li>Rules match → <code>PendingApproval</code> created, admins notified via Telegram</li>
+<li>Admin approves via <code>/approve N</code> (Telegram) or Web UI → <code>asyncio.Event</code> set</li>
+<li>Timeout (default 300s) → auto-deny</li>
+<li>Audit trail in <code>security_approvals</code> SQLite table</li>
+</ul>
+
 <h3><code>claude_works/web/</code></h3>
+
 <p>FastAPI app served by uvicorn (same process as Daemon, separate asyncio task).</p>
+
 <p><strong>Auth:</strong> <code>X-Auth-Token</code> header or <code>auth</code> cookie — SHA256 of <code>web.auth_token</code> from settings.</p>
+
 <p><strong>Endpoints:</strong></p>
-<table>
-<thead>
-<tr>
-<th>Method</th>
-<th>Path</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>GET</td>
-<td><code>/health</code></td>
-<td>Public health check</td>
-</tr>
-<tr>
-<td>GET</td>
-<td><code>/api/setup</code></td>
-<td>Public — returns <code>{mode, setup_required}</code> for INITIALIZE detection</td>
-</tr>
-<tr>
-<td>POST</td>
-<td><code>/api/setup/save</code></td>
-<td>Token-gated (no auth cookie) — save initial config to DB; single-use token</td>
-</tr>
-<tr>
-<td>GET</td>
-<td><code>/api/status</code></td>
-<td>Auth'd status (poller, active_agents, security_pending)</td>
-</tr>
-<tr>
-<td>GET</td>
-<td><code>/api/tasks</code></td>
-<td>Legacy task list (filter by status, limit)</td>
-</tr>
-<tr>
-<td>GET</td>
-<td><code>/api/messages</code></td>
-<td>Incoming messages (filter by chat_id, limit)</td>
-</tr>
-<tr>
-<td>GET</td>
-<td><code>/api/users</code></td>
-<td>User list</td>
-</tr>
-<tr>
-<td>POST</td>
-<td><code>/api/users/{id}/role</code></td>
-<td>Update user role</td>
-</tr>
-<tr>
-<td>GET</td>
-<td><code>/api/memory</code></td>
-<td>Memory entries (filter by user_id, search query)</td>
-</tr>
-<tr>
-<td>GET</td>
-<td><code>/api/approvals</code></td>
-<td>Pending security approvals</td>
-</tr>
-<tr>
-<td>POST</td>
-<td><code>/api/approvals/{id}/approve</code></td>
-<td>Approve pending action</td>
-</tr>
-<tr>
-<td>POST</td>
-<td><code>/api/approvals/{id}/deny</code></td>
-<td>Deny pending action</td>
-</tr>
-<tr>
-<td>GET</td>
-<td><code>/api/kanban</code></td>
-<td>Kanban tasks (filter by <code>lane</code>, <code>limit</code>)</td>
-</tr>
-<tr>
-<td>GET</td>
-<td><code>/api/kanban/counts</code></td>
-<td><code>{lane: count}</code> summary for all lanes</td>
-</tr>
-<tr>
-<td>GET</td>
-<td><code>/api/tokens</code></td>
-<td>Token usage stats + timeseries (<code>period</code>: <code>1h</code>/<code>24h</code>/<code>7d</code>/<code>30d</code>)</td>
-</tr>
-<tr>
-<td>POST</td>
-<td><code>/api/config/reload</code></td>
-<td>Reload config from database immediately</td>
-</tr>
-<tr>
-<td>GET</td>
-<td><code>/api/logs</code></td>
-<td>Last N lines of log file</td>
-</tr>
-<tr>
-<td>GET</td>
-<td><code>/api/mode</code></td>
-<td>Current daemon mode and error</td>
-</tr>
-<tr>
-<td>POST</td>
-<td><code>/api/repair/trigger</code></td>
-<td>Trigger REPAIR mode with error description</td>
-</tr>
-<tr>
-<td>POST</td>
-<td><code>/api/repair/exit</code></td>
-<td>Exit REPAIR mode, resume RUN</td>
-</tr>
-<tr>
-<td>POST</td>
-<td><code>/api/repair/chat</code></td>
-<td>Send message to active MechanicAgent</td>
-</tr>
-<tr>
-<td>GET</td>
-<td><code>/api/repair/report</code></td>
-<td>Latest mechanic diagnosis report</td>
-</tr>
-<tr>
-<td>GET</td>
-<td><code>/api/usage</code></td>
-<td>LLM CLI usage stats (<code>cli</code> provider only; null fields if unavailable)</td>
-</tr>
-<tr>
-<td>GET</td>
-<td><code>/</code></td>
-<td>Web UI (index.html)</td>
-</tr>
-</tbody>
-</table>
+
+<table><thead><tr><th>Method</th><th>Path</th><th>Description</th></tr></thead><tbody>
+<tr><td>GET</td><td><code>/health</code></td><td>Public health check</td></tr>
+<tr><td>GET</td><td><code>/api/setup</code></td><td>Public — returns <code>{mode, setup_required}</code> for INITIALIZE detection</td></tr>
+<tr><td>POST</td><td><code>/api/setup/save</code></td><td>Token-gated (no auth cookie) — save initial config to DB; single-use token</td></tr>
+<tr><td>GET</td><td><code>/api/status</code></td><td>Auth'd status (poller, active_agents, security_pending)</td></tr>
+<tr><td>GET</td><td><code>/api/tasks</code></td><td>Legacy task list (filter by status, limit)</td></tr>
+<tr><td>GET</td><td><code>/api/messages</code></td><td>Incoming messages (filter by chat_id, limit)</td></tr>
+<tr><td>GET</td><td><code>/api/users</code></td><td>User list</td></tr>
+<tr><td>POST</td><td><code>/api/users/{id}/role</code></td><td>Update user role</td></tr>
+<tr><td>GET</td><td><code>/api/memory</code></td><td>Memory entries (filter by user_id, search query)</td></tr>
+<tr><td>GET</td><td><code>/api/knowledge</code></td><td>Knowledge entries — search (<code>?q=</code>) or list (<code>?type=</code>, <code>?page=</code>, <code>?page_size=</code>)</td></tr>
+<tr><td>POST</td><td><code>/api/knowledge</code></td><td>Create knowledge entry (<code>title, content, type, tags</code>)</td></tr>
+<tr><td>PUT</td><td><code>/api/knowledge/{id}</code></td><td>Update knowledge entry (partial — any field can be omitted)</td></tr>
+<tr><td>DELETE</td><td><code>/api/knowledge/{id}</code></td><td>Delete knowledge entry</td></tr>
+<tr><td>GET</td><td><code>/api/approvals</code></td><td>Pending security approvals</td></tr>
+<tr><td>POST</td><td><code>/api/approvals/{id}/approve</code></td><td>Approve pending action</td></tr>
+<tr><td>POST</td><td><code>/api/approvals/{id}/deny</code></td><td>Deny pending action</td></tr>
+<tr><td>GET</td><td><code>/api/kanban</code></td><td>Kanban tasks (filter by <code>lane</code>, <code>limit</code>)</td></tr>
+<tr><td>GET</td><td><code>/api/kanban/counts</code></td><td><code>{lane: count}</code> summary for all lanes</td></tr>
+<tr><td>GET</td><td><code>/api/tokens</code></td><td>Token usage stats + timeseries (<code>period</code>: <code>1h</code>/<code>24h</code>/<code>7d</code>/<code>30d</code>)</td></tr>
+<tr><td>POST</td><td><code>/api/config/reload</code></td><td>Reload settings.json from disk immediately</td></tr>
+<tr><td>GET</td><td><code>/api/logs</code></td><td>Last N lines of log file</td></tr>
+<tr><td>GET</td><td><code>/api/mode</code></td><td>Current daemon mode and error</td></tr>
+<tr><td>POST</td><td><code>/api/repair/trigger</code></td><td>Trigger REPAIR mode with error description</td></tr>
+<tr><td>POST</td><td><code>/api/repair/exit</code></td><td>Exit REPAIR mode, resume RUN</td></tr>
+<tr><td>POST</td><td><code>/api/repair/chat</code></td><td>Send message to active MechanicAgent</td></tr>
+<tr><td>GET</td><td><code>/api/repair/report</code></td><td>Latest mechanic diagnosis report</td></tr>
+<tr><td>GET</td><td><code>/api/usage</code></td><td>LLM CLI usage stats (<code>cli</code> provider only; null fields if unavailable)</td></tr>
+<tr><td>GET</td><td><code>/</code></td><td>Web UI (index.html)</td></tr>
+</tbody></table>
+
 <p><strong>Token API response shape:</strong></p>
-<pre><code class="language-json">{
-  &quot;period&quot;: &quot;24h&quot;,
-  &quot;total_cost_usd&quot;: 0.042,
-  &quot;stats&quot;: {
-    &quot;generalist&quot;: {&quot;input&quot;: 1200, &quot;output&quot;: 340, &quot;cache_read&quot;: 800, &quot;cache_write&quot;: 0, &quot;cost_usd&quot;: 0.042, &quot;calls&quot;: 5}
+<pre><code class="language-json">
+{
+  "period": "24h",
+  "total_cost_usd": 0.042,
+  "stats": {
+    "generalist": {"input": 1200, "output": 340, "cache_read": 800, "cache_write": 0, "cost_usd": 0.042, "calls": 5}
   },
-  &quot;timeseries&quot;: [{&quot;bucket&quot;: 1718100000, &quot;agent_class&quot;: &quot;generalist&quot;, &quot;tokens&quot;: 450, &quot;cost_usd&quot;: 0.012}]
+  "timeseries": [{"bucket": 1718100000, "agent_class": "generalist", "tokens": 450, "cost_usd": 0.012}]
 }
 </code></pre>
 <p>Bucket size: 3600s for ≤24h, 21600s for &gt;24h.</p>
-<p><strong>Web UI tabs:</strong> Tasks · Messages · Users · Memory · Approvals · Kanban · Tokens · Logs · Knowledge</p>
+
+<p><strong>Web UI tabs:</strong> Tasks · Messages · Users · Memory · Knowledge · Approvals · Kanban · Tokens · Logs</p>
+
+<p><strong>Knowledge tab features:</strong> Search + type filter + pagination; click title or ✎ to open full entry in modal; Edit button → inline form (title/content/type/tags); Save → PUT API (FTS auto-updated via triggers).</p>
+
 <h3><code>claude_works/config_store.py</code> — DB Config Store</h3>
+
 <p>Three async helpers for the <code>daemon_config</code> table:</p>
+
 <ul>
 <li><code>save_config(conn, cfg)</code> — INSERT OR REPLACE row id=1 with JSON-serialized config</li>
 <li><code>load_config(conn)</code> → <code>dict | None</code> — fetch and deserialize; <code>None</code> if no row</li>
 <li><code>delete_config(conn)</code> — remove config row (used by MechanicAgent during migrations)</li>
 </ul>
+
 <h3><code>claude_works/logging_setup.py</code></h3>
+
 <p><code>setup()</code> — configures root logger: <code>RotatingFileHandler</code> (10 MB × 5 backups) + <code>StreamHandler</code>. Integrates uvicorn log config.</p>
+
 <p><code>log_path(dir)</code> → <code>Path</code> to current log file.</p>
+
 <h3><code>supervisor/supervisor.py</code></h3>
+
 <p>External watchdog process. Polls <code>/health</code> endpoint every N seconds. On failure: restart Daemon with exponential backoff. After <code>max_restart_attempts</code> failures: Telegram alert to admins.</p>
-<hr />
+
+<hr>
+
 <h2>Data Storage</h2>
+
 <p>All user-owned state lives under <code>/data</code>. The container image is immutable; nothing user-specific is stored inside it.</p>
-<pre><code>/data/
+
+<pre><code>
+/data/
+├── settings.json          # main config
 ├── config.db              # daemon config DB (CONFIG_DB_FILE override)
 ├── claude-works.db               # operational DB (DB_FILE override)
 ├── persona.md            # optional ChiefAgent persona
@@ -681,145 +593,126 @@ class MechanicAgent(BaseAgent):
 ├── requirements.local.txt # optional: extra pip packages installed at each startup
 └── init.sh                # optional: custom shell commands run at each startup
 </code></pre>
+
 <p><code>requirements.local.txt</code> and <code>init.sh</code> are the canonical way to extend the container without rebuilding the image. Both are executed by <code>entrypoint.sh</code> on every start; output is appended to <code>init.log</code> with timestamps.</p>
+
 <h3>SQLite databases</h3>
+
 <p>Two SQLite databases, both in WAL mode with <code>synchronous=NORMAL</code>.</p>
+
 <p><strong><code>/data/config.db</code></strong> — daemon configuration (path override: <code>CONFIG_DB_FILE</code> env var)</p>
-<table>
-<thead>
-<tr>
-<th>Table</th>
-<th>Purpose</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>daemon_config</code></td>
-<td>Single-row config store (id=1, settings_json TEXT, updated_at); sole config source — written by setup wizard, hot-reloaded every 5s</td>
-</tr>
-</tbody>
-</table>
+
+<table><thead><tr><th>Table</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>daemon_config</code></td><td>Single-row config store (id=1, settings_json TEXT, updated_at); takes priority over settings.json on startup</td></tr>
+</tbody></table>
+
 <p><strong><code>/data/claude-works.db</code></strong> — operational data (path override: <code>DB_FILE</code> env var)</p>
-<table>
-<thead>
-<tr>
-<th>Table</th>
-<th>Purpose</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>tasks</code></td>
-<td>Legacy task queue (status, content, result)</td>
-</tr>
-<tr>
-<td><code>messages</code></td>
-<td>Incoming Telegram messages</td>
-</tr>
-<tr>
-<td><code>bot_messages</code></td>
-<td>Outgoing bot messages (telegram_message_id → task_id)</td>
-</tr>
-<tr>
-<td><code>reactions</code></td>
-<td>Telegram reactions with resolved action</td>
-</tr>
-<tr>
-<td><code>users</code></td>
-<td>User profiles and roles</td>
-</tr>
-<tr>
-<td><code>memory</code></td>
-<td>Per-user key/value memory store</td>
-</tr>
-<tr>
-<td><code>kanban_tasks</code></td>
-<td>Kanban task lifecycle (lane, agent_class, parent_id, timestamps)</td>
-</tr>
-<tr>
-<td><code>token_usage</code></td>
-<td>Per-call token telemetry (agent_class, model, input/output/cache tokens, cost_usd)</td>
-</tr>
-<tr>
-<td><code>knowledge</code></td>
-<td>Structured knowledge base (type, title, content, tags, source)</td>
-</tr>
-<tr>
-<td><code>agent_sessions</code></td>
-<td>Agent session lifecycle</td>
-</tr>
-<tr>
-<td><code>security_approvals</code></td>
-<td>Security approval audit trail</td>
-</tr>
-</tbody>
-</table>
+
+<table><thead><tr><th>Table</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>tasks</code></td><td>Legacy task queue (status, content, result)</td></tr>
+<tr><td><code>messages</code></td><td>Incoming Telegram messages</td></tr>
+<tr><td><code>bot_messages</code></td><td>Outgoing bot messages (telegram_message_id → task_id)</td></tr>
+<tr><td><code>reactions</code></td><td>Telegram reactions with resolved action</td></tr>
+<tr><td><code>users</code></td><td>User profiles and roles</td></tr>
+<tr><td><code>memory</code></td><td>Per-user key/value memory store</td></tr>
+<tr><td><code>kanban_tasks</code></td><td>Kanban task lifecycle (lane, agent_class, parent_id, timestamps)</td></tr>
+<tr><td><code>token_usage</code></td><td>Per-call token telemetry (agent_class, model, input/output/cache tokens, cost_usd)</td></tr>
+<tr><td><code>knowledge</code></td><td>Structured knowledge base (type, title, content, tags JSON, source)</td></tr>
+<tr><td><code>knowledge_fts</code></td><td>FTS5 virtual table on knowledge (title, content, tags)</td></tr>
+<tr><td><code>agent_sessions</code></td><td>Agent session lifecycle</td></tr>
+<tr><td><code>security_approvals</code></td><td>Security approval audit trail</td></tr>
+<tr><td><code>pending_reactions</code></td><td>Persisted hourglass reactions (task_id → chat_id, tg_msg_id); cleared on restart</td></tr>
+<tr><td><code>daemon_state</code></td><td>Key-value persistent daemon state (e.g. <code>telegram_offset</code>)</td></tr>
+</tbody></table>
+
 <p><strong>Indexes:</strong> <code>kanban_tasks(lane)</code>, <code>kanban_tasks(lane, agent_class)</code>, <code>kanban_tasks(user_id, lane)</code>, <code>token_usage(timestamp)</code>, <code>token_usage(agent_class, timestamp)</code>, <code>knowledge(type)</code>, <code>knowledge(user_id, updated_at)</code></p>
-<hr />
-<h2>Configuration (<code>config.db</code>)</h2>
-<pre><code class="language-json">{
-  &quot;telegram&quot;:  { &quot;token&quot;, &quot;allowed_updates&quot;, &quot;admin_chat_ids&quot;, &quot;reaction_map&quot; },
-  &quot;llm&quot;:       {
-    &quot;provider&quot;,
-    &quot;api_key&quot;, &quot;model&quot;, &quot;max_tokens&quot;,
-    &quot;max_context_tokens&quot;, &quot;context_compact_threshold&quot;
+
+<hr>
+
+<h2>Configuration (<code>settings.json</code>)</h2>
+
+<pre><code class="language-json">
+{
+  "telegram":  { "token", "allowed_updates", "admin_chat_ids", "reaction_map" },
+  "llm":       {
+    "provider",
+    "api_key", "model", "max_tokens",
+    "max_context_tokens", "context_compact_threshold"
   },
-  &quot;agents&quot;:    {
-    &quot;max_parallel&quot;, &quot;task_timeout_seconds&quot;, &quot;po_timeout_seconds&quot;, &quot;max_retries&quot;,
-    &quot;model_tiers&quot;: {&quot;fast&quot;: &quot;&lt;model-id&gt;&quot;, &quot;balanced&quot;: &quot;&lt;model-id&gt;&quot;, &quot;best&quot;: &quot;&lt;model-id&gt;&quot;},
-    &quot;models&quot;: {
-      &quot;default&quot;:    &quot;&lt;tier-or-model-id&gt;&quot;,
-      &quot;controller&quot;: &quot;&lt;tier-or-model-id&gt;&quot;,
-      &quot;chief&quot;:      &quot;&lt;tier-or-model-id&gt;&quot;,
-      &quot;po&quot;:         &quot;&lt;tier-or-model-id&gt;&quot;,
-      &quot;generalist&quot;: &quot;&lt;tier-or-model-id&gt;&quot;,
-      &quot;researcher&quot;: &quot;&lt;tier-or-model-id&gt;&quot;,
-      &quot;memory&quot;:     &quot;&lt;tier-or-model-id&gt;&quot;,
-      &quot;compactor&quot;:  &quot;&lt;tier-or-model-id&gt;&quot;,
-      &quot;coder&quot;: {
-        &quot;default&quot;:   &quot;&lt;tier-or-model-id&gt;&quot;,
-        &quot;architect&quot;: &quot;&lt;tier-or-model-id&gt;&quot;,
-        &quot;developer&quot;: &quot;&lt;tier-or-model-id&gt;&quot;,
-        &quot;tester&quot;:    &quot;&lt;tier-or-model-id&gt;&quot;,
-        &quot;qa&quot;:        &quot;&lt;tier-or-model-id&gt;&quot;
+  "agents":    {
+    "max_parallel", "task_timeout_seconds", "po_timeout_seconds", "max_retries",
+    "model_tiers": {"fast": "&lt;model-id&gt;", "balanced": "&lt;model-id&gt;", "best": "&lt;model-id&gt;"},
+    "models": {
+      "default":    "&lt;tier-or-model-id&gt;",
+      "controller": "&lt;tier-or-model-id&gt;",
+      "chief":      "&lt;tier-or-model-id&gt;",
+      "po":         "&lt;tier-or-model-id&gt;",
+      "generalist": "&lt;tier-or-model-id&gt;",
+      "researcher": "&lt;tier-or-model-id&gt;",
+      "memory":     "&lt;tier-or-model-id&gt;",
+      "compactor":  "&lt;tier-or-model-id&gt;",
+      "coder": {
+        "default":   "&lt;tier-or-model-id&gt;",
+        "architect": "&lt;tier-or-model-id&gt;",
+        "developer": "&lt;tier-or-model-id&gt;",
+        "tester":    "&lt;tier-or-model-id&gt;",
+        "qa":        "&lt;tier-or-model-id&gt;"
       },
-      &quot;mechanic&quot;:   &quot;&lt;tier-or-model-id&gt;&quot;
+      "mechanic":   "&lt;tier-or-model-id&gt;"
     }
   },
-  &quot;web&quot;:       { &quot;port&quot;, &quot;host&quot;, &quot;auth_token&quot; },
-  &quot;users&quot;:     { &quot;default_role&quot;, &quot;admin_ids&quot; },
-  &quot;supervisor&quot;:{ &quot;health_check_interval&quot;, &quot;max_restart_attempts&quot;, &quot;restart_backoff_seconds&quot; },
-  &quot;security&quot;:  { &quot;enabled&quot;, &quot;pending_timeout_seconds&quot;, &quot;rules&quot; },
-  &quot;mcp&quot;:       { &quot;enabled&quot;, &quot;servers&quot; },
-  &quot;spending&quot;:  {
-    &quot;max_daily_usd&quot;,
-    &quot;max_monthly_usd&quot;,
-    &quot;on_limit_exceeded&quot;,
-    &quot;model_pricing&quot;: {&quot;&lt;model-id&gt;&quot;: {&quot;input_per_mtok&quot;: ..., &quot;output_per_mtok&quot;: ...}}
+  "web":       { "port", "host", "auth_token" },
+  "users":     { "default_role", "admin_ids" },
+  "supervisor":{ "health_check_interval", "max_restart_attempts", "restart_backoff_seconds" },
+  "security":  { "enabled", "pending_timeout_seconds", "rules" },
+  "mcp":       { "enabled", "servers" },
+  "spending":  {
+    "max_daily_usd",
+    "max_monthly_usd",
+    "on_limit_exceeded",
+    "model_pricing": {"&lt;model-id&gt;": {"input_per_mtok": ..., "output_per_mtok": ...}}
   },
-  &quot;logging&quot;:   { &quot;dir&quot;, &quot;level&quot; }
+  "logging":   { "dir", "level" }
 }
 </code></pre>
+
 <p><code>llm.provider</code>: <code>"api"</code> (default). Values: <code>"api"</code> | <code>"cli"</code>.</p>
+
 <p><strong>Per-agent model selection</strong> (<code>agents.models</code> + <code>agents.model_tiers</code>): each agent class and CodeTeam stage resolves its model via <code>get_agent_model(agent_class, stage?)</code> in <code>config.py</code>.</p>
-<p>Lookup order:
-1. <code>agents.models.&lt;agent_class&gt;[.&lt;stage&gt;]</code> — explicit override in config.db
-2. <code>_AGENT_CLASS_TIERS</code> / <code>_CODER_STAGE_TIERS</code> — per-class tier assignment in code
-3. <code>agents.model_tiers.&lt;tier&gt;</code> — tier → model ID mapping in config.db
-4. <code>_TIER_DEFAULTS</code> — hardcoded tier fallbacks (fast/balanced/best)</p>
-<p><strong>Tier aliases</strong> (<code>fast</code> / <code>balanced</code> / <code>best</code>): model values at any level can be tier names or direct model IDs. Update <code>agents.model_tiers.best</code> in config.db when a new top-tier model releases — all <code>best</code>-assigned agents upgrade automatically without code changes.</p>
-<pre><code class="language-json">&quot;model_tiers&quot;: {&quot;fast&quot;: &quot;...&quot;, &quot;balanced&quot;: &quot;...&quot;, &quot;best&quot;: &quot;&lt;new-model-id&gt;&quot;},
-&quot;models&quot;: {&quot;chief&quot;: &quot;best&quot;, &quot;controller&quot;: &quot;fast&quot;, &quot;coder&quot;: {&quot;tester&quot;: &quot;fast&quot;}}
+
+<p>Lookup order:</p>
+<ul>
+<li><code>agents.models.&lt;agent_class&gt;[.&lt;stage&gt;]</code> — explicit override in settings.json</li>
+<li><code>_AGENT_CLASS_TIERS</code> / <code>_CODER_STAGE_TIERS</code> — per-class tier assignment in code</li>
+<li><code>agents.model_tiers.&lt;tier&gt;</code> — tier → model ID mapping in settings.json</li>
+<li><code>_TIER_DEFAULTS</code> — hardcoded tier fallbacks (fast/balanced/best)</li>
+</ul>
+
+<p><strong>Tier aliases</strong> (<code>fast</code> / <code>balanced</code> / <code>best</code>): model values at any level can be tier names or direct model IDs. Update <code>agents.model_tiers.best</code> in settings.json when a new top-tier model releases — all <code>best</code>-assigned agents upgrade automatically without code changes.</p>
+
+<pre><code class="language-json">
+"model_tiers": {"fast": "...", "balanced": "...", "best": "&lt;new-model-id&gt;"},
+"models": {"chief": "best", "controller": "fast", "coder": {"tester": "fast"}}
 </code></pre>
+
 <p><code>coder</code> supports nested dict for stage-level overrides (architect/developer/tester/qa). All other classes take a string (tier alias or direct ID). No restart required.</p>
-<p>See <code>settings.example.json</code> for field reference (actual config lives in <code>config.db</code> — written by setup wizard, never edited by hand).</p>
-<p><strong>Hot-reload:</strong> Daemon polls <code>config.db</code> every 5 seconds (<code>updated_at</code> comparison). Any change via the Web UI takes effect automatically — no restart required. Changes to agent models, spending limits, reaction map, security rules, etc. apply to the next API call after reload. Only startup-wired values (Telegram token, DB path, web port) require restart.</p>
-<p>Manual reload triggers:<br>
-– Telegram command <code>/reload_config</code> (admin only)<br>
-– <code>POST /api/config/reload</code> (Web API)</p>
-<hr />
+
+<p>See <code>settings.example.json</code> for full structure with all fields and placeholders.</p>
+
+<p><strong>Hot-reload:</strong> Settings are watched automatically (mtime check every 5s). Any change to <code>settings.json</code> takes effect immediately — no restart required. Changes to agent models, spending limits, reaction map, security rules, etc. apply to the next API call after reload. Only startup-wired values (Telegram token, DB path, web port) require restart.</p>
+
+<p>Manual reload triggers:</p>
+<ul>
+<li>Telegram command <code>/reload_config</code> (admin only)</li>
+<li><code>POST /api/config/reload</code> (Web API)</li>
+</ul>
+
+<hr>
+
 <h2>Message Flow</h2>
-<pre><code>Telegram → TelegramPoller._poll()
+
+<pre><code>
+Telegram → TelegramPoller._poll()
          → Daemon._on_update()
          → _handle_message()
              → upsert_user / auth check
@@ -857,6 +750,9 @@ ProductOwnerAgent.run_loop()                   ← parallel to specialist loops
         → _on_agent_result()
 </code></pre>
 </div>
-<footer>Claude Works — MIT License</footer>
+
+<footer>
+  <a href="https://github.com/mirkofelt/claude-works" style="color:var(--muted)">claude-works</a>
+</footer>
 </body>
 </html>

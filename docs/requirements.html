@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Requirements — Claude Works</title>
+  <title>Claude Works — Requirements — Claude Works</title>
   <link rel="icon" type="image/png" href="icon.png">
   <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -11,7 +11,9 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, Bl
 a { color: var(--accent); text-decoration: none; } a:hover { text-decoration: underline; }
 header { border-bottom: 1px solid var(--border); padding: 1rem 2rem; display: flex; align-items: center; gap: .75rem; }
 header nav { margin-left: auto; display: flex; gap: 1.5rem; font-size: .9rem; }
-header nav a { color: var(--muted); } header nav a:hover { color: var(--text); text-decoration: none; } header nav a.ext { color: var(--accent); }
+header nav a { color: var(--muted); } header nav a:hover { color: var(--text); text-decoration: none; }
+header nav a.active { color: var(--text); font-weight: 600; }
+header nav a.ext { color: var(--accent); }
 .content { max-width: 860px; margin: 0 auto; padding: 3rem 2rem 5rem; }
 h1 { font-size: 2rem; font-weight: 700; margin-bottom: 1.5rem; letter-spacing: -.02em; }
 h2 { font-size: 1.35rem; font-weight: 600; margin: 2.5rem 0 .75rem; padding-bottom: .4rem; border-bottom: 1px solid var(--border); }
@@ -27,7 +29,8 @@ td { padding: .55rem 1rem; border: 1px solid var(--border); }
 tr:nth-child(even) td { background: rgba(255,255,255,.02); }
 hr { border: none; border-top: 1px solid var(--border); margin: 2rem 0; }
 footer { border-top: 1px solid var(--border); padding: 1.5rem 2rem; text-align: center; font-size: .85rem; color: var(--muted); }
-</style>
+.badge { display:inline-block; background:var(--surface); border:1px solid var(--border); border-radius:4px; padding:.1em .5em; font-size:.8em; font-family:monospace; }
+  </style>
 </head>
 <body>
 
@@ -40,17 +43,23 @@ footer { border-top: 1px solid var(--border); padding: 1.5rem 2rem; text-align: 
     <a href="index.html">Home</a>
     <a href="setup.html">Setup</a>
     <a href="architecture.html">Architecture</a>
-    <a href="requirements.html">Requirements</a>
+    <a href="requirements.html" class="active">Requirements</a>
+    <a href="dev-mode.html">Dev Mode</a>
     <a href="https://github.com/mirkofelt/claude-works" target="_blank" rel="noopener" class="ext">GitHub ↗</a>
   </nav>
 </header>
 
 <div class="content">
 <h1>Claude Works — Requirements</h1>
+
 <h2>Purpose</h2>
+
 <p>Claude Works is a personal AI assistant running as a self-hosted Docker container. It receives messages via Telegram, processes them through a multi-layer agent architecture, and responds. It is designed for autonomous operation with low operational overhead and predictable costs.</p>
-<hr />
+
+<hr>
+
 <h2>Functional Requirements</h2>
+
 <h3>F1 — Communication</h3>
 <ul>
 <li>Natural language input, no command prefix required</li>
@@ -58,6 +67,7 @@ footer { border-top: 1px solid var(--border); padding: 1.5rem 2rem; text-align: 
 <li>Voice messages as input (STT → Text)</li>
 <li>Bot can set reactions on outgoing messages</li>
 </ul>
+
 <h3>F2 — Non-blocking Message Processing</h3>
 <ul>
 <li>Incoming message → immediate ACK (Telegram "typing..." indicator)</li>
@@ -68,6 +78,7 @@ footer { border-top: 1px solid var(--border); padding: 1.5rem 2rem; text-align: 
 <li>Option C: merge new message context into running task</li>
 <li>Decision via heuristic (short follow-up → C; fresh question → A)</li>
 </ul>
+
 <h3>F3 — Task Management</h3>
 <ul>
 <li>Each message → task with unique ID</li>
@@ -75,6 +86,7 @@ footer { border-top: 1px solid var(--border); padding: 1.5rem 2rem; text-align: 
 <li>Tasks are persistent (SQLite), survive restarts</li>
 <li>Task fields: message_id, chat_id, content, created_at, status, assigned_agent, result</li>
 </ul>
+
 <h3>F4 — Agent Pool</h3>
 <ul>
 <li>Configurable max parallel agents (default 4)</li>
@@ -82,6 +94,7 @@ footer { border-top: 1px solid var(--border); padding: 1.5rem 2rem; text-align: 
 <li>Agent lifecycle: spawn → work → teardown (no leaks)</li>
 <li>Agents share resources (settings, tools) but not context</li>
 </ul>
+
 <h3>F5 — Agent Concepts (required for all agents)</h3>
 <ul>
 <li>TDD: tests before code</li>
@@ -89,12 +102,14 @@ footer { border-top: 1px solid var(--border); padding: 1.5rem 2rem; text-align: 
 <li>No hanging processes: timeout (default 10 min), then kill + retry</li>
 <li>Context Budget: warn at 80% utilization, compact at 90%</li>
 </ul>
+
 <h3>F6 — Context Overflow Prevention</h3>
 <ul>
 <li>Each agent tracks own token count estimate</li>
 <li>At 80%: automatic summary + handoff to fresh agent</li>
 <li>Never lose task through context overflow</li>
 </ul>
+
 <h3>F7 — Data Storage</h3>
 <ul>
 <li>All incoming messages stored (message_id, from, text, timestamp)</li>
@@ -102,6 +117,7 @@ footer { border-top: 1px solid var(--border); padding: 1.5rem 2rem; text-align: 
 <li>Reactions stored with reference to original message</li>
 <li>Two SQLite databases: <code>config.db</code> (daemon config) and <code>claude-works.db</code> (operational data)</li>
 </ul>
+
 <h3>F8 — Process Hygiene</h3>
 <ul>
 <li>No hanging process longer than defined timeout</li>
@@ -109,20 +125,25 @@ footer { border-top: 1px solid var(--border); padding: 1.5rem 2rem; text-align: 
 <li>Watchdog: detect dead agents, auto-respawn</li>
 <li>Health endpoint: GET /health → JSON with agent status, queue depth</li>
 </ul>
-<hr />
+
+<hr>
+
 <h2>Non-Functional Requirements</h2>
+
 <h3>NF1 — Stack</h3>
 <ul>
 <li>Python, asyncio, no blocking I/O in main loop</li>
 <li>SQLite for persistence</li>
-<li>Settings stored in <code>config.db</code> (no hardcoding; written by setup wizard)</li>
+<li>Settings from <code>settings.json</code> (no hardcoding)</li>
 </ul>
+
 <h3>NF2 — Deployment</h3>
 <ul>
 <li>Runs as Docker container or standalone process</li>
-<li>Config stored in <code>config.db</code>; env var <code>CONFIG_DB_FILE</code> overrides path</li>
-<li>Setup gate page (logo + one-time token) on first boot → config form → INITIALIZE → RUN</li>
+<li>Config via <code>settings.json</code>; env var <code>SETTINGS_FILE</code> overrides path</li>
+<li>Setup wizard in Web UI for first-run configuration (INITIALIZE mode)</li>
 </ul>
+
 <h3>NF3 — Security</h3>
 <ul>
 <li>No credentials in logs or code</li>
@@ -130,6 +151,7 @@ footer { border-top: 1px solid var(--border); padding: 1.5rem 2rem; text-align: 
 <li>Only whitelisted chat IDs processed</li>
 <li>Rate-limiting: max N messages/minute</li>
 </ul>
+
 <h3>NF4 — Observability</h3>
 <ul>
 <li>Structured logging with timestamps</li>
@@ -137,68 +159,96 @@ footer { border-top: 1px solid var(--border); padding: 1.5rem 2rem; text-align: 
 <li>Agent spawn and teardown logged</li>
 <li>Rotating log file</li>
 </ul>
-<hr />
+
+<hr>
+
 <h2>LLM Provider</h2>
+
 <p>Two provider types supported via <code>llm.provider</code> config key:</p>
+
 <ul>
 <li><code>"api"</code> — direct API calls (requires <code>llm.api_key</code>)</li>
 <li><code>"cli"</code> — local CLI binary in PATH (uses subscription, no API key)</li>
 </ul>
+
 <p>Provider and api_key are read at startup only. Changing them requires a daemon restart.</p>
-<hr />
+
+<hr>
+
 <h2>Additional Design Notes</h2>
+
 <p><strong>Multi-message Bundling</strong>: Two messages belong together when time gap &lt; 5s AND context is related (follow-up, correction) OR first message ends with open structure. Pure time threshold is insufficient.</p>
-<p><strong>Reaction as First-Class Feedback</strong>: Reactions are full interactions.
-- 👍 = approve / done
-- 👎 = wrong, retry
-- ❤️ = save / mark important
-- 🔥 = urgent / high priority
-- 😂 = dismiss / was a joke
-- 🤔 = unclear, clarify
-- Custom mapping configurable in settings</p>
+
+<p><strong>Reaction as First-Class Feedback</strong>: Reactions are full interactions.</p>
+<ul>
+<li>👍 = approve / done</li>
+<li>👎 = wrong, retry</li>
+<li>❤️ = save / mark important</li>
+<li>🔥 = urgent / high priority</li>
+<li>😂 = dismiss / was a joke</li>
+<li>🤔 = unclear, clarify</li>
+<li>Custom mapping configurable in settings</li>
+</ul>
+
 <p><strong>Typing Indicator Loop</strong>: Send "typing..." every 4s while agent works.</p>
+
 <p><strong>Voice Output</strong>: Optional ElevenLabs integration for voice responses.</p>
+
 <p><strong>Priority Queue</strong>: Messages with "!" prefix → high priority, overtakes running tasks.</p>
+
 <p><strong>Agent Memory</strong>: Shared SQLite memory store all agents can read/write.</p>
-<hr />
+
+<hr>
+
 <h2>Web UI</h2>
+
 <h3>W1 — Dashboard</h3>
 <ul>
 <li>Real-time overview: running agents, task queue, system status</li>
 <li>Live updates via WebSocket</li>
 </ul>
+
 <h3>W2 — Knowledge Base</h3>
 <ul>
 <li>Browseable memory store by tag, user, topic</li>
 <li>Full-text search</li>
 <li>Edit, delete, add entries</li>
 </ul>
+
 <h3>W3 — Configuration</h3>
 <ul>
 <li>Settings editable via UI</li>
 <li>User management: approve, set roles, block</li>
 <li>Reaction mapping configurable</li>
 </ul>
+
 <h3>W4 — Process Monitoring</h3>
 <ul>
 <li>Log viewer (filterable by level/agent/user)</li>
 <li>Task history with timeline</li>
 </ul>
+
 <h3>W5 — Auth</h3>
 <ul>
 <li>Token-based login</li>
 <li>Session-based, no plaintext password</li>
 </ul>
-<hr />
+
+<hr>
+
 <h2>Heartbeat &amp; Self-Healing</h2>
+
 <ul>
 <li>Internal heartbeat every 60s</li>
 <li>Telegram polling crashed → auto-restart (max 3 attempts, then alert)</li>
 <li>Agent timeout → SIGTERM → SIGKILL → requeue</li>
 <li>All errors → Telegram notification to admin</li>
 </ul>
-<hr />
+
+<hr>
+
 <h2>Multi-User &amp; Auth</h2>
+
 <ul>
 <li>Multiple users, each with own profile in SQLite</li>
 <li>Roles: <code>admin</code>, <code>user</code>, <code>blocked</code></li>
@@ -206,12 +256,18 @@ footer { border-top: 1px solid var(--border); padding: 1.5rem 2rem; text-align: 
 <li>Only whitelisted user IDs processed</li>
 <li>Tasks are user-scoped</li>
 </ul>
-<hr />
+
+<hr>
+
 <h2>Out of Scope (initially)</h2>
 <ul>
 <li>Group chats</li>
 </ul>
+
 </div>
-<footer>Claude Works — MIT License</footer>
+
+<footer>
+  <a href="https://github.com/mirkofelt/claude-works" style="color:var(--muted)">claude-works</a>
+</footer>
 </body>
 </html>

@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Developer Mode — Claude Works</title>
+  <link rel="icon" type="image/png" href="icon.png">
+  <style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root { --bg: #0d1117; --surface: #161b22; --border: #21262d; --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff; --accent2: #79c0ff; }
+body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; line-height: 1.7; }
+a { color: var(--accent); text-decoration: none; } a:hover { text-decoration: underline; }
+header { border-bottom: 1px solid var(--border); padding: 1rem 2rem; display: flex; align-items: center; gap: .75rem; }
+header nav { margin-left: auto; display: flex; gap: 1.5rem; font-size: .9rem; }
+header nav a { color: var(--muted); } header nav a:hover { color: var(--text); text-decoration: none; }
+header nav a.active { color: var(--text); font-weight: 600; }
+header nav a.ext { color: var(--accent); }
+.content { max-width: 860px; margin: 0 auto; padding: 3rem 2rem 5rem; }
+h1 { font-size: 2rem; font-weight: 700; margin-bottom: 1.5rem; letter-spacing: -.02em; }
+h2 { font-size: 1.35rem; font-weight: 600; margin: 2.5rem 0 .75rem; padding-bottom: .4rem; border-bottom: 1px solid var(--border); }
+h3 { font-size: 1.05rem; font-weight: 600; margin: 1.5rem 0 .5rem; color: var(--accent2); }
+h4 { font-size: .95rem; font-weight: 600; margin: 1.2rem 0 .4rem; color: var(--muted); }
+p { margin-bottom: .75rem; } ul, ol { margin: .5rem 0 .75rem 1.5rem; } li { margin-bottom: .25rem; }
+code { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: .1em .4em; font-size: .875em; font-family: "SF Mono", Consolas, monospace; }
+pre { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem 1.5rem; overflow-x: auto; margin: 1rem 0; }
+pre code { background: none; border: none; padding: 0; font-size: .85rem; }
+table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .9rem; }
+th { background: var(--surface); padding: .6rem 1rem; text-align: left; border: 1px solid var(--border); font-weight: 600; color: var(--muted); }
+td { padding: .55rem 1rem; border: 1px solid var(--border); }
+tr:nth-child(even) td { background: rgba(255,255,255,.02); }
+hr { border: none; border-top: 1px solid var(--border); margin: 2rem 0; }
+footer { border-top: 1px solid var(--border); padding: 1.5rem 2rem; text-align: center; font-size: .85rem; color: var(--muted); }
+.badge { display:inline-block; background:var(--surface); border:1px solid var(--border); border-radius:4px; padding:.1em .5em; font-size:.8em; font-family:monospace; }
+  </style>
+</head>
+<body>
+
+<header>
+  <a href="index.html" style="display:flex;align-items:center;gap:.75rem;text-decoration:none;">
+    <img src="icon.png" alt="" style="width:32px;height:32px;border-radius:50%;">
+    <span style="font-weight:600;font-size:1.1rem;color:#e6edf3;">Claude Works</span>
+  </a>
+  <nav>
+    <a href="index.html">Home</a>
+    <a href="setup.html">Setup</a>
+    <a href="architecture.html">Architecture</a>
+    <a href="requirements.html">Requirements</a>
+    <a href="dev-mode.html" class="active">Dev Mode</a>
+    <a href="https://github.com/mirkofelt/claude-works" target="_blank" rel="noopener" class="ext">GitHub ↗</a>
+  </nav>
+</header>
+
+<div class="content">
+<h1>Developer Mode</h1>
+
+<p>Developer mode unlocks live update and deployment features. It is off by default to prevent accidental changes in production.</p>
+
+<h2>Enabling</h2>
+
+<p>Settings → Developer Mode → toggle on. Saved immediately to daemon config under <code>system.dev_mode</code>.</p>
+
+<p>When on:</p>
+<ul>
+<li>Deploy Guard configuration section becomes visible</li>
+<li><code>/api/deploy/trigger</code> and <code>/api/deploy/rollback</code> endpoints become active</li>
+<li>Deploy buttons appear in the Settings UI</li>
+</ul>
+
+<p>When off:</p>
+<ul>
+<li>All deploy endpoints return <code>403</code></li>
+<li>Deploy Guard config fields are hidden</li>
+</ul>
+
+<hr>
+
+<h2>Deploy Guard</h2>
+
+<p>A minimal webhook container that controls the Docker lifecycle of <code>claude-works</code>. It is the only component allowed to touch the Docker socket for this service.</p>
+
+<h3>What it does</h3>
+
+<table><thead><tr><th>Endpoint</th><th>Action</th></tr></thead><tbody>
+<tr><td><code>GET /health?token=…</code></td><td>Liveness check — returns <code>{"status":"ok"}</code></td></tr>
+<tr><td><code>POST /deploy?token=…</code></td><td>Pull latest image, recreate container, health check, auto-rollback on failure</td></tr>
+<tr><td><code>POST /rollback?token=…</code></td><td>Restart container with previous image tag</td></tr>
+</tbody></table>
+
+<h3>Security constraints</h3>
+
+<ul>
+<li>Token required on every request (compared with <code>hmac.compare_digest</code>)</li>
+<li>Only touches the hardcoded service name (<code>claude-works</code>) — no user-controlled shell input</li>
+<li>Rate-limited: max 1 deploy per 5 minutes</li>
+<li>Binds to <code>127.0.0.1:9876</code> only — not reachable from outside the host without explicit tunnel</li>
+</ul>
+
+<h3>Setup</h3>
+
+<p><strong>1. Generate a token</strong></p>
+
+<pre><code class="language-bash">
+openssl rand -hex 32
+</code></pre>
+
+<p><strong>2. Add to <code>.env</code> on the Unraid host</strong></p>
+
+<pre><code>
+DEPLOY_TOKEN=&lt;your-token&gt;
+</code></pre>
+
+<p><strong>3. Start deploy-guard</strong></p>
+
+<pre><code class="language-bash">
+docker-compose up -d deploy-guard
+</code></pre>
+
+<p>The <code>deploy-guard</code> service is defined in <code>docker-compose.yml</code>. It mounts:</p>
+<ul>
+<li><code>/var/run/docker.sock</code> — to control Docker</li>
+<li><code>./docker-compose.yml:/compose/docker-compose.yml:ro</code> — to recreate the service</li>
+</ul>
+
+<p><strong>4. Configure in Web UI</strong></p>
+
+<p>Settings → Developer Mode → Deploy Guard:</p>
+<ul>
+<li>Guard URL: <code>http://deploy-guard:9876</code> (Docker internal network)</li>
+<li>Deploy Token: paste the token from Step 1</li>
+<li>Click <strong>Test Connection</strong> to verify</li>
+</ul>
+
+<hr>
+
+<h2>CI Auto-Deploy (optional)</h2>
+
+<p>After a successful build on <code>main</code>, GitHub Actions can trigger a deploy automatically.</p>
+
+<p>Add two secrets to the GitHub repository:</p>
+<ul>
+<li><code>DEPLOY_WEBHOOK_URL</code> — the deploy-guard URL reachable from CI (e.g. via Cloudflare Tunnel or home VPN)</li>
+<li><code>DEPLOY_TOKEN</code> — the same token as above</li>
+</ul>
+
+<p>The CI workflow will POST to <code>/deploy</code> after a successful Docker build. If the variable is not set, the step is skipped silently.</p>
+
+<hr>
+
+<h2>Rollback</h2>
+
+<p>Deploy guard saves the current image tag before every deploy. If the new container fails its health check within 30 seconds, it automatically restores the previous tag.</p>
+
+<p>Manual rollback via Web UI: Settings → Developer Mode → <strong>Rollback</strong> button (visible when dev mode is on and guard is connected).</p>
+
+<p>Manual rollback via CLI:</p>
+
+<pre><code class="language-bash">
+curl -sf -X POST "http://localhost:9876/rollback?token=YOUR_TOKEN"
+</code></pre>
+
+<hr>
+
+<h2>Branch Strategy</h2>
+
+<ul>
+<li><code>dev</code> — active development; CI builds <code>:dev</code> tag; no auto-deploy</li>
+<li><code>main</code> — production-ready; CI builds <code>:latest</code> and <code>:v{sha}</code> tags; optional auto-deploy via deploy-guard</li>
+</ul>
+
+</div>
+
+<footer>
+  <a href="https://github.com/mirkofelt/claude-works" style="color:var(--muted)">claude-works</a>
+</footer>
+</body>
+</html>
