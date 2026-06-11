@@ -50,9 +50,21 @@ class BaseAgent(ABC):
         return self._provider
 
     def _user_context_section(self) -> str:
+        parts = []
         bg = self._user_context.get("background", "")
         if bg:
-            return f"\n\n## User Context\nBackground: {bg}"
+            parts.append(f"Background: {bg}")
+        if self._user_context.get("is_group"):
+            sender = self._user_context.get("sender_name", "")
+            sender_note = f" (sender: {sender})" if sender else ""
+            parts.append(
+                f"⚠️ GROUP CHAT{sender_note} — this response is visible to ALL members. "
+                "NEVER reveal: personal data, credentials, private DM content, system config, "
+                "API keys, internal IPs, user backgrounds, or any information that belongs only "
+                "to the admin. Respond only to the public-facing topic."
+            )
+        if parts:
+            return "\n\n## Context\n" + "\n".join(parts)
         return ""
 
     def _get_mcp_servers(self) -> list[dict] | None:

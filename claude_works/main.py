@@ -1883,6 +1883,7 @@ Rules:
                         "user_id": user_id,
                         "chat_id": chat_id,
                         "background": self._user_backgrounds.get(user_id, ""),
+                        "is_group": chat_id < 0,
                     },
                     provider=provider,
                     token_tracker=self._token_tracker,
