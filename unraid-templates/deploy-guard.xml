@@ -1,0 +1,36 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>deploy-guard</Name>
+  <Repository>ghcr.io/mirkofelt/deploy-guard:latest</Repository>
+  <Registry>https://ghcr.io</Registry>
+  <Network>bridge</Network>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Overview>Minimal webhook receiver for safe Docker container updates with automatic rollback. Supports both standalone (Unraid-native) and docker-compose modes. Endpoints: /health, /deploy, /rollback — all token-protected.</Overview>
+  <Category>Tools:</Category>
+  <WebUI/>
+  <TemplateURL>https://raw.githubusercontent.com/mirkofelt/claude-works/main/unraid-templates/deploy-guard.xml</TemplateURL>
+  <ExtraParams>--security-opt=no-new-privileges --cap-drop=ALL --cap-add=NET_BIND_SERVICE</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <DonateText/>
+  <DonateLink/>
+
+  <!-- Required -->
+  <Config Name="Deploy Token" Target="DEPLOY_TOKEN" Default="" Mode="" Description="Secret token for all endpoints. Generate with: openssl rand -hex 32" Type="Variable" Display="always" Required="true" Mask="true"></Config>
+  <Config Name="Managed Container" Target="MANAGED_CONTAINER" Default="claude-works" Mode="" Description="Name of the Docker container to manage" Type="Variable" Display="always" Required="true" Mask="false">claude-works</Config>
+  <Config Name="Managed Image" Target="MANAGED_IMAGE" Default="ghcr.io/mirkofelt/claude-works:latest" Mode="" Description="Full image reference to pull on /deploy" Type="Variable" Display="always" Required="true" Mask="false">ghcr.io/mirkofelt/claude-works:latest</Config>
+
+  <!-- Advanced / compose mode -->
+  <Config Name="Compose File (optional)" Target="COMPOSE_FILE" Default="" Mode="" Description="Leave empty for standalone mode (recommended for Unraid). Set to /compose/docker-compose.yml to use docker-compose instead." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="Compose Service (optional)" Target="COMPOSE_SERVICE" Default="claude-works" Mode="" Description="Service name in docker-compose.yml — only used when Compose File is set" Type="Variable" Display="advanced" Required="false" Mask="false">claude-works</Config>
+
+  <!-- Port — bind to localhost only for security -->
+  <Config Name="Port" Target="9876" Default="127.0.0.1:9876" Mode="tcp" Description="Webhook port. Default binds to localhost only — only reachable via reverse proxy or tunnel." Type="Port" Display="always" Required="true" Mask="false">127.0.0.1:9876</Config>
+
+  <!-- Docker socket -->
+  <Config Name="Docker Socket" Target="/var/run/docker.sock" Default="/var/run/docker.sock" Mode="rw" Description="Docker socket — required for container management" Type="Path" Display="advanced" Required="true" Mask="false">/var/run/docker.sock</Config>
+
+  <!-- Compose file mount (only needed in compose mode) -->
+  <Config Name="Compose File Mount (compose mode only)" Target="/compose/docker-compose.yml" Default="" Mode="ro" Description="Host path to docker-compose.yml. Only needed if Compose File env var is set." Type="Path" Display="advanced" Required="false" Mask="false"></Config>
+</Container>

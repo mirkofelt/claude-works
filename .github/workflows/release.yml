@@ -77,3 +77,10 @@ jobs:
           generate_release_notes: true
           body: |
             Docker image: `ghcr.io/${{ github.repository }}:${{ steps.version.outputs.tag }}`
+
+      - name: Trigger deploy (optional)
+        if: vars.DEPLOY_WEBHOOK_URL != ''
+        run: |
+          curl -sf --max-time 10 -X POST \
+            "${{ vars.DEPLOY_WEBHOOK_URL }}/deploy?token=${{ secrets.DEPLOY_TOKEN }}" \
+            || echo "Deploy webhook call failed (non-fatal)"

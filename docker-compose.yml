@@ -9,3 +9,25 @@ services:
       - "8080:8080"
     environment:
       - LOG_LEVEL=INFO
+
+  deploy-guard:
+    image: ghcr.io/mirkofelt/deploy-guard:latest
+    container_name: deploy-guard
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges
+    cap_drop:
+      - ALL
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./docker-compose.yml:/compose/docker-compose.yml:ro
+    ports:
+      - "127.0.0.1:9876:9876"
+    environment:
+      - DEPLOY_TOKEN=${DEPLOY_TOKEN}
+      - MANAGED_CONTAINER=claude-works
+      - MANAGED_IMAGE=ghcr.io/mirkofelt/claude-works:latest
+      - COMPOSE_FILE=/compose/docker-compose.yml
+      - COMPOSE_SERVICE=claude-works
+    profiles:
+      - deploy
