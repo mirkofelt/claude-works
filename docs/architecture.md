@@ -112,7 +112,7 @@ Central coordinator. Owns all subsystems, wires them together.
 - `_handle_message()` — auth check → bundling → `KanbanTask` push → typing indicator
 - `_handle_reaction()` — persist reaction, resolve action
 - `_handle_command()` — `/auth`, `/block`, `/approve N`, `/deny N`, `/status`, `/reload_persona`, `/reload_config`, `/repair <desc>` (admin), `/exit_repair` (admin)
-- `_on_agent_result(task: KanbanTask, result, error)` — security gate → send response → persist bot message
+- `_on_agent_result(task: KanbanTask, result, error)` — security gate → send response → persist bot message → clear pending reaction (DB + Telegram)
 - In REPAIR/MIGRATE mode: admin messages routed to `mechanic.followup(text)`
 - `health()` → `{status, poller, active_agents, security_pending, mode, mode_error?, mechanic_report?, rate_limited_until?, llm_usage?}`
 - `_usage_poll_loop()` — polls `coordinator.query_usage()` every `llm.usage_poll_interval_seconds` (default 300s); notifies admins once when `usage_pct >= 0.8`; resets notification flag when usage drops below threshold
@@ -329,14 +329,41 @@ Persists every LLM call to `token_usage` table. Calculates cost at insert time v
 
 #### `store.py` — KnowledgeStore
 
-Structured knowledge entries in SQLite.
+Structured, FTS5-indexed knowledge documents in SQLite. Auto-injected as context into every agent run.
 
-- `add(type, title, content, tags, source, user_id)` → insert
-- `search(query, user_id=None)` → LIKE search on title + content
-- `list_all(user_id=None)` → all entries, optional user filter
-- `delete(id)` → remove entry
+- `add(type, title, content, tags, source, user_id)` → insert; FTS index updated via trigger
+- `update(id, *, title, content, type, tags)` → partial update; any field can be `None` to skip; FTS index updated via trigger
+- `search(query, user_id=None, limit=5)` → FTS5 BM25 full-text search with LIKE fallback; returns `list[dict]` with entry IDs
+- `list_all(user_id=None, page, page_size, type)` → paginated browse
+- `delete(id)` → remove entry and FTS index row
+- `import_from_directory(conn, path)` → scan `/data/knowledge/` for `.md`/`.txt` files, re-import on mtime change; `source="file::<filename>"`
+- `count(user_id=None, type=None)` → filtered count
 
-Schema: `id, type, title, content, tags, source, user_id, created_at, updated_at`
+Schema: `id, type, title, content, tags (JSON array), source, user_id, created_at, updated_at`  
+FTS5 virtual table `knowledge_fts` on `title, content, tags` — kept in sync via `AFTER INSERT/UPDATE/DELETE` triggers.
+
+**Types:** `note` / `fact` / `procedure` / `context` / `document`
+
+**Agent interaction via output tags:**
+- `[KB_SEARCH: query]` — execute FTS search during agent tool loop; results (with IDs) fed back to agent
+- `[KB_SAVE: title | type | tags | content]` — create new entry (`source="agent"`)
+- `[KB_UPDATE: id | title | type | tags | content]` — partial update; leave any field empty to skip
+
+**Auto-inject:** `_inject_knowledge()` in `coordinator.py` prepends top-5 FTS results to every task, including entry IDs and a KB tag hint.
+
+**Startup migration check:** If file-imported entries (`source LIKE 'file::%'`) have no tags, a MemoryAgent classification task is automatically pushed to the Kanban backlog.
+
+#### Memory vs Knowledge
+
+| | Memory (`memory` table) | Knowledge (`knowledge` table) |
+|---|---|---|
+| Structure | Key-value (`user_id + key → value`) | Typed documents (`title, content, type, tags`) |
+| Search | LIKE only | FTS5 (BM25) |
+| Auto-inject to agents | No | Yes (top-5 per task) |
+| Source | Agent/user writes | File import + agent/UI writes |
+| Agent tags | None | `KB_SEARCH`, `KB_SAVE`, `KB_UPDATE` |
+
+The `memory` table exists for per-user key-value state. The `knowledge` table is the primary shared knowledge store used by all agents.
 
 ### `claude_works/telegram/`
 
@@ -411,6 +438,10 @@ FastAPI app served by uvicorn (same process as Daemon, separate asyncio task).
 | GET | `/api/users` | User list |
 | POST | `/api/users/{id}/role` | Update user role |
 | GET | `/api/memory` | Memory entries (filter by user_id, search query) |
+| GET | `/api/knowledge` | Knowledge entries — search (`?q=`) or list (`?type=`, `?page=`, `?page_size=`) |
+| POST | `/api/knowledge` | Create knowledge entry (`title, content, type, tags`) |
+| PUT | `/api/knowledge/{id}` | Update knowledge entry (partial — any field can be omitted) |
+| DELETE | `/api/knowledge/{id}` | Delete knowledge entry |
 | GET | `/api/approvals` | Pending security approvals |
 | POST | `/api/approvals/{id}/approve` | Approve pending action |
 | POST | `/api/approvals/{id}/deny` | Deny pending action |
@@ -440,7 +471,9 @@ FastAPI app served by uvicorn (same process as Daemon, separate asyncio task).
 ```
 Bucket size: 3600s for ≤24h, 21600s for >24h.
 
-**Web UI tabs:** Tasks · Messages · Users · Memory · Approvals · Kanban · Tokens · Logs
+**Web UI tabs:** Tasks · Messages · Users · Memory · Knowledge · Approvals · Kanban · Tokens · Logs
+
+**Knowledge tab features:** Search + type filter + pagination; click title or ✎ to open full entry in modal; Edit button → inline form (title/content/type/tags); Save → PUT API (FTS auto-updated via triggers).
 
 ### `claude_works/config_store.py` — DB Config Store
 
@@ -503,9 +536,12 @@ Two SQLite databases, both in WAL mode with `synchronous=NORMAL`.
 | `memory` | Per-user key/value memory store |
 | `kanban_tasks` | Kanban task lifecycle (lane, agent_class, parent_id, timestamps) |
 | `token_usage` | Per-call token telemetry (agent_class, model, input/output/cache tokens, cost_usd) |
-| `knowledge` | Structured knowledge base (type, title, content, tags, source) |
+| `knowledge` | Structured knowledge base (type, title, content, tags JSON, source) |
+| `knowledge_fts` | FTS5 virtual table on knowledge (title, content, tags) |
 | `agent_sessions` | Agent session lifecycle |
 | `security_approvals` | Security approval audit trail |
+| `pending_reactions` | Persisted hourglass reactions (task_id → chat_id, tg_msg_id); cleared on restart |
+| `daemon_state` | Key-value persistent daemon state (e.g. `telegram_offset`) |
 
 **Indexes:** `kanban_tasks(lane)`, `kanban_tasks(lane, agent_class)`, `kanban_tasks(user_id, lane)`, `token_usage(timestamp)`, `token_usage(agent_class, timestamp)`, `knowledge(type)`, `knowledge(user_id, updated_at)`
 

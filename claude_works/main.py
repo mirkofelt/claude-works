@@ -391,6 +391,37 @@ class Daemon:
         tg_cfg = config.section("telegram")
         admin_ids = cfg.get("admin_ids", tg_cfg.get("admin_chat_ids", []))
 
+        # Post-import KB classification check
+        if admin_ids:
+            async with self._conn.execute(
+                "SELECT COUNT(*) FROM knowledge WHERE source LIKE 'file::%' AND (tags IS NULL OR tags = '[]')"
+            ) as cur:
+                row = await cur.fetchone()
+            unclassified = row[0] if row else 0
+            if unclassified > 0:
+                migration_task = KanbanTask(
+                    id=None,
+                    chat_id=admin_ids[0],
+                    user_id=admin_ids[0],
+                    content=(
+                        f"## Knowledge Base: Classify {unclassified} Imported Entries\n\n"
+                        f"There are {unclassified} knowledge base entries imported from files "
+                        f"(source=file::*, no tags) that need proper classification.\n\n"
+                        f"For each entry:\n"
+                        f"1. Use [KB_SEARCH: document] to find untagged entries\n"
+                        f"2. Read content and determine:\n"
+                        f"   - Best type: note / fact / procedure / context / document\n"
+                        f"   - Relevant tags (comma-separated, descriptive)\n"
+                        f"3. Update: [KB_UPDATE: <id> | <title> | <type> | <tags> | ]\n"
+                        f"   (leave content field empty to keep original)\n\n"
+                        f"Goal: make entries discoverable via FTS search. "
+                        f"Prefer specific types over 'document'. Add topic tags."
+                    ),
+                    priority=0,
+                )
+                await self._board.push(migration_task)
+                logger.info("Pushed KB classification task for %d untagged file-imported entries", unclassified)
+
         # Startup CLI auth check
         llm_cfg = config.section("llm")
         if llm_cfg.get("provider") == "cli":

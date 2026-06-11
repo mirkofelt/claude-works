@@ -166,12 +166,14 @@ Replace all YOUR_* placeholders — leave them as-is if unknown.
 ## Features
 
 - **Multi-agent** — specialist pool (generalist, researcher, coder, memory) + ChiefAgent + ProductOwner for complex tasks
-- **Output patterns** — `[VOICE:]` TTS, `[MAP:]` location, `[BUTTONS:]` inline keyboard, `[SEND_EMAIL:]`, `[READ_EMAIL:]`, `[GITHUB_API:]`
+- **Output patterns** — `[VOICE:]` TTS, `[MAP:]` location, `[BUTTONS:]` inline keyboard, `[SEND_EMAIL:]`, `[READ_EMAIL:]`, `[GITHUB_API:]`, `[KB_SEARCH:]`, `[KB_SAVE:]`, `[KB_UPDATE:]`
+- **Knowledge base** — FTS5-indexed, auto-injected into every agent; file import + agent read/write; UI read/edit modal
+- **KB auto-classification** — on startup, untagged file-imported entries trigger an automatic MemoryAgent classification task
 - **Security Officer** — LLM reviews all outbound content for data leaks before sending
 - **Tor routing** — URL fetches via Tor by default; asks user if blocked
 - **Hot-reload** — edit `/data/prompts/*.md`, active within 5 seconds; no restart needed
-- **Knowledge base** — auto-import from `/data/knowledge/` on start; FTS5 search
-- **Web UI** — dark dashboard, all config editable live (Settings tab)
+- **Hourglass cleanup** — pending ⏳ reactions persisted to DB; cleared on restart or task failure
+- **Web UI** — dark dashboard: Knowledge tab with read/edit modal, Settings, Kanban, Tokens, Logs
 
 ---
 
