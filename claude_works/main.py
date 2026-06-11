@@ -2084,7 +2084,40 @@ Rules:
             status = await _restart_tor()
             tool_results.append(f"TOR_RESTART: {status}")
 
+        # DEPLOY_STATUS / DEPLOY_TRIGGER tags
+        if "[DEPLOY_STATUS]" in result:
+            result = result.replace("[DEPLOY_STATUS]", "")
+            deploy_status = await self._deploy_guard_action("status")
+            tool_results.append(f"DEPLOY_STATUS: {deploy_status}")
+        if "[DEPLOY_TRIGGER]" in result:
+            result = result.replace("[DEPLOY_TRIGGER]", "")
+            deploy_result = await self._deploy_guard_action("trigger")
+            tool_results.append(f"DEPLOY_TRIGGER: {deploy_result}")
+
         return result, "\n\n".join(tool_results) if tool_results else None
+
+    async def _deploy_guard_action(self, action: str) -> str:
+        """Call deploy-guard for status/trigger. Returns result string."""
+        import httpx as _httpx
+        dg = config.section("system").get("deploy_guard", {})
+        url = dg.get("url", "").rstrip("/")
+        token = dg.get("token", "")
+        if not url or not token:
+            return "deploy_guard not configured (system.deploy_guard.url and .token required)"
+        try:
+            async with _httpx.AsyncClient(timeout=15.0) as client:
+                if action == "status":
+                    resp = await client.get(f"{url}/api/deploy/status?token={token}")
+                else:
+                    resp = await client.post(f"{url}/deploy?token={token}")
+                if resp.status_code == 200:
+                    try:
+                        return str(resp.json())
+                    except Exception:
+                        return resp.text[:200]
+                return f"HTTP {resp.status_code}: {resp.text[:100]}"
+        except Exception as e:
+            return f"deploy_guard error: {e}"
 
     async def _do_git_clone(self, chat_id: int, repo_url: str, target: str) -> None:
         try:

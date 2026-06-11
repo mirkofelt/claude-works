@@ -142,7 +142,8 @@ class CliProvider(LLMProvider):
                 "**Core tools reminder** (always available regardless of history length):\n"
                 "[VOICE: text] → TTS audio | [KB_SAVE: title|type|tags|content] → save knowledge | "
                 "[KB_UPDATE: id|...] → update knowledge | [BOARD_TASK: desc] → background task | "
-                "[SEND_EMAIL: to|subject|body] → email | [GITHUB_API: METHOD|/endpoint|body] → GitHub"
+                "[SEND_EMAIL: to|subject|body] → email | [GITHUB_API: METHOD|/endpoint|body] → GitHub | "
+                "[DEPLOY_STATUS] → check deploy | [DEPLOY_TRIGGER] → redeploy"
             )
 
         user_msg = (messages[-1]["content"] if messages else "") or ""
