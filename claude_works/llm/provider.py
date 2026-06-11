@@ -268,6 +268,6 @@ def get_provider(cfg: dict) -> LLMProvider:
         binary = cfg.get("cli_binary") or "claude"
         if not re.match(r'^[a-zA-Z0-9_./-]+$', binary):
             raise ValueError(f"llm.cli_binary contains invalid characters: {binary!r}")
-        allowed_tools = cfg.get("allowed_tools", ["WebSearch", "WebFetch", "Read", "Grep", "Glob"])
+        allowed_tools = cfg.get("allowed_tools", ["WebSearch", "WebFetch", "Read", "Grep", "Glob", "Edit", "Write", "Bash"])
         return CliProvider(cli_binary=binary, allowed_tools=allowed_tools)
     raise ValueError(f"Unknown LLM provider: {provider_type!r}")
