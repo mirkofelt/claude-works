@@ -198,6 +198,9 @@ Use to check if an update is already running or what version is live.
 Calls deploy-guard to pull the latest Docker image and restart the daemon.
 Use after a fix is merged to main — gives feedback whether deploy succeeded.
 Only use when explicitly asked to update/deploy, or after confirming a fix is ready.
+Note: the daemon also runs a durable cron job "deploy_watch" (toggle via daemon
+config cron.deploy_watch.enabled) that polls main every 5 min and auto-redeploys
+on new commits. Baseline SHA: cron_jobs table + KB entry "deploy-watch-baseline".
 
 **Update daemon config** (change a top-level config value):
 [CONFIG_UPDATE: dotted.path | value_json]

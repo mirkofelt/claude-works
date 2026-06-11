@@ -231,6 +231,17 @@ CREATE TABLE IF NOT EXISTS task_logs (
 );
 CREATE INDEX IF NOT EXISTS idx_task_logs_task ON task_logs(task_id, ts);
 
+CREATE TABLE IF NOT EXISTS cron_jobs (
+    name TEXT PRIMARY KEY,
+    interval_seconds INTEGER NOT NULL,
+    state_json TEXT NOT NULL DEFAULT '{}',
+    last_run_at INTEGER,
+    last_status TEXT,
+    last_error TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS approval_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     action_types TEXT NOT NULL,

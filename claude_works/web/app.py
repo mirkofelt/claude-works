@@ -554,6 +554,13 @@ async def trigger_deploy():
         raise HTTPException(status_code=502, detail=str(e))
 
 
+@app.get("/api/cron", dependencies=[Depends(_verify_token)])
+async def get_cron_status():
+    if not _daemon_ref or not getattr(_daemon_ref, "_cron", None):
+        return {"jobs": []}
+    return {"jobs": await _daemon_ref._cron.status()}
+
+
 @app.post("/api/deploy/rollback", dependencies=[Depends(_verify_token)])
 async def trigger_rollback():
     import httpx

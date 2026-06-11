@@ -390,6 +390,7 @@ class Daemon:
         self._chat_exception_count: int = 0
         self._running = False
         self._mode_mgr = ModeManager()
+        self._cron: Any = None  # CronManager — durable scheduled jobs
         self._mechanic: MechanicAgent | None = None
         self._mechanic_report: str | None = None
         self._mechanic_task: asyncio.Task | None = None
@@ -560,6 +561,30 @@ class Daemon:
         asyncio.create_task(self._usage_poll_loop(), name="usage-poller")
         asyncio.create_task(self._network_health_loop(admin_ids), name="network-health")
         asyncio.create_task(self._stuck_chat_watchdog(), name="stuck-chat-watchdog")
+
+        # Durable cron jobs (state in cron_jobs table, flags in daemon_config "cron")
+        from .cron import CronJob, CronManager
+        from .tasks.deploy_watch import JOB_NAME as _DW_NAME, deploy_watch
+
+        async def _cron_notify(msg: str) -> None:
+            for admin_id in admin_ids:
+                try:
+                    await self._api.send_message(admin_id, msg)
+                except Exception as e:
+                    logger.warning("Cron notification to admin %d failed: %s", admin_id, e)
+
+        self._cron = CronManager(
+            conn=self._conn,
+            notify=_cron_notify,
+            is_running=lambda: self._running,
+        )
+        self._cron.register(CronJob(
+            name=_DW_NAME,
+            handler=deploy_watch,
+            default_interval_seconds=300,
+            default_enabled=False,  # opt-in via daemon_config cron.deploy_watch.enabled
+        ))
+        asyncio.create_task(self._cron.run(), name="cron-scheduler")
 
         self._running = True
         logger.info("claude-works daemon started in RUN mode")

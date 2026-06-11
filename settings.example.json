@@ -139,5 +139,14 @@
     "_comment": "gh CLI token (GH_TOKEN). Needs repo scope for read; repo+write for mutations. gh must be in PATH (installed in Docker image).",
     "token": "YOUR_GITHUB_TOKEN",
     "gh_binary": "gh"
+  },
+  "cron": {
+    "_comment": "Durable daemon cron jobs. State persists in cron_jobs table (survives restarts). Toggle per job via 'enabled'.",
+    "deploy_watch": {
+      "enabled": false,
+      "interval_minutes": 5,
+      "repo": "OWNER/REPO",
+      "branch": "main"
+    }
   }
 }
