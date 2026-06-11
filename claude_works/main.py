@@ -304,6 +304,7 @@ class Daemon:
             on_result=self._on_agent_result,
             on_requeue=self._on_task_requeued,
             user_backgrounds=self._user_backgrounds,
+            exec_tools=self._exec_tool_tags,
         )
         self._coordinator.start()
 
@@ -1163,6 +1164,16 @@ class Daemon:
                 )
                 self._chat_agents[chat_id] = agent
             result = await asyncio.wait_for(agent.run(content), timeout=300.0)
+            for _ in range(5):
+                clean, tool_feedback = await self._exec_tool_tags(result)
+                if not tool_feedback:
+                    result = clean
+                    break
+                logger.info("Chat %d: tool results fed back, continuing", chat_id)
+                result = await asyncio.wait_for(
+                    agent.run(f"[Tool results]\n{tool_feedback}\n\nContinue with the task."),
+                    timeout=300.0,
+                )
             fake_task = KanbanTask(id=None, chat_id=chat_id, user_id=user_id, content=content)
             await self._on_agent_result(fake_task, result, None)
         except asyncio.TimeoutError:
@@ -1171,6 +1182,45 @@ class Daemon:
         except Exception:
             self._stop_typing(chat_id)
             logger.exception("Chat handler error for chat=%d", chat_id)
+
+    async def _exec_tool_tags(self, result: str) -> "tuple[str, str | None]":
+        """Execute read-only tool tags in result, return (cleaned_result, tool_output_or_None).
+
+        Only GET GitHub calls and READ_EMAIL are auto-executed so the agent can process
+        the data. Write operations and output tags (VOICE, MAP, SEND_EMAIL, BUTTONS) are
+        left intact for _on_agent_result to handle after the tool loop ends.
+        """
+        import json as _json
+        tool_results: list[str] = []
+
+        clean, github_args = _extract_github_api_tag(result)
+        if github_args:
+            method, endpoint, body = github_args
+            if method == "GET":
+                result = clean
+                try:
+                    data = await _github_api(method, endpoint, body or None, config.section("github"))
+                    data_str = _json.dumps(data, ensure_ascii=False, indent=2)
+                    tool_results.append(f"GitHub GET {endpoint}:\n{data_str[:4000]}")
+                except Exception as e:
+                    tool_results.append(f"GitHub GET {endpoint} failed: {e}")
+            # Write ops: leave tag intact for _on_agent_result security check
+
+        clean, email_args = _extract_read_email_tag(result)
+        if email_args:
+            result = clean
+            folder, count = email_args
+            try:
+                emails = await _read_emails(folder, count, config.section("email"))
+                lines = [
+                    f"{i+1}. From: {m['from']}\n   Subject: {m['subject']}\n   {m['date']}"
+                    for i, m in enumerate(emails)
+                ]
+                tool_results.append(f"READ_EMAIL {folder} ({len(emails)} emails):\n" + "\n".join(lines))
+            except Exception as e:
+                tool_results.append(f"READ_EMAIL {folder} failed: {e}")
+
+        return result, "\n\n".join(tool_results) if tool_results else None
 
     async def _notify_admin_new_user(self, telegram_id: int, name: str | None) -> None:
         cfg = config.section("users")

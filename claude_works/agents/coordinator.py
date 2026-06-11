@@ -61,12 +61,13 @@ _SPECIALIST_MAP = {
 class AgentCoordinator:
     """Orchestrates controller, chief, and specialist workers over KanbanBoard."""
 
-    def __init__(self, board: KanbanBoard, token_tracker: TokenTracker, on_result, on_requeue=None, user_backgrounds: dict | None = None) -> None:
+    def __init__(self, board: KanbanBoard, token_tracker: TokenTracker, on_result, on_requeue=None, user_backgrounds: dict | None = None, exec_tools=None) -> None:
         self._board = board
         self._token_tracker = token_tracker
         self._on_result = on_result
         self._on_requeue = on_requeue
         self._user_backgrounds: dict[int, str] = user_backgrounds or {}
+        self._exec_tools = exec_tools  # async (result: str) -> tuple[str, str | None]
         self._provider: LLMProvider | None = None
         self._controller: ControllerAgent | None = None
         self._chief: ChiefAgent | None = None
@@ -217,6 +218,18 @@ class AgentCoordinator:
 
             content = await _inject_knowledge(task.content, task.user_id)
             result = await asyncio.wait_for(agent.run(content), timeout=timeout)
+            # Tool loop — feed read-tool results back so agent can continue processing
+            if self._exec_tools:
+                for _ in range(5):
+                    clean, tool_feedback = await self._exec_tools(result)
+                    if not tool_feedback:
+                        result = clean
+                        break
+                    logger.info("Specialist %s task %d: tool results fed back, continuing", agent_class.value, task.id)
+                    result = await asyncio.wait_for(
+                        agent.run(f"[Tool results]\n{tool_feedback}\n\nContinue with the task."),
+                        timeout=timeout,
+                    )
             self._rate_limit_count = 0  # reset on success
             elapsed = time.time() - started
             logger.info("Specialist %s task %d done in %.1fs", agent_class.value, task.id, elapsed)
