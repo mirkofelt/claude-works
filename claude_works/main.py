@@ -2098,7 +2098,7 @@ Rules:
                                 round(stats.usage_pct * 100, 1) if stats.usage_pct else None,
                                 round(stats.session_pct * 100, 1) if stats.session_pct else None,
                                 round(stats.weekly_all_pct * 100, 1) if stats.weekly_all_pct else None,
-                                round(stats.weekly_sonnet_pct * 100, 1) if stats.weekly_sonnet_pct else None,
+                                round(stats.weekly_model_pct * 100, 1) if stats.weekly_model_pct else None,
                                 stats.session_reset_at, stats.weekly_reset_at,
                                 int(time.time()),
                             ),

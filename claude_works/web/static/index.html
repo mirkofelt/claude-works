@@ -1391,9 +1391,10 @@ async function loadLimitGauge() {
       const c = d.weekly_all_pct >= 90 ? 'var(--red)' : d.weekly_all_pct >= 70 ? 'var(--yellow)' : 'var(--green)';
       rows.push(`<div style="margin-bottom:8px"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px"><span style="font-size:11px;color:var(--muted)">Week (all models)</span><span style="font-size:11px;color:var(--muted)">${wkReset != null ? 'resets in ' + _fmtResetIn(wkReset) : ''}</span></div><div style="display:flex;align-items:center;gap:8px">${_gauge(d.weekly_all_pct, c)}</div></div>`);
     }
-    if (d.weekly_sonnet_pct != null) {
-      const c = d.weekly_sonnet_pct >= 90 ? 'var(--red)' : d.weekly_sonnet_pct >= 70 ? 'var(--yellow)' : 'var(--green)';
-      rows.push(`<div><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px"><span style="font-size:11px;color:var(--muted)">Week (Sonnet only)</span></div><div style="display:flex;align-items:center;gap:8px">${_gauge(d.weekly_sonnet_pct, c)}</div></div>`);
+    if (d.weekly_model_pct != null) {
+      const c = d.weekly_model_pct >= 90 ? 'var(--red)' : d.weekly_model_pct >= 70 ? 'var(--yellow)' : 'var(--green)';
+      const modelLabel = 'Week (' + (d.weekly_model_name || 'model') + ' only)';
+      rows.push(`<div><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px"><span style="font-size:11px;color:var(--muted)">${modelLabel}</span></div><div style="display:flex;align-items:center;gap:8px">${_gauge(d.weekly_model_pct, c)}</div></div>`);
     }
     // Replace card innards
     const inner = card.querySelector('div');

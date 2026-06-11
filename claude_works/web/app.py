@@ -388,8 +388,8 @@ async def get_usage():
     if _daemon_ref and _daemon_ref._usage_state is not None:
         return _daemon_ref._usage_state.as_dict()
     return {"tokens_used": None, "tokens_limit": None, "usage_pct": None, "reset_in_seconds": None,
-            "session_pct": None, "weekly_all_pct": None, "weekly_sonnet_pct": None,
-            "session_reset_at": None, "weekly_reset_at": None}
+            "session_pct": None, "weekly_all_pct": None, "weekly_model_pct": None,
+            "weekly_model_name": None, "session_reset_at": None, "weekly_reset_at": None}
 
 
 @app.get("/api/tasks/{task_id}/logs", dependencies=[Depends(_verify_token)])

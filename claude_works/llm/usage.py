@@ -66,7 +66,8 @@ class UsageStats:
     # Subscription percentage limits (Claude Max plan format)
     session_pct: float | None = None           # "Current session: X% used"
     weekly_all_pct: float | None = None        # "Current week (all models): X% used"
-    weekly_sonnet_pct: float | None = None     # "Current week (Sonnet only): X% used"
+    weekly_model_pct: float | None = None      # "Current week (Model only): X% used"
+    weekly_model_name: str | None = None       # model name captured from parentheses
 
     # Reset timestamps (unix)
     session_reset_at: int | None = None
@@ -108,7 +109,8 @@ class UsageStats:
             "usage_pct": round(self.usage_pct * 100, 1) if self.usage_pct is not None else None,
             "session_pct": round(self.session_pct * 100, 1) if self.session_pct is not None else None,
             "weekly_all_pct": round(self.weekly_all_pct * 100, 1) if self.weekly_all_pct is not None else None,
-            "weekly_sonnet_pct": round(self.weekly_sonnet_pct * 100, 1) if self.weekly_sonnet_pct is not None else None,
+            "weekly_model_pct": round(self.weekly_model_pct * 100, 1) if self.weekly_model_pct is not None else None,
+            "weekly_model_name": self.weekly_model_name,
             "session_reset_at": self.session_reset_at,
             "weekly_reset_at": self.weekly_reset_at,
             "reset_in_seconds": self.reset_in_seconds,
@@ -120,7 +122,7 @@ class UsageStats:
 # Line-by-line patterns for subscription format
 _SESSION_RE = re.compile(r"current session[:\s]+", re.IGNORECASE)
 _WEEKLY_ALL_RE = re.compile(r"current week\s*\(all models\)[:\s]+", re.IGNORECASE)
-_WEEKLY_SONNET_RE = re.compile(r"current week\s*\(sonnet[^)]*\)[:\s]+", re.IGNORECASE)
+_WEEKLY_MODEL_RE = re.compile(r"current week\s*\(([^)]+?)\s*only\)[:\s]+", re.IGNORECASE)
 
 
 def parse_usage_text(text: str) -> UsageStats:
@@ -146,9 +148,13 @@ def parse_usage_text(text: str) -> UsageStats:
             rest = _WEEKLY_ALL_RE.sub("", line)
             stats.weekly_all_pct = _parse_pct(rest)
             stats.weekly_reset_at = _parse_reset_unix(rest)
-        elif _WEEKLY_SONNET_RE.match(line):
-            rest = _WEEKLY_SONNET_RE.sub("", line)
-            stats.weekly_sonnet_pct = _parse_pct(rest)
+        else:
+            m2 = _WEEKLY_MODEL_RE.match(line)
+            if m2:
+                model_name = m2.group(1).strip()
+                rest = _WEEKLY_MODEL_RE.sub("", line, count=1)
+                stats.weekly_model_pct = _parse_pct(rest)
+                stats.weekly_model_name = model_name
 
     # Legacy: token counts "1,234,567 / 5,000,000"
     if stats.session_pct is None and stats.tokens_used is None:
