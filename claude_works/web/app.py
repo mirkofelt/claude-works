@@ -499,14 +499,20 @@ async def get_memory(user_id: int | None = None, q: str | None = None):
 
 
 @app.get("/api/knowledge", dependencies=[Depends(_verify_token)])
-async def get_knowledge(q: str | None = None, type: str | None = None):
+async def get_knowledge(q: str | None = None, type: str | None = None, page: int = 1, page_size: int = 25):
+    page_size = max(1, min(page_size, 200))
+    page = max(1, page)
     conn = await _get_conn()
     if q:
-        items = await knowledge_store.search(conn, q)
+        items = await knowledge_store.search(conn, q, limit=page_size)
+        total = len(items)
     else:
-        items = await knowledge_store.list_all(conn, type=type)
+        total = await knowledge_store.count(conn, type=type)
+        offset = (page - 1) * page_size
+        items = await knowledge_store.list_all(conn, type=type, limit=page_size, offset=offset)
     await conn.close()
-    return items
+    pages = max(1, (total + page_size - 1) // page_size)
+    return {"items": items, "total": total, "page": page, "page_size": page_size, "pages": pages}
 
 
 @app.post("/api/knowledge", dependencies=[Depends(_verify_token)])

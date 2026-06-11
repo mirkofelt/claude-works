@@ -60,6 +60,11 @@ Examples: [GITHUB_API: GET | /repos/owner/repo/issues]
           [GITHUB_API: POST | /repos/owner/repo/issues | {"title": "Bug", "body": "..."}]
 Requires github.personal_access_token in config. POST/PUT/PATCH/DELETE require security approval.
 
+**Clone plugin/MCP repo** (clones into /data/plugins/<name>):
+[GIT_CLONE: https://github.com/owner/repo | plugin-name]
+Use to install MCP servers or extensions into the plugin directory.
+Result is fed back to you so you can continue configuring the plugin.
+
 Tags can be combined. Text outside tags is sent as the normal text reply.
 
 ## Clarifying Questions

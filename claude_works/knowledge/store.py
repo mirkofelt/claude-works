@@ -167,7 +167,7 @@ async def search(conn: aiosqlite.Connection, query: str, user_id: int | None = N
     return [_row_to_dict(r) for r in rows]
 
 
-async def list_all(conn: aiosqlite.Connection, user_id: int | None = None, type: str | None = None, limit: int = 100) -> list[dict]:
+async def count(conn: aiosqlite.Connection, user_id: int | None = None, type: str | None = None) -> int:
     conditions: list[str] = []
     params: list = []
     if user_id is not None:
@@ -177,9 +177,24 @@ async def list_all(conn: aiosqlite.Connection, user_id: int | None = None, type:
         conditions.append("type = ?")
         params.append(type)
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-    params.append(limit)
+    async with conn.execute(f"SELECT COUNT(*) FROM knowledge {where}", params) as cur:
+        row = await cur.fetchone()
+    return row[0] if row else 0
+
+
+async def list_all(conn: aiosqlite.Connection, user_id: int | None = None, type: str | None = None, limit: int = 25, offset: int = 0) -> list[dict]:
+    conditions: list[str] = []
+    params: list = []
+    if user_id is not None:
+        conditions.append("(user_id = ? OR user_id IS NULL)")
+        params.append(user_id)
+    if type is not None:
+        conditions.append("type = ?")
+        params.append(type)
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    params.extend([limit, offset])
     async with conn.execute(
-        f"SELECT * FROM knowledge {where} ORDER BY updated_at DESC LIMIT ?", params
+        f"SELECT * FROM knowledge {where} ORDER BY updated_at DESC LIMIT ? OFFSET ?", params
     ) as cur:
         rows = await cur.fetchall()
     return [_row_to_dict(r) for r in rows]

@@ -147,6 +147,16 @@ def _extract_github_api_tag(text: str) -> "tuple[str, tuple[str, str, str] | Non
     return clean, (method, endpoint, body)
 
 
+def _extract_git_clone_tag(text: str) -> "tuple[str, tuple[str, str] | None]":
+    """Extract [GIT_CLONE: repo_url | plugin_name]. Returns (clean_text, (url, name) or None)."""
+    m = re.search(r'\[GIT_CLONE:\s*([^\]|]+?)\s*\|\s*([^\]]+?)\s*\]', text)
+    if not m:
+        return text, None
+    clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
+    return clean, (m.group(1).strip(), m.group(2).strip())
+
+
+_PLUGINS_DIR = os.environ.get("PLUGINS_DIR", "/data/plugins")
 _URL_RE = re.compile(r'https?://[^\s<>"\']+')
 _MAX_FETCH_URLS = 3
 _MAX_FETCH_CHARS = 4000
@@ -1010,6 +1020,7 @@ class Daemon:
             clean_result, send_email_args = _extract_send_email_tag(clean_result)
             clean_result, read_email_args = _extract_read_email_tag(clean_result)
             clean_result, github_args = _extract_github_api_tag(clean_result)
+            clean_result, git_clone_args = _extract_git_clone_tag(clean_result)
             reply_markup = {"inline_keyboard": keyboard} if keyboard is not None else None
 
             if clean_result.strip():
@@ -1122,6 +1133,15 @@ class Daemon:
                         logger.warning("GitHub API failed for task=%d: %s", task.id, e)
                         await self._api.send_message(task.chat_id, f"GitHub-Fehler: {e}")
 
+            if git_clone_args:
+                repo_url, plugin_name = git_clone_args
+                safe_name = re.sub(r'[^a-zA-Z0-9._-]', '', plugin_name)[:64]
+                target = f"{_PLUGINS_DIR}/{safe_name}"
+                asyncio.create_task(
+                    self._do_git_clone(task.chat_id, repo_url, target),
+                    name=f"git-clone-{safe_name}",
+                )
+
             await self._conn.execute(
                 """INSERT INTO bot_messages (telegram_message_id, chat_id, task_id, text, sent_at)
                    VALUES (?, ?, ?, ?, ?)""",
@@ -1220,7 +1240,48 @@ class Daemon:
             except Exception as e:
                 tool_results.append(f"READ_EMAIL {folder} failed: {e}")
 
+        clean, git_args = _extract_git_clone_tag(result)
+        if git_args:
+            repo_url, plugin_name = git_args
+            result = clean
+            safe_name = re.sub(r'[^a-zA-Z0-9._-]', '', plugin_name)[:64]
+            target = f"{_PLUGINS_DIR}/{safe_name}"
+            try:
+                os.makedirs(_PLUGINS_DIR, exist_ok=True)
+                proc = await asyncio.create_subprocess_exec(
+                    "git", "clone", "--depth=1", repo_url, target,
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                )
+                _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120.0)
+                if proc.returncode == 0:
+                    tool_results.append(f"GIT_CLONE {repo_url} → {target}: success")
+                else:
+                    tool_results.append(f"GIT_CLONE {repo_url} → {target}: failed: {stderr.decode(errors='replace')[:300]}")
+            except asyncio.TimeoutError:
+                tool_results.append(f"GIT_CLONE {repo_url}: timeout (120s)")
+            except Exception as e:
+                tool_results.append(f"GIT_CLONE {repo_url}: error: {e}")
+
         return result, "\n\n".join(tool_results) if tool_results else None
+
+    async def _do_git_clone(self, chat_id: int, repo_url: str, target: str) -> None:
+        try:
+            os.makedirs(_PLUGINS_DIR, exist_ok=True)
+            proc = await asyncio.create_subprocess_exec(
+                "git", "clone", "--depth=1", repo_url, target,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120.0)
+            if proc.returncode == 0:
+                await self._api.send_message(chat_id, f"✓ Geklont nach `{target}`")
+            else:
+                err = stderr.decode(errors="replace")[:300]
+                await self._api.send_message(chat_id, f"Git clone fehlgeschlagen:\n`{err}`")
+        except asyncio.TimeoutError:
+            await self._api.send_message(chat_id, "Git clone Timeout (120s).")
+        except Exception as e:
+            logger.warning("Git clone error for %s: %s", repo_url, e)
+            await self._api.send_message(chat_id, f"Git clone Fehler: {e}")
 
     async def _notify_admin_new_user(self, telegram_id: int, name: str | None) -> None:
         cfg = config.section("users")

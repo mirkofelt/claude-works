@@ -452,17 +452,25 @@
 
 <div class="section" id="tab-knowledge">
   <div class="toolbar">
-    <input type="text" id="kbQ" placeholder="Search…" style="width:200px" onkeydown="if(event.key==='Enter')loadKnowledge()">
-    <select id="kbType" onchange="loadKnowledge()">
+    <input type="text" id="kbQ" placeholder="Search…" style="width:200px" onkeydown="if(event.key==='Enter'){_kbPage=1;loadKnowledge()}">
+    <select id="kbType" onchange="_kbPage=1;loadKnowledge()">
       <option value="">All types</option>
       <option value="note">note</option>
       <option value="fact">fact</option>
       <option value="procedure">procedure</option>
       <option value="context">context</option>
+      <option value="document">document</option>
     </select>
-    <button class="btn btn-ghost" onclick="loadKnowledge()">Search</button>
+    <select id="kbPageSize" onchange="_kbPage=1;loadKnowledge()" style="width:80px">
+      <option value="10">10</option>
+      <option value="25" selected>25</option>
+      <option value="50">50</option>
+      <option value="100">100</option>
+    </select>
+    <button class="btn btn-ghost" onclick="_kbPage=1;loadKnowledge()">Search</button>
     <button class="btn btn-primary" onclick="toggleKbForm()">+ Add</button>
   </div>
+  <div id="kbPager" style="display:flex;align-items:center;gap:.5rem;padding:.5rem 0;font-size:.8rem;color:var(--muted)"></div>
   <div id="kbForm" class="card" style="display:none;margin-bottom:1rem;padding:1rem">
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem;margin-bottom:.5rem">
       <input type="text" id="kbTitle" placeholder="Title" style="padding:.5rem;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px">
@@ -1476,17 +1484,21 @@ function doGateSubmit() {
   }
 })();
 
+let _kbPage = 1;
+
 async function loadKnowledge() {
   const q = document.getElementById('kbQ').value.trim();
   const type = document.getElementById('kbType').value;
-  let url = '/api/knowledge';
-  const params = [];
+  const pageSize = parseInt(document.getElementById('kbPageSize').value) || 25;
+  const params = [`page=${_kbPage}`, `page_size=${pageSize}`];
   if (q) params.push('q=' + encodeURIComponent(q));
   if (type) params.push('type=' + encodeURIComponent(type));
-  if (params.length) url += '?' + params.join('&');
-  const items = await api(url);
+  const data = await api('/api/knowledge?' + params.join('&'));
   const b = document.getElementById('kbBody');
-  if (!items || items.length === 0) { b.innerHTML = '<tr><td colspan="6" class="empty">No entries</td></tr>'; return; }
+  const pager = document.getElementById('kbPager');
+  if (!data || !data.items) { b.innerHTML = '<tr><td colspan="6" class="empty">No entries</td></tr>'; pager.innerHTML=''; return; }
+  const {items, total, page, pages} = data;
+  if (!items.length) { b.innerHTML = '<tr><td colspan="6" class="empty">No entries</td></tr>'; pager.innerHTML=''; return; }
   b.innerHTML = items.map(e => {
     const preview = e.content.length > 120 ? esc(e.content.slice(0,120)) + '…' : esc(e.content);
     const tags = (e.tags||[]).map(t => `<span style="font-size:.7rem;background:var(--bg);padding:.1rem .35rem;border-radius:3px;color:var(--accent);margin-right:.2rem">${esc(t)}</span>`).join('');
@@ -1501,6 +1513,11 @@ async function loadKnowledge() {
       <td><button class="btn btn-ghost" style="padding:.1rem .35rem;font-size:.75rem" onclick="deleteKnowledge(${e.id})">✕</button></td>
     </tr>`;
   }).join('');
+  pager.innerHTML = `
+    <button class="btn btn-ghost" style="padding:.15rem .5rem;font-size:.75rem" onclick="_kbPage=Math.max(1,_kbPage-1);loadKnowledge()" ${page<=1?'disabled':''}>‹</button>
+    <span>Page ${page} / ${pages} &nbsp;(${total} entries)</span>
+    <button class="btn btn-ghost" style="padding:.15rem .5rem;font-size:.75rem" onclick="_kbPage=Math.min(${pages},_kbPage+1);loadKnowledge()" ${page>=pages?'disabled':''}>›</button>
+  `;
 }
 
 function toggleKbForm() {
@@ -1521,6 +1538,7 @@ async function addKnowledge() {
     document.getElementById('kbContent').value = '';
     document.getElementById('kbTags').value = '';
     toggleKbForm();
+    _kbPage = 1;
     loadKnowledge();
   }
 }
