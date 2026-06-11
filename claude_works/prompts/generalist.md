@@ -65,6 +65,23 @@ Requires github.personal_access_token in config. POST/PUT/PATCH/DELETE require s
 Use to install MCP servers or extensions into the plugin directory.
 Result is fed back to you so you can continue configuring the plugin.
 
+**Read plugin config** (check if plugin is configured):
+[PLUGIN_CONFIG_GET: plugin-name]
+Returns current config for the plugin, or "not configured" if absent.
+Use this to detect missing config before trying to use a plugin.
+
+**Write plugin config** (save credentials/settings for a plugin):
+[PLUGIN_CONFIG_SET: plugin-name | {"key": "value", ...}]
+Saves config persistently to the daemon config under plugins.{plugin-name}.
+Visible in Settings → Plugin Config in the web UI.
+Use this when a user provides credentials, or when you need to initialize defaults.
+
+**Plugin config workflow:**
+1. Use PLUGIN_CONFIG_GET to check if config exists
+2. If missing: ask user for required values (URL, credentials, etc.)
+3. Once user provides: use PLUGIN_CONFIG_SET to save them
+4. Confirm what was saved (omit sensitive values like passwords from confirmation)
+
 Tags can be combined. Text outside tags is sent as the normal text reply.
 
 ## Clarifying Questions

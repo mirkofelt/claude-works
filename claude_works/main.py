@@ -200,6 +200,35 @@ def _extract_kb_update_tag(text: str) -> "tuple[str, tuple | None]":
     return clean, (entry_id, title, entry_type, tags, content)
 
 
+def _extract_plugin_config_get_tag(text: str) -> "tuple[str, str | None]":
+    """Extract [PLUGIN_CONFIG_GET: plugin_name]. Returns (clean_text, plugin_name or None)."""
+    m = re.search(r'\[PLUGIN_CONFIG_GET:\s*([^\]]+)\]', text)
+    if not m:
+        return text, None
+    clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
+    return clean, m.group(1).strip()
+
+
+def _extract_plugin_config_set_tag(text: str) -> "tuple[str, tuple[str, dict] | None]":
+    """Extract [PLUGIN_CONFIG_SET: plugin_name | {json}]. Returns (clean_text, (name, dict) or None)."""
+    m = re.search(r'\[PLUGIN_CONFIG_SET:\s*([^\]]+)\]', text, re.DOTALL)
+    if not m:
+        return text, None
+    clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
+    parts = [p.strip() for p in m.group(1).split('|', 1)]
+    if len(parts) < 2:
+        return text, None
+    plugin_name = parts[0]
+    try:
+        import json as _json
+        cfg_dict = _json.loads(parts[1])
+        if not isinstance(cfg_dict, dict):
+            return text, None
+    except Exception:
+        return text, None
+    return clean, (plugin_name, cfg_dict)
+
+
 _PLUGINS_DIR = os.environ.get("PLUGINS_DIR", "/data/plugins")
 _URL_RE = re.compile(r'https?://[^\s<>"\']+')
 _MAX_FETCH_URLS = 3
@@ -1264,6 +1293,12 @@ class Daemon:
                 if not v: break
                 all_kb_updates.append(v)
 
+            all_plugin_config_sets: list[tuple] = []
+            while True:
+                clean_result, v = _extract_plugin_config_set_tag(clean_result)
+                if not v: break
+                all_plugin_config_sets.append(v)
+
             reply_markup = {"inline_keyboard": keyboard} if keyboard is not None else None
 
             if clean_result.strip():
@@ -1384,6 +1419,21 @@ class Daemon:
                         logger.warning("KB_UPDATE: entry %d not found for task=%d", entry_id, task.id)
                 except Exception as e:
                     logger.warning("KB_UPDATE failed for task=%d: %s", task.id, e)
+
+            for plugin_name, plugin_cfg in all_plugin_config_sets:
+                try:
+                    from .config_store import save_config as _cfg_save
+                    current = config.get()
+                    plugins = dict(current.get("plugins") or {})
+                    plugins[plugin_name] = plugin_cfg
+                    updated = {**current, "plugins": plugins}
+                    conn = await db.init_config()
+                    await _cfg_save(conn, updated)
+                    await conn.close()
+                    config.set(updated)
+                    logger.info("PLUGIN_CONFIG_SET: '%s' saved by agent for task=%d", plugin_name, task.id)
+                except Exception as e:
+                    logger.warning("PLUGIN_CONFIG_SET failed for task=%d: %s", task.id, e)
 
             await self._conn.execute(
                 """INSERT INTO bot_messages (telegram_message_id, chat_id, task_id, text, sent_at)
@@ -1562,6 +1612,19 @@ class Daemon:
                 tool_results.append(f"GIT_CLONE {repo_url}: timeout (120s)")
             except Exception as e:
                 tool_results.append(f"GIT_CLONE {repo_url}: error: {e}")
+
+        while True:
+            clean, plugin_name = _extract_plugin_config_get_tag(result)
+            if not plugin_name:
+                break
+            result = clean
+            plugins = config.get().get("plugins") or {}
+            plugin_cfg = plugins.get(plugin_name) if isinstance(plugins, dict) else None
+            import json as _json
+            if plugin_cfg:
+                tool_results.append(f"PLUGIN_CONFIG_GET '{plugin_name}':\n{_json.dumps(plugin_cfg, ensure_ascii=False, indent=2)}")
+            else:
+                tool_results.append(f"PLUGIN_CONFIG_GET '{plugin_name}': not configured (use PLUGIN_CONFIG_SET to initialize)")
 
         while True:
             clean, kb_query = _extract_kb_search_tag(result)
