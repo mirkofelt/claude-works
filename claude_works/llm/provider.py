@@ -148,16 +148,38 @@ class CliProvider(LLMProvider):
             "--system-prompt", full_system,
         ]
         import os
+        import tempfile
         projects_dir = os.environ.get("PROJECTS_DIR", "/data/projects")
         os.makedirs(projects_dir, exist_ok=True)
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=projects_dir,
-        )
-        stdout, stderr = await proc.communicate(input=user_msg.encode())
+
+        mcp_config_path: str | None = None
+        if mcp_servers:
+            servers_dict: dict = {}
+            for s in mcp_servers:
+                name = s.get("name") or s.get("id", f"server_{len(servers_dict)}")
+                servers_dict[name] = {k: v for k, v in s.items() if k != "name"}
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".json", delete=False, dir="/tmp"
+            ) as f:
+                json.dump({"mcpServers": servers_dict}, f)
+                mcp_config_path = f.name
+            cmd += ["--mcp-config", mcp_config_path]
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=projects_dir,
+            )
+            stdout, stderr = await proc.communicate(input=user_msg.encode())
+        finally:
+            if mcp_config_path:
+                try:
+                    os.unlink(mcp_config_path)
+                except OSError:
+                    pass
 
         if proc.returncode != 0:
             stderr_text = stderr.decode()
