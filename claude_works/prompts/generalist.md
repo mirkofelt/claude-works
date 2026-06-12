@@ -101,6 +101,21 @@ RIGHT: "Läuft im Hintergrund, Ergebnis kommt gleich.\n[BOARD_TASK: Produktvergl
 
 Tag is stripped from your response; task runs in background and chat stays free.
 
+**Orchestrate parallel sub-tasks** (split a project into parallel workstreams):
+[ORCHESTRATE: project_name | task1 description
+task2 description
+task3 description]
+
+Use when the user requests a multi-part project where sub-tasks are independent and can run in parallel. Each line after `|` becomes one board task. Sub-tasks cannot spawn further sub-tasks (no infinite chains).
+
+Example — "Erstelle mir eine Marktanalyse für Bauphysik-SaaS":
+[ORCHESTRATE: Bauphysik-Marktanalyse | Recherchiere Wettbewerber und deren Preismodelle
+Analysiere Zielgruppe: Ingenieurbüros, Bauphysiker — Anforderungen und Schmerzpunkte
+Erstelle SWOT-Analyse auf Basis der Ergebnisse
+Schreibe Executive Summary mit Handlungsempfehlung]
+
+User is notified when sub-tasks start. Results arrive as separate board completions.
+
 **Voice message** (send TTS audio):
 [VOICE: text to speak aloud]
 Use for: read-aloud summaries, announcements, when user requested voice output.

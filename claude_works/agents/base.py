@@ -27,10 +27,12 @@ class BaseAgent(ABC):
         agent_class: str = "generalist",
         provider: LLMProvider | None = None,
         token_tracker: TokenTracker | None = None,
+        allow_subtasks: bool = True,
     ) -> None:
         self.id = str(uuid.uuid4())[:8]
         self.task_id = task_id
         self.agent_class = agent_class
+        self._allow_subtasks = allow_subtasks
         # Token-attribution context. Overridden by orchestrators (coordinator/CodeTeam)
         # to label sub-agent calls. run_id groups all API calls of one logical run.
         self.source = "main_loop"

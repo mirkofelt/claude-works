@@ -219,6 +219,8 @@ class AgentCoordinator:
 
         tlog = TaskLogger(task.id)
         tlog.info(f"task {task.id} assigned to {agent_class.value}")
+        # Sub-tasks (parent_id set) must not spawn further sub-tasks — no chain calls
+        allow_subtasks = task.parent_id is None
         agent = AgentCls(
             task_id=task.id,
             user_context={
@@ -229,6 +231,7 @@ class AgentCoordinator:
             provider=self._get_provider(),
             token_tracker=self._token_tracker,
             persona=persona,
+            allow_subtasks=allow_subtasks,
         )
         # Token attribution: CodeTeam keeps its own 'coderteam' source; every other
         # board-spawned specialist is a 'background' job. run_id stays the agent id so

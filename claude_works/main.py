@@ -313,6 +313,24 @@ def _extract_board_task_tag(text: str) -> "tuple[str, str | None]":
     return clean, m.group(1).strip()
 
 
+def _extract_orchestrate_tag(text: str) -> "tuple[str, tuple[str, list[str]] | None]":
+    """Extract [ORCHESTRATE: project_name | task1\\ntask2\\n...].
+    Returns (clean_text, (project_name, [task_descs]) or None)."""
+    m = re.search(r'\[ORCHESTRATE:\s*([^\]]+)\]', text, re.DOTALL)
+    if not m:
+        return text, None
+    clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
+    parts = m.group(1).split('|', 1)
+    if len(parts) < 2:
+        return text, None
+    project_name = parts[0].strip()
+    raw_tasks = parts[1]
+    tasks = [t.strip() for t in re.split(r'\n|;', raw_tasks) if t.strip()]
+    if not tasks:
+        return text, None
+    return clean, (project_name, tasks)
+
+
 def _extract_kb_search_tag(text: str) -> "tuple[str, str | None]":
     """Extract [KB_SEARCH: query]. Returns (clean_text, query or None)."""
     m = re.search(r'\[KB_SEARCH:\s*([^\]]+)\]', text)
@@ -2010,6 +2028,20 @@ Rules:
                 if not v: break
                 all_unmutes.append(v)
 
+            # Sub-task spawning: board tasks may spawn BOARD_TASK sub-tasks (no recursion — sub-agents lack this tag)
+            all_subtasks: list[str] = []
+            while True:
+                clean_result, v = _extract_board_task_tag(clean_result)
+                if not v: break
+                all_subtasks.append(v)
+
+            # Orchestrator: spawns multiple parallel sub-tasks under a project label
+            all_orchestrations: list[tuple[str, list[str]]] = []
+            while True:
+                clean_result, v = _extract_orchestrate_tag(clean_result)
+                if not v: break
+                all_orchestrations.append(v)
+
             reply_markup = {"inline_keyboard": keyboard} if keyboard is not None else None
             initial_msg_id = self._pending_initial_msgs.pop(task.id, None) if task.id else None
             if initial_msg_id and task.id:
@@ -2315,6 +2347,33 @@ Rules:
                 (sent["message_id"], task.chat_id, task.id, clean_result, int(time.time())),
             )
             await self._conn.commit()
+
+            # Sub-task spawning: board agents may delegate BOARD_TASK → sub-tasks (no recursion; sub-agents lack the tag)
+            for sub_desc in all_subtasks:
+                if self._board:
+                    sub_proto = KanbanTask(id=None, chat_id=task.chat_id, user_id=task.user_id,
+                                          content=sub_desc, parent_id=task.id)
+                    await self._board.push(sub_proto)
+                    logger.info("Sub-task spawned by task=%d: %s", task.id, sub_desc[:80])
+
+            # Orchestrator: spawn parallel sub-tasks for each line, notify user
+            for project_name, task_descs in all_orchestrations:
+                if self._board:
+                    spawned = []
+                    for desc in task_descs:
+                        full_desc = f"[Project: {project_name}] {desc}"
+                        sub_proto = KanbanTask(id=None, chat_id=task.chat_id, user_id=task.user_id,
+                                              content=full_desc, parent_id=task.id)
+                        await self._board.push(sub_proto)
+                        spawned.append(desc[:60])
+                    logger.info("Orchestrator task=%d spawned %d sub-tasks for project '%s'",
+                                task.id, len(spawned), project_name)
+                    lines = "\n".join(f"• {s}" for s in spawned)
+                    await self._api.send_message(
+                        task.chat_id,
+                        f"🔀 Project **{project_name}** — {len(spawned)} tasks gestartet:\n{lines}",
+                    )
+
         elif error:
             # Clean up any pending initial message on error
             init_msg_id = self._pending_initial_msgs.pop(task.id, None) if task.id else None
