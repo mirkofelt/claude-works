@@ -1638,6 +1638,44 @@ Rules:
         )
 
         if task.parent_id is not None:
+            # Sub-task completed — notify user with brief result preview
+            if result and self._board:
+                preview = result[:300] + ("…" if len(result) > 300 else "")
+                try:
+                    label = task.content[:60] if task.content else f"Task {task.id}"
+                    await self._api.send_message(
+                        task.chat_id,
+                        f"✓ **Sub-Task**: {label}\n{preview}",
+                    )
+                except Exception:
+                    pass
+                # Check if all siblings are in terminal lanes → trigger synthesis
+                try:
+                    siblings = await self._board.subtasks(task.parent_id)
+                    terminal = {"done", "failed", "blocked"}
+                    all_done = all(s.lane in terminal for s in siblings)
+                    if all_done and siblings:
+                        results_text = "\n\n".join(
+                            f"### Sub-Task {i+1}: {s.content[:80]}\n{(s.result or s.error or '(no result)')[:600]}"
+                            for i, s in enumerate(siblings)
+                        )
+                        synth_desc = (
+                            f"[Synthesize ORCHESTRATE results]\n\n"
+                            f"All sub-tasks for parent task {task.parent_id} are complete.\n"
+                            f"Synthesize the following results into a coherent summary for the user:\n\n"
+                            f"{results_text}"
+                        )
+                        synth_proto = KanbanTask(
+                            id=None, chat_id=task.chat_id, user_id=task.user_id,
+                            content=synth_desc,
+                        )
+                        await self._board.push(synth_proto)
+                        logger.info(
+                            "All %d sub-tasks of parent %d done — synthesis task spawned",
+                            len(siblings), task.parent_id,
+                        )
+                except Exception as e:
+                    logger.warning("Sub-task synthesis check failed for parent=%d: %s", task.parent_id, e)
             return
         # Top-level turn finished (success OR error): always release this chat's
         # echo-payload bucket. A turn that errors before reaching the strip below
