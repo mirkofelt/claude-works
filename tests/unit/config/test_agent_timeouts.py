@@ -53,3 +53,16 @@ def test_unknown_key_raises(monkeypatch):
     _patch(monkeypatch)
     with pytest.raises(KeyError):
         cfg.agent_timeout("nonexistent_timeout")
+
+
+def test_max_runtime_falls_back_to_legacy_task_timeout(monkeypatch):
+    monkeypatch.setattr(cfg, "_settings", {"agents": {"task_timeout_seconds": 900}})
+    assert cfg.agent_timeout("max_runtime_seconds") == 900.0
+
+
+def test_agent_section_wins_over_legacy_task_timeout(monkeypatch):
+    monkeypatch.setattr(cfg, "_settings", {
+        "agent": {"max_runtime_seconds": 1200},
+        "agents": {"task_timeout_seconds": 900},
+    })
+    assert cfg.agent_timeout("max_runtime_seconds") == 1200.0

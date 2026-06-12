@@ -637,30 +637,41 @@ Manual reload triggers:
 
 ### Timeout Configuration
 
-Long-running tasks are protected by configurable timeouts to prevent agent deadlocks:
+Long-running tasks are protected by heartbeat-based supervision (`agents/heartbeat.py`) instead of pure wall-clock kills:
 
-**`agents.task_timeout_seconds`** (default 600s):
-- Applies to all specialist agents (generalist, researcher, coder, memory)
-- Wraps `agent.run()` in `asyncio.wait_for(..., timeout=X)`
-- On timeout → task moved to FAILED lane with error message `"Task timed out after Xs"`
-- Configurable via `agents.task_timeout_seconds` in daemon_config (hot-reloadable, no restart required)
+**`agent.idle_timeout_seconds`** (default 120s):
+- A run is cancelled only when the agent emits no life sign for this long
+- Life signs (`Heartbeat.beat()`): provider call in flight (beat every 15s via `_beat_while_running`), LLM turn finished, tool round-trip, compaction
+- Applies to chief, all specialists and the inline chat handler
+
+**`agent.max_runtime_seconds`** (default 1800s):
+- Hard wall-clock cap per board task (chief + specialists), spans the whole run incl. tool loop
+- Legacy `agents.task_timeout_seconds` is honored as fallback when `agent.max_runtime_seconds` is unset
+- On abort → task moved to FAILED lane (`HeartbeatTimeout`, subclass of `asyncio.TimeoutError`)
+
+**`agent.reply_timeout_seconds`** (default 300s):
+- Hard cap for inline Telegram chat runs (`main.py:_handle_chat`)
+- On timeout the job is **not** killed silently: it is offloaded to the kanban board (`board.offload()`) with a context note and re-run by a background specialist; the user gets a short notice and the result later
+- The offload marker (`kanban/board.py:OFFLOAD_MARKER`) prevents re-offload loops; board-worker timeouts go to FAILED (bounded controller recovery), never back onto the board
+- Inline runs > 60s additionally trigger a one-shot "⏳ Dauert noch" notice (`_LONG_RUN_NOTICE_SECONDS`)
 
 **`agents.po_timeout_seconds`** (default 3600s / 1 hour):
 - Applies to ProductOwnerAgent project decomposition, synthesis, and child await cycles
 - Prevents hung project decompositions from blocking the PO loop forever
-- Configurable the same way; independent from specialist timeout
+- Configurable the same way; independent from the heartbeat supervisor
 
-**Chat handler timeout** (300s hardcoded):
-- Applied to Telegram chat handler agent.run() calls (main.py:2342, 2366)
-- After 5 minutes, chat task fails with error message `"Timeout."`
-- Separate from specialist timeout; can be made configurable in future iterations
+All values live in `daemon_config` (hot-reloadable, no restart required).
 
 Example configuration:
 ```json
 {
+  "agent": {
+    "reply_timeout_seconds": 300,   // inline chat cap before background offload
+    "idle_timeout_seconds": 120,    // no-life-sign abort
+    "max_runtime_seconds": 1800     // hard cap for board tasks
+  },
   "agents": {
-    "task_timeout_seconds": 900,    // 15 minutes for long-running specialists
-    "po_timeout_seconds": 1800,      // 30 minutes for PO decomposition cycles
+    "po_timeout_seconds": 1800,     // 30 minutes for PO decomposition cycles
     ...
   }
 }
@@ -688,13 +699,18 @@ All long-running work executes as background tasks via the KanbanBoard queue sys
    - **Rate-limit recovery**: Tasks requeued to ASSIGNED on RateLimitError with exponential backoff (no immediate retry, prevents thundering herd)
 
 4. **Preventing Long-Task Timeout**:
-   - Increase `agents.task_timeout_seconds` in daemon_config for slow agents
+   - Increase `agent.max_runtime_seconds` in daemon_config for slow agents
    - Decompose complex tasks into simpler subtasks assigned to different specialist classes
    - Use ProductOwnerAgent (PO class) for multi-step projects — decomposes automatically
 
 ### Heartbeat and Supervision Mechanisms
 
 The daemon includes multiple layers of heartbeat and supervision to detect and recover from stuck tasks:
+
+**0. Heartbeat Supervisor** (agents/heartbeat.py):
+- Each `BaseAgent` owns a `Heartbeat`; `run_with_heartbeat(coro, heartbeat, idle_timeout, deadline)` cancels a run only on missing life signs or hard deadline — raises `HeartbeatTimeout` (an `asyncio.TimeoutError`)
+- Providers emit beats every 15s while a call is in flight, so slow-but-alive LLM calls are never killed by the idle timer
+- Inline chat timeouts → background offload (see above); board task timeouts → FAILED lane
 
 **1. Stuck Chat Watchdog** (main.py:_stuck_chat_watchdog):
 - Monitors Telegram chat handler tasks for age > 600 seconds (10 minutes)
@@ -743,7 +759,7 @@ The daemon includes multiple layers of heartbeat and supervision to detect and r
 - No inter-task deadlock detection (e.g., if PO awaits children indefinitely)
 - No auto-retry policy on N consecutive failures (failed tasks stay in FAILED state)
 - Mechanic agent is blocking during REPAIR mode (no fallback if mechanic fails)
-- Chat handler timeout (300s) is hardcoded, not configurable in daemon_config
+- Heartbeat granularity: an in-flight provider call always counts as alive (providers are non-streaming, no token-level signal) — a truly hung HTTP call is only bounded by the SDK/CLI timeout and `max_runtime_seconds`
 
 ---
 

@@ -726,9 +726,12 @@
       <summary>Agents</summary>
       <div class="cfg-body">
         <div class="field"><label>Max Parallel</label><input type="number" id="s_ag_parallel"></div>
-        <div class="field"><label>Task Timeout (s)</label><input type="number" id="s_ag_task_timeout"></div>
+        <div class="field"><label>Task Timeout (s, legacy)</label><input type="number" id="s_ag_task_timeout"></div>
         <div class="field"><label>PO Timeout (s)</label><input type="number" id="s_ag_po_timeout"></div>
         <div class="field"><label>Max Retries</label><input type="number" id="s_ag_retries"></div>
+        <div class="field"><label>Reply Timeout (s)</label><input type="number" id="s_agt_reply" placeholder="300"></div>
+        <div class="field"><label>Idle/Heartbeat Timeout (s)</label><input type="number" id="s_agt_idle" placeholder="120"></div>
+        <div class="field"><label>Max Runtime (s)</label><input type="number" id="s_agt_max_runtime" placeholder="1800"></div>
         <div class="field wide"><label>Model Tiers (JSON)</label><textarea id="s_ag_tiers" rows="3"></textarea><div class="hint">{"fast":"claude-haiku-4-5-20251001", "balanced":"claude-sonnet-4-6", "best":"claude-opus-4-8"}</div></div>
         <div class="field wide"><label>Per-Agent Models (JSON)</label><textarea id="s_ag_models" rows="6"></textarea></div>
       </div>
@@ -2444,11 +2447,14 @@ async function testDeployGuard() {
   btn.disabled = false; btn.textContent = 'Test Connection';
 }
 
+let _rawConfig = {};  // last loaded config — preserved on save so unknown sections (cron, agent extras, …) survive
+
 async function loadSettings() {
   const msg = document.getElementById('settingsMsg');
   try {
     const data = await api('/api/config');
     const c = data.config;
+    _rawConfig = c;
     const tg = c.telegram || {}, llm = c.llm || {}, ag = c.agents || {};
     const web = c.web || {}, sec = c.security || {}, sp = c.spending || {};
     const tts = c.tts || {}, em = c.email || {}, gh = c.github || {};
@@ -2462,6 +2468,9 @@ async function loadSettings() {
     _set('s_llm_ctx_warn', llm.context_warn_threshold); _set('s_llm_ctx_compact', llm.context_compact_threshold);
     _set('s_ag_parallel', ag.max_parallel); _set('s_ag_task_timeout', ag.task_timeout_seconds);
     _set('s_ag_po_timeout', ag.po_timeout_seconds); _set('s_ag_retries', ag.max_retries);
+    const agt = c.agent || {};
+    _set('s_agt_reply', agt.reply_timeout_seconds); _set('s_agt_idle', agt.idle_timeout_seconds);
+    _set('s_agt_max_runtime', agt.max_runtime_seconds);
     _setj('s_ag_tiers', ag.model_tiers); _setj('s_ag_models', ag.models);
     _set('s_web_token', web.auth_token); _set('s_web_port', web.port); _set('s_web_host', web.host);
     _setb('s_web_proxy', web.trusted_proxy);
@@ -2554,7 +2563,13 @@ async function saveSettings() {
     const reactionMap = reactionMapRead(), mcpServers = _sj('s_mcp_servers');
     const backoff = _sj('s_sv_backoff');
     const adminIds = _sa('s_tg_admin_ids');
+    const agentTimeouts = {};
+    if (_sn('s_agt_reply') !== null) agentTimeouts.reply_timeout_seconds = _sn('s_agt_reply');
+    if (_sn('s_agt_idle') !== null) agentTimeouts.idle_timeout_seconds = _sn('s_agt_idle');
+    if (_sn('s_agt_max_runtime') !== null) agentTimeouts.max_runtime_seconds = _sn('s_agt_max_runtime');
     cfg = {
+      ..._rawConfig,  // preserve sections this form doesn't know (cron, …)
+      agent: agentTimeouts,
       telegram: { token: _sv('s_tg_token'), admin_chat_ids: adminIds, allowed_updates: ['message','edited_message','message_reaction'], reaction_map: reactionMap || {} },
       llm: { provider: _sv('s_llm_provider'), api_key: _sv('s_llm_api_key'), cli_binary: _sv('s_llm_cli_binary'), model: _sv('s_llm_model'), max_tokens: _sn('s_llm_max_tokens'), max_context_tokens: _sn('s_llm_max_ctx'), context_warn_threshold: _sn('s_llm_ctx_warn'), context_compact_threshold: _sn('s_llm_ctx_compact') },
       agents: { max_parallel: _sn('s_ag_parallel'), task_timeout_seconds: _sn('s_ag_task_timeout'), po_timeout_seconds: _sn('s_ag_po_timeout'), max_retries: _sn('s_ag_retries'), model_tiers: tiers, models: models },

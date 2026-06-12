@@ -29,6 +29,7 @@ from .kanban.models import AgentClass, KanbanTask
 from .telemetry.tokens import TokenTracker
 from .knowledge import store as knowledge_store
 from .agents.coordinator import AgentCoordinator
+from .agents.heartbeat import run_with_heartbeat
 from .llm.errors import RateLimitError
 from .agents.mechanic import MechanicAgent, MechanicContext
 from .agents.specialist.generalist import GeneralistAgent
@@ -299,6 +300,8 @@ def _extract_plugin_config_set_tag(text: str) -> "tuple[str, tuple[str, dict] | 
         return text, None
     return clean, (plugin_name, cfg_dict)
 
+
+_LONG_RUN_NOTICE_SECONDS = 60.0  # one-shot "still working" notice for inline chat runs
 
 _PLUGINS_DIR = os.environ.get("PLUGINS_DIR", "/data/plugins")
 _URL_RE = re.compile(r'https?://[^\s<>"\']+')
@@ -2306,6 +2309,10 @@ Rules:
         self._start_typing(chat_id)
         task_id: int | None = None
         reply_timeout = config.agent_timeout("reply_timeout_seconds")
+        idle_timeout = config.agent_timeout("idle_timeout_seconds")
+        run_started = time.monotonic()
+        # One-shot user notice when the run takes long (cancelled in finally)
+        notice_task = asyncio.create_task(self._long_run_notice(chat_id))
         try:
             agent = self._chat_agents.get(chat_id)
             if agent is None:
@@ -2340,10 +2347,17 @@ Rules:
                     self._chat_task_ids.add(task_id)
                     if reply_to_msg_id:
                         self._chat_reply_to[task_id] = reply_to_msg_id
-            result = await asyncio.wait_for(agent.run(content), timeout=reply_timeout)
+            # Idle-based supervision instead of hard kill: abort only when the
+            # agent shows no life sign for idle_timeout; reply_timeout stays the
+            # hard cap for the whole inline run (incl. tool loop) — then offload.
+            deadline = run_started + reply_timeout
+            result = await run_with_heartbeat(
+                agent.run(content), agent.heartbeat, idle_timeout, deadline=deadline
+            )
             preliminary_msg_id: int | None = None
             for _ in range(5):
                 clean, tool_feedback = await self._exec_tool_tags(result, user_id=user_id, chat_id=chat_id)
+                agent.heartbeat.beat()  # tool execution is progress
                 if not tool_feedback:
                     result = clean
                     break
@@ -2362,9 +2376,9 @@ Rules:
                     except Exception:
                         pass
                 logger.info("Chat %d: tool results fed back, continuing", chat_id)
-                result = await asyncio.wait_for(
+                result = await run_with_heartbeat(
                     agent.run(f"[Tool results]\n{tool_feedback}\n\nContinue with the task."),
-                    timeout=reply_timeout,
+                    agent.heartbeat, idle_timeout, deadline=deadline,
                 )
             # Check for BOARD_TASK self-routing tag
             clean_result, board_task_desc = _extract_board_task_tag(result)
@@ -2380,7 +2394,7 @@ Rules:
             await self._on_agent_result(real_task, result, None)
         except asyncio.TimeoutError:
             await self._offload_after_timeout(
-                chat_id, user_id, content, task_id, reply_timeout
+                chat_id, user_id, content, task_id, time.monotonic() - run_started
             )
         except RateLimitError as exc:
             wait = int(exc.retry_after or 30)
@@ -2407,10 +2421,22 @@ Rules:
             self._chat_exception_count = 0
         finally:
             # Always clear typing + drain queue, even if task_id is None or _on_agent_result was skipped
+            notice_task.cancel()
             if task_id:
                 self._chat_task_ids.discard(task_id)
             self._stop_typing(chat_id)
             self._flush_chat_queue(chat_id)
+
+    async def _long_run_notice(self, chat_id: int) -> None:
+        """Send a single status message when an inline run exceeds the notice delay."""
+        try:
+            await asyncio.sleep(_LONG_RUN_NOTICE_SECONDS)
+            await self._api.send_message(chat_id, "⏳ Dauert noch. Bin dran.")
+            logger.info("Chat %d: long-run notice sent after %.0fs", chat_id, _LONG_RUN_NOTICE_SECONDS)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            pass
 
     async def _offload_after_timeout(
         self,

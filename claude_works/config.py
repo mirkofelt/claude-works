@@ -99,7 +99,13 @@ def agent_timeout(key: str) -> float:
     if key not in _AGENT_TIMEOUT_DEFAULTS:
         raise KeyError(f"Unknown agent timeout key: {key!r}")
     default = _AGENT_TIMEOUT_DEFAULTS[key]
-    raw = section("agent").get(key, default)
+    raw = section("agent").get(key)
+    if raw is None and key == "max_runtime_seconds":
+        # Legacy key: agents.task_timeout_seconds was the wall-clock kill before
+        # the heartbeat supervisor — existing configs keep working as hard cap.
+        raw = section("agents").get("task_timeout_seconds")
+    if raw is None:
+        raw = default
     try:
         value = float(raw)
     except (TypeError, ValueError):
