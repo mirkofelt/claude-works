@@ -2,7 +2,7 @@
 
 Polls the GitHub repo's main branch for a new commit SHA. On change:
 persist new baseline (DB + KB reference entry), notify admins, trigger
-a redeploy via deploy-guard — same path as the manual deploy trigger.
+a redeploy via claude-guard — same path as the manual deploy trigger.
 
 Baseline lives in cron_jobs.state_json ({"baseline_sha": ...}), mirrored
 into the knowledge base entry 'deploy-watch-baseline' for human reference.
@@ -65,26 +65,26 @@ async def deploy_watch(ctx: CronContext, state: dict) -> dict:
 
 
 async def _trigger_deploy() -> None:
-    """Trigger redeploy via deploy-guard — same path as the manual deploy trigger."""
+    """Trigger redeploy via claude-guard — same path as the manual deploy trigger."""
     import httpx
 
-    dg = config.section("system").get("deploy_guard", {})
+    dg = config.section("system").get("claude_guard", {})
     guard_url = dg.get("url", "").rstrip("/")
     token = dg.get("token", "")
     if not guard_url or not token:
-        raise RuntimeError("deploy_guard.url/.token nicht konfiguriert — Redeploy nicht möglich")
+        raise RuntimeError("claude_guard.url/.token nicht konfiguriert — Redeploy nicht möglich")
 
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
             r = await client.post(f"{guard_url}/deploy?token={token}")
     except (httpx.TransportError, httpx.TimeoutException) as e:
         # Expected: the deploy restarts this container, the connection may
-        # drop before deploy-guard answers. Startup notification confirms.
-        logger.info("deploy-guard connection dropped during deploy (likely restart): %s", e)
+        # drop before claude-guard answers. Startup notification confirms.
+        logger.info("claude-guard connection dropped during deploy (likely restart): %s", e)
         return
 
     if r.status_code != 200:
-        raise RuntimeError(f"deploy-guard /deploy HTTP {r.status_code}: {r.text[:300]}")
+        raise RuntimeError(f"claude-guard /deploy HTTP {r.status_code}: {r.text[:300]}")
 
 
 async def _update_kb_baseline(conn, sha: str, repo: str, branch: str) -> None:

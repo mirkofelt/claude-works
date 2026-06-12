@@ -957,8 +957,8 @@
 
         <div id="deployGuardSection" style="display:none;border-top:1px solid var(--border);margin-top:16px;padding-top:16px">
           <div style="font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin-bottom:14px">Deploy Guard</div>
-          <div class="field"><label>Guard URL</label><input type="text" id="s_deploy_guard_url" placeholder="http://deploy-guard:9876"><div class="hint">Internal URL of the deploy-guard container</div></div>
-          <div class="field"><label>Deploy Token</label><input type="password" id="s_deploy_token" placeholder="your-deploy-token"><div class="hint">Must match <code>DEPLOY_TOKEN</code> in deploy-guard environment</div></div>
+          <div class="field"><label>Guard URL</label><input type="text" id="s_claude_guard_url" placeholder="http://claude-guard:9876"><div class="hint">Internal URL of the claude-guard container</div></div>
+          <div class="field"><label>Deploy Token</label><input type="password" id="s_deploy_token" placeholder="your-deploy-token"><div class="hint">Must match <code>DEPLOY_TOKEN</code> in claude-guard environment</div></div>
           <div style="display:flex;gap:8px;margin-top:8px">
             <button class="btn btn-ghost" onclick="testDeployGuard()" id="btnTestGuard">Test Connection</button>
             <span id="deployGuardStatus" style="font-size:12px;align-self:center"></span>
@@ -978,13 +978,13 @@
                 <div class="hint" style="margin-top:4px">Edit <code>/path/to/claude-works/.env</code> on your Unraid host.</div>
               </div>
               <div>
-                <div style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Step 3 — Start deploy-guard</div>
-                <code style="display:block;background:var(--bg);padding:8px 10px;border-radius:4px;font-size:12px;color:var(--accent);border:1px solid var(--border)">docker-compose --profile deploy up -d deploy-guard</code>
-                <div class="hint" style="margin-top:4px">deploy-guard uses the <code>deploy</code> profile — plain <code>docker-compose up</code> won't start it. It binds to <code>127.0.0.1:9876</code> on the host.</div>
+                <div style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Step 3 — Start claude-guard</div>
+                <code style="display:block;background:var(--bg);padding:8px 10px;border-radius:4px;font-size:12px;color:var(--accent);border:1px solid var(--border)">docker-compose --profile deploy up -d claude-guard</code>
+                <div class="hint" style="margin-top:4px">claude-guard uses the <code>deploy</code> profile — plain <code>docker-compose up</code> won't start it. It binds to <code>127.0.0.1:9876</code> on the host.</div>
               </div>
               <div>
                 <div style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Step 4 — Enter URL and token above</div>
-                <div class="hint">Guard URL: <code>http://deploy-guard:9876</code> if using docker-compose (same network), or <code>http://&lt;UNRAID-IP&gt;:9876</code> if deploy-guard runs as a separate Unraid container. Paste the token from Step 1 into the Deploy Token field. Hit "Test Connection" — the test runs server-side.</div>
+                <div class="hint">Guard URL: <code>http://claude-guard:9876</code> if using docker-compose (same network), or <code>http://&lt;UNRAID-IP&gt;:9876</code> if claude-guard runs as a separate Unraid container. Paste the token from Step 1 into the Deploy Token field. Hit "Test Connection" — the test runs server-side.</div>
               </div>
               <div>
                 <div style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Optional — GitHub Actions auto-deploy</div>
@@ -2826,8 +2826,8 @@ async function loadSettings() {
     if (cb) cb.checked = devMode;
     _updateDevModeUI(devMode);
     // deploy guard
-    const dg = sys.deploy_guard || {};
-    _set('s_deploy_guard_url', dg.url || '');
+    const dg = sys.claude_guard || {};
+    _set('s_claude_guard_url', dg.url || '');
     _set('s_deploy_token', dg.token || '');
     msg.style.display = 'none';
   } catch (e) {
@@ -2911,8 +2911,8 @@ async function saveSettings() {
       plugins: pluginRead(),
       system: {
         dev_mode: document.getElementById('s_dev_mode')?.checked || false,
-        deploy_guard: {
-          url: _sv('s_deploy_guard_url') || '',
+        claude_guard: {
+          url: _sv('s_claude_guard_url') || '',
           token: _sv('s_deploy_token') || '',
         },
       },

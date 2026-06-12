@@ -10,9 +10,9 @@ services:
     environment:
       - LOG_LEVEL=INFO
 
-  deploy-guard:
-    image: ghcr.io/mirkofelt/deploy-guard:latest
-    container_name: deploy-guard
+  claude-guard:
+    image: ghcr.io/mirkofelt/claude-guard:latest
+    container_name: claude-guard
     restart: unless-stopped
     security_opt:
       - no-new-privileges

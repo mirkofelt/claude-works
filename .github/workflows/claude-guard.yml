@@ -1,15 +1,15 @@
-name: Build deploy-guard
+name: Build claude-guard
 
 on:
   push:
     branches: [main]
     paths:
-      - "deploy-guard/**"
+      - "claude-guard/**"
   workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/deploy-guard
+  IMAGE_NAME: ${{ github.repository_owner }}/claude-guard
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -44,7 +44,7 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
-          context: ./deploy-guard
+          context: ./claude-guard
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

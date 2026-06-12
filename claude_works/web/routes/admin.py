@@ -115,7 +115,7 @@ async def get_deploy_status():
     cfg = config.get()
     sys_cfg = cfg.get("system", {})
     dev_mode = sys_cfg.get("dev_mode", False)
-    dg = sys_cfg.get("deploy_guard", {})
+    dg = sys_cfg.get("claude_guard", {})
     guard_url = dg.get("url", "")
     guard_reachable = False
     token = dg.get("token", "")
@@ -136,11 +136,11 @@ async def trigger_deploy():
     sys_cfg = cfg.get("system", {})
     if not sys_cfg.get("dev_mode", False):
         raise HTTPException(status_code=403, detail="dev_mode is disabled")
-    dg = sys_cfg.get("deploy_guard", {})
+    dg = sys_cfg.get("claude_guard", {})
     guard_url = dg.get("url", "").rstrip("/")
     token = dg.get("token", "")
     if not guard_url or not token:
-        raise HTTPException(status_code=400, detail="deploy_guard.url and .token not configured")
+        raise HTTPException(status_code=400, detail="claude_guard.url and .token not configured")
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             r = await client.post(f"{guard_url}/deploy?token={token}")
@@ -156,11 +156,11 @@ async def trigger_rollback():
     sys_cfg = cfg.get("system", {})
     if not sys_cfg.get("dev_mode", False):
         raise HTTPException(status_code=403, detail="dev_mode is disabled")
-    dg = sys_cfg.get("deploy_guard", {})
+    dg = sys_cfg.get("claude_guard", {})
     guard_url = dg.get("url", "").rstrip("/")
     token = dg.get("token", "")
     if not guard_url or not token:
-        raise HTTPException(status_code=400, detail="deploy_guard not configured")
+        raise HTTPException(status_code=400, detail="claude_guard not configured")
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             r = await client.post(f"{guard_url}/rollback?token={token}")

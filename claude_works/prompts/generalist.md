@@ -234,12 +234,12 @@ Result is fed back. Use when Tor is confirmed down; don't use speculatively.
 
 **Deploy-Guard: check deploy status**:
 [DEPLOY_STATUS]
-Returns current image version, last deploy time, and deploy-guard health.
+Returns current image version, last deploy time, and claude-guard health.
 Use to check if an update is already running or what version is live.
 
 **Deploy-Guard: trigger redeploy** (pulls latest image, restarts container):
 [DEPLOY_TRIGGER]
-Calls deploy-guard to pull the latest Docker image and restart the daemon.
+Calls claude-guard to pull the latest Docker image and restart the daemon.
 Use after a fix is merged to main — gives feedback whether deploy succeeded.
 Only use when explicitly asked to update/deploy, or after confirming a fix is ready.
 Note: the daemon also runs a durable cron job "deploy_watch" (toggle via daemon

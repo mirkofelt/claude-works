@@ -951,7 +951,7 @@ class Daemon:
             result,
             user_id=user_id,
             chat_id=chat_id,
-            deploy_guard_action=self._deploy_guard_action,
+            claude_guard_action=self._claude_guard_action,
             track_payloads=self._track_payloads,
         )
 
@@ -962,13 +962,13 @@ class Daemon:
         from .tasks.output_handler import execute_output_tags
         await execute_output_tags(self, task, tc, sent_msg_id)
 
-    async def _deploy_guard_action(self, action: str) -> str:
-        """Call deploy-guard for status/trigger. Returns result string."""
-        dg = config.section("system").get("deploy_guard", {})
+    async def _claude_guard_action(self, action: str) -> str:
+        """Call claude-guard for status/trigger. Returns result string."""
+        dg = config.section("system").get("claude_guard", {})
         url = dg.get("url", "").rstrip("/")
         token = dg.get("token", "")
         if not url or not token:
-            return "deploy_guard not configured (system.deploy_guard.url and .token required)"
+            return "claude_guard not configured (system.claude_guard.url and .token required)"
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 if action == "status":
@@ -982,7 +982,7 @@ class Daemon:
                         return resp.text[:200]
                 return f"HTTP {resp.status_code}: {resp.text[:100]}"
         except Exception as e:
-            return f"deploy_guard error: {e}"
+            return f"claude_guard error: {e}"
 
     async def _do_git_clone(self, chat_id: int, repo_url: str, target: str) -> None:
         try:

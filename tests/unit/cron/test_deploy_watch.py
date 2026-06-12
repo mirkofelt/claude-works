@@ -20,7 +20,7 @@ def env(conn):
     """CronContext + recorders for notify/save_state/deploy."""
     config.set({
         "github": {"token": "t", "gh_binary": "gh"},
-        "system": {"deploy_guard": {"url": "http://guard:9876", "token": "x"}},
+        "system": {"claude_guard": {"url": "http://guard:9876", "token": "x"}},
         "cron": {"deploy_watch": {"enabled": True, "repo": "o/r", "branch": "main"}},
     })
     rec = {"notify": [], "saved": [], "deploys": 0}
@@ -51,7 +51,7 @@ def _mock_github(monkeypatch, sha, message="feat: something"):
 def _mock_deploy(monkeypatch, rec, fail=False):
     async def fake_deploy():
         if fail:
-            raise RuntimeError("deploy-guard /deploy HTTP 500: kaputt")
+            raise RuntimeError("claude-guard /deploy HTTP 500: kaputt")
         rec["deploys"] += 1
     monkeypatch.setattr(dw, "_trigger_deploy", fake_deploy)
 
@@ -112,7 +112,7 @@ async def test_deploy_failure_raises_but_baseline_already_saved(env, monkeypatch
     _mock_github(monkeypatch, SHA_B)
     _mock_deploy(monkeypatch, rec, fail=True)
 
-    with pytest.raises(RuntimeError, match="deploy-guard"):
+    with pytest.raises(RuntimeError, match="claude-guard"):
         await dw.deploy_watch(ctx, {"baseline_sha": SHA_A})
 
     # No silent retry loop: baseline saved first, error propagates to CronManager → notification

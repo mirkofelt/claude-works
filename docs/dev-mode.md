@@ -50,20 +50,20 @@ openssl rand -hex 32
 DEPLOY_TOKEN=<your-token>
 ```
 
-**3. Start deploy-guard**
+**3. Start claude-guard**
 
 ```bash
-docker-compose up -d deploy-guard
+docker-compose up -d claude-guard
 ```
 
-The `deploy-guard` service is defined in `docker-compose.yml`. It mounts:
+The `claude-guard` service is defined in `docker-compose.yml`. It mounts:
 - `/var/run/docker.sock` — to control Docker
 - `./docker-compose.yml:/compose/docker-compose.yml:ro` — to recreate the service
 
 **4. Configure in Web UI**
 
 Settings → Developer Mode → Deploy Guard:
-- Guard URL: `http://deploy-guard:9876` (Docker internal network)
+- Guard URL: `http://claude-guard:9876` (Docker internal network)
 - Deploy Token: paste the token from Step 1
 - Click **Test Connection** to verify
 
@@ -74,7 +74,7 @@ Settings → Developer Mode → Deploy Guard:
 After a successful build on `main`, GitHub Actions can trigger a deploy automatically.
 
 Add two secrets to the GitHub repository:
-- `DEPLOY_WEBHOOK_URL` — the deploy-guard URL reachable from CI (e.g. via Cloudflare Tunnel or home VPN)
+- `DEPLOY_WEBHOOK_URL` — the claude-guard URL reachable from CI (e.g. via Cloudflare Tunnel or home VPN)
 - `DEPLOY_TOKEN` — the same token as above
 
 The CI workflow will POST to `/deploy` after a successful Docker build. If the variable is not set, the step is skipped silently.
@@ -98,4 +98,4 @@ curl -sf -X POST "http://localhost:9876/rollback?token=YOUR_TOKEN"
 ## Branch Strategy
 
 - `dev` — active development; CI builds `:dev` tag; no auto-deploy
-- `main` — production-ready; CI builds `:latest` and `:v{sha}` tags; optional auto-deploy via deploy-guard
+- `main` — production-ready; CI builds `:latest` and `:v{sha}` tags; optional auto-deploy via claude-guard

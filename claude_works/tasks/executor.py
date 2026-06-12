@@ -33,7 +33,7 @@ async def exec_tool_tags(
     *,
     user_id: int | None = None,
     chat_id: int | None = None,
-    deploy_guard_action: Callable[[str], Awaitable[str]],
+    claude_guard_action: Callable[[str], Awaitable[str]],
     track_payloads: Callable[[int | None, list[str]], None],
 ) -> "tuple[str, str | None]":
     """Execute read-only tool tags. Returns (cleaned_result, tool_output_or_None)."""
@@ -195,10 +195,10 @@ async def exec_tool_tags(
     # ── DEPLOY_STATUS / DEPLOY_TRIGGER ────────────────────────────────────────
     if "[DEPLOY_STATUS]" in result:
         result = result.replace("[DEPLOY_STATUS]", "")
-        tool_results.append(f"DEPLOY_STATUS: {await deploy_guard_action('status')}")
+        tool_results.append(f"DEPLOY_STATUS: {await claude_guard_action('status')}")
     if "[DEPLOY_TRIGGER]" in result:
         result = result.replace("[DEPLOY_TRIGGER]", "")
-        tool_results.append(f"DEPLOY_TRIGGER: {await deploy_guard_action('trigger')}")
+        tool_results.append(f"DEPLOY_TRIGGER: {await claude_guard_action('trigger')}")
 
     track_payloads(chat_id, tool_results)
     return result, "\n\n".join(tool_results) if tool_results else None
