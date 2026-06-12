@@ -169,6 +169,13 @@
       "relevance_filter": true,
       "max_per_tick": 15,
       "snippet_chars": 1200
+    },
+    "kb_watch": {
+      "_comment": "Scans KB for stale entries (not updated in stale_days) and quarantined entries. Notifies admins with a report. No LLM involved — pure DB scan.",
+      "enabled": false,
+      "interval_minutes": 360,
+      "stale_days": 90,
+      "max_per_tick": 10
     }
   }
 }

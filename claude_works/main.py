@@ -433,6 +433,7 @@ class Daemon:
         from .cron import CronJob, CronManager
         from .tasks.deploy_watch import JOB_NAME as _DW_NAME, deploy_watch
         from .tasks.email_watch import JOB_NAME as _EW_NAME, email_watch
+        from .tasks.kb_watch import JOB_NAME as _KBW_NAME, kb_watch
 
         async def _cron_notify(msg: str) -> None:
             for admin_id in admin_ids:
@@ -457,6 +458,12 @@ class Daemon:
             handler=email_watch,
             default_interval_seconds=3600,  # hourly
             default_enabled=False,  # opt-in via daemon_config cron.email_watch.enabled
+        ))
+        self._cron.register(CronJob(
+            name=_KBW_NAME,
+            handler=kb_watch,
+            default_interval_seconds=21600,  # every 6 hours
+            default_enabled=False,  # opt-in via daemon_config cron.kb_watch.enabled
         ))
         asyncio.create_task(self._cron.run(), name="cron-scheduler")
 
