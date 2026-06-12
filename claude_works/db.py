@@ -292,6 +292,9 @@ _MIGRATIONS = [
     "ALTER TABLE knowledge ADD COLUMN visibility INTEGER NOT NULL DEFAULT 0",
     # Backfill: lock down all pre-existing KB entries (defensive; ALTER default covers new col)
     "UPDATE knowledge SET visibility = 0 WHERE visibility IS NULL",
+    # Admins are always effective level 0 (effective_trust maps role='admin' → 0);
+    # backfill the column too so Web UI / raw queries show the truth. Idempotent.
+    "UPDATE users SET trust_level = 0 WHERE role = 'admin' AND trust_level != 0",
 ]
 
 

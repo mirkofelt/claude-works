@@ -56,6 +56,9 @@ async def test_old_db_migrates_with_backfill(tmp_path):
         "INSERT INTO users (telegram_id, name, role, created_at) VALUES (1, 'tobi', 'admin', 0)"
     )
     await conn.execute(
+        "INSERT INTO users (telegram_id, name, role, created_at) VALUES (2, 'stefan', 'user', 0)"
+    )
+    await conn.execute(
         "INSERT INTO knowledge (title, content, created_at, updated_at) VALUES ('t', 'c', 0, 0)"
     )
     await conn.commit()
@@ -65,6 +68,9 @@ async def test_old_db_migrates_with_backfill(tmp_path):
     conn = await cw_db.init(path)
     try:
         async with conn.execute("SELECT trust_level FROM users WHERE telegram_id = 1") as cur:
+            row = await cur.fetchone()
+        assert row["trust_level"] == 0  # Admin-Backfill → Owner-Stufe
+        async with conn.execute("SELECT trust_level FROM users WHERE telegram_id = 2") as cur:
             row = await cur.fetchone()
         assert row["trust_level"] == 2  # Default für Bestandsnutzer
 
