@@ -1033,6 +1033,108 @@ async def save_config_endpoint(body: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+_GROUP_FIELDS = ("persona", "focus", "communication_style", "echo_filter", "truncation_limit", "model_override")
+# Fields that are text/string values
+_GROUP_TEXT_FIELDS = ("persona", "focus", "communication_style", "model_override")
+# Fields that are numeric values
+_GROUP_NUMERIC_FIELDS = ("truncation_limit",)
+# Fields that are boolean values
+_GROUP_BOOL_FIELDS = ("echo_filter",)
+
+
+def _parse_group_id(raw: Any) -> int:
+    """Validate a Telegram group chat_id. Must be a negative integer."""
+    try:
+        cid = int(raw)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="chat_id must be an integer")
+    if cid >= 0:
+        raise HTTPException(status_code=400, detail="chat_id must be negative (a group)")
+    return cid
+
+
+def _validate_group_field(name: str, value: Any) -> Any | None:
+    """Validate and normalize a group field value. Returns None if empty/invalid/default."""
+    if value is None:
+        return None
+
+    if name in _GROUP_TEXT_FIELDS:
+        v = str(value).strip()
+        return v if v else None
+
+    if name in _GROUP_BOOL_FIELDS:
+        result: bool
+        if isinstance(value, bool):
+            result = value
+        elif isinstance(value, str):
+            result = value.lower() in ('true', '1', 'yes', 'on')
+        else:
+            result = bool(value)
+        # Only store True; False is the default
+        return result if result else None
+
+    if name in _GROUP_NUMERIC_FIELDS:
+        try:
+            v = int(value)
+            if v < 0:
+                raise HTTPException(status_code=400, detail=f"{name} must be a non-negative integer")
+            # Only store non-zero values; 0 is the default (disabled)
+            return v if v > 0 else None
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail=f"{name} must be a non-negative integer")
+
+    return None
+
+
+async def _save_groups(groups: dict) -> None:
+    cfg = dict(config.get())
+    cfg["groups"] = groups
+    conn = await db.init_config()
+    await _store_save_config(conn, cfg)
+    await conn.close()
+    config.set(cfg)
+
+
+@app.get("/api/groups", dependencies=[Depends(_verify_token)])
+async def list_groups():
+    return {"groups": config.section("groups")}
+
+
+@app.post("/api/groups", dependencies=[Depends(_verify_token)])
+async def upsert_group(body: dict):
+    cid = _parse_group_id(body.get("chat_id"))
+    entry = {}
+    for f in _GROUP_FIELDS:
+        validated = _validate_group_field(f, body.get(f))
+        if validated is not None:
+            entry[f] = validated
+    groups = dict(config.section("groups"))
+    groups[str(cid)] = entry
+    # Drop any stale int-keyed duplicate from legacy configs.
+    groups.pop(cid, None)
+    try:
+        await _save_groups(groups)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"ok": True, "chat_id": str(cid), "group": entry}
+
+
+@app.delete("/api/groups/{chat_id}", dependencies=[Depends(_verify_token)])
+async def delete_group(chat_id: str):
+    cid = _parse_group_id(chat_id)
+    groups = dict(config.section("groups"))
+    existed = groups.pop(str(cid), None)
+    if groups.pop(cid, None) is not None:
+        existed = True
+    if existed is None:
+        raise HTTPException(status_code=404, detail=f"Group {cid} not configured")
+    try:
+        await _save_groups(groups)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"ok": True, "deleted": str(cid)}
+
+
 @app.post("/api/config/reload", dependencies=[Depends(_verify_token)])
 async def reload_config():
     from ..config_store import load_config as _load_db_cfg
