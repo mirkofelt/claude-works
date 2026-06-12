@@ -32,7 +32,8 @@ from .agents.coordinator import AgentCoordinator
 from .llm.errors import RateLimitError
 from .agents.mechanic import MechanicAgent, MechanicContext
 from .agents.specialist.generalist import GeneralistAgent
-from .auth.users import upsert_user, is_allowed, is_admin, set_role
+from .auth.users import upsert_user, is_allowed, is_admin, set_role, set_trust
+from .auth import trust as trust_mod
 from .security import SecuritySupervisor
 from .web.app import app as web_app, set_daemon as _set_web_daemon, set_setup_token as _set_web_setup_token
 from .logging_setup import setup as _setup_logging, uvicorn_log_config as _uvicorn_log_config
@@ -166,6 +167,30 @@ def _extract_git_clone_tag(text: str) -> "tuple[str, tuple[str, str] | None]":
         return text, None
     clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
     return clean, (m.group(1).strip(), m.group(2).strip())
+
+
+def _extract_mute_tag(text: str) -> "tuple[str, tuple[str, int] | None]":
+    """Extract [MUTE: name_or_id | minutes]. Returns (clean_text, (ident, minutes) or None). minutes 0 = indefinite."""
+    m = re.search(r'\[MUTE:\s*([^\]]+)\]', text)
+    if not m:
+        return text, None
+    clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
+    parts = [p.strip() for p in m.group(1).split('|', 1)]
+    ident = parts[0]
+    try:
+        minutes = int(parts[1]) if len(parts) > 1 else 0
+    except ValueError:
+        minutes = 0
+    return clean, (ident, minutes)
+
+
+def _extract_unmute_tag(text: str) -> "tuple[str, str | None]":
+    """Extract [UNMUTE: name_or_id]. Returns (clean_text, ident or None)."""
+    m = re.search(r'\[UNMUTE:\s*([^\]]+)\]', text)
+    if not m:
+        return text, None
+    clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
+    return clean, m.group(1).strip()
 
 
 def _extract_board_task_tag(text: str) -> "tuple[str, str | None]":
@@ -406,6 +431,9 @@ class Daemon:
         self._bot_username: str = ""  # loaded at startup via getMe
         self._bot_id: int = 0  # loaded at startup via getMe
         self._mention_only_chats: set[int] = set()  # chat_ids where bot only responds to @mention
+        self._muted_users: dict[int, int] = {}  # telegram_id → muted-until epoch (0 = indefinite)
+        self._group_reply_log: dict[tuple[int, int], list[float]] = {}  # (chat_id, user_id) → bot-reply timestamps
+        self._exchange_depth: dict[int, tuple[int, int]] = {}  # chat_id → (user_id, consecutive bot replies to that user)
         self._pending_reactions: dict[int, tuple[int, int]] = {}  # kanban task_id → (chat_id, tg_msg_id)
         self._pending_initial_msgs: dict[int, int] = {}  # kanban task_id → preliminary tg_msg_id
 
@@ -496,6 +524,7 @@ class Daemon:
             logger.error("getMe failed after 3 attempts — bot will be silent in mention-only groups")
 
         await self._load_mention_only_chats()
+        await self._load_muted_users()
 
         self._board = KanbanBoard(self._conn)
         self._token_tracker = TokenTracker(self._conn)
@@ -969,7 +998,15 @@ Rules:
                 await self._notify_admin_new_user(telegram_id, name)
             return
 
+        # HARD MUTE gate #1: muted users get no command handling at all.
+        # Enforced here in the dispatch layer — the LLM never sees a muted
+        # user's message, so it cannot be talked into replying.
+        muted = self._is_muted(telegram_id)
+
         if text and text.startswith("/"):
+            if muted:
+                logger.info("Muted user=%d — command ignored chat=%d", telegram_id, chat_id)
+                return
             logger.info("Command %r from user=%d chat=%d", text.split()[0], telegram_id, chat_id)
             await self._handle_command(text, telegram_id, chat_id)
             return
@@ -1039,6 +1076,13 @@ Rules:
             logger.debug("Duplicate message_id=%d — skipping", incoming.telegram_message_id)
             return
 
+        # HARD MUTE gate #2: message is logged to DB (above) so history stays
+        # complete, but nothing is dispatched to any agent. No exceptions —
+        # @mention and reply-to-bot do NOT bypass a mute.
+        if muted:
+            logger.info("Muted user=%d — message logged silently chat=%d", telegram_id, chat_id)
+            return
+
         # Mention-only mode: log message to DB (done above) but skip response unless @mentioned
         addressed_bot = False
         if chat_id in self._mention_only_chats:
@@ -1069,6 +1113,14 @@ Rules:
             # Strip @mention from text (case-insensitive) so agent doesn't see it
             if bot_lower and text:
                 text = re.sub(re.escape(f"@{self._bot_username}"), "", text, flags=re.IGNORECASE).strip()
+
+        # GROUP GUARD: loop brake in group chats. Caps replies per user per
+        # time window and consecutive bot↔same-user exchanges. Prevents the
+        # bot from being dragged into endless discussions. Admins exempt;
+        # @mention does NOT bypass — only an admin message resets the flow.
+        if chat_id < 0 and not await is_admin(self._conn, telegram_id):
+            if not self._group_guard_allows(chat_id, telegram_id):
+                return  # silently logged, no agent dispatch
 
         pending = self._pending_messages.get(chat_id)
         if pending and should_bundle(pending, incoming):
@@ -1156,6 +1208,11 @@ Rules:
                     ]]}
                 )
                 return
+
+        # Record the reply commitment for group-guard accounting (we are about
+        # to dispatch to an agent, i.e. a bot reply will follow).
+        if chat_id < 0:
+            self._record_group_reply(chat_id, telegram_id)
 
         if _is_task(content):
             task_content = content
@@ -1396,6 +1453,55 @@ Rules:
             except Exception as e:
                 await self._api.send_message(chat_id, f"Error: {e}")
 
+        elif cmd == "/trust":
+            if not await is_admin(self._conn, from_id):
+                await self._api.send_message(chat_id, "Nur für Admins.")
+                return
+            if len(parts) < 3:
+                await self._api.send_message(
+                    chat_id,
+                    "Usage: /trust <telegram_id> <stufe>\n0=Owner 1=Vertraut 2=Kontakt 3=Unbekannt",
+                )
+                return
+            try:
+                target_id = int(parts[1].lstrip("@"))
+                level = int(parts[2])
+                ok = await set_trust(self._conn, target_id, level)
+                if ok:
+                    label = trust_mod.TRUST_LABELS.get(level, str(level))
+                    await self._api.send_message(chat_id, f"User {target_id} → Stufe {level} ({label}).")
+                else:
+                    await self._api.send_message(chat_id, f"User {target_id} unbekannt.")
+            except Exception as e:
+                await self._api.send_message(chat_id, f"Error: {e}")
+
+        elif cmd == "/kb-level":
+            if not await is_admin(self._conn, from_id):
+                await self._api.send_message(chat_id, "Nur für Admins.")
+                return
+            if len(parts) < 3:
+                await self._api.send_message(
+                    chat_id,
+                    "Usage: /kb-level <eintrag_id> <stufe>\n0=privat 1=vertraut 2=Kontakte 3=öffentlich",
+                )
+                return
+            try:
+                entry_id = int(parts[1])
+                level = int(parts[2])
+                if level not in (0, 1, 2, 3):
+                    await self._api.send_message(chat_id, "Stufe muss 0–3 sein.")
+                    return
+                conn = await db.get_conn()
+                ok = await knowledge_store.update(conn, entry_id, visibility=level)
+                await conn.close()
+                if ok:
+                    label = trust_mod.VISIBILITY_LABELS.get(level, str(level))
+                    await self._api.send_message(chat_id, f"KB-Eintrag {entry_id} → {label} ({level}).")
+                else:
+                    await self._api.send_message(chat_id, f"KB-Eintrag {entry_id} nicht gefunden.")
+            except Exception as e:
+                await self._api.send_message(chat_id, f"Error: {e}")
+
         elif cmd == "/status":
             h = self.health()
             mode_info = f" | mode: {h['mode']}"
@@ -1462,6 +1568,64 @@ Rules:
             else:
                 state = "on" if chat_id in self._mention_only_chats else "off"
                 await self._api.send_message(chat_id, f"Mention-only mode: {state}\nUsage: /mention on|off")
+
+        elif cmd == "/mute":
+            if not await is_admin(self._conn, from_id):
+                await self._api.send_message(chat_id, "Nur für Admins.")
+                return
+            if len(parts) < 2:
+                await self._api.send_message(chat_id, "Usage: /mute <name|telegram_id> [minuten]\nOhne Minuten: unbegrenzt.")
+                return
+            target = await self._resolve_user(parts[1])
+            if not target:
+                await self._api.send_message(chat_id, f"User '{parts[1]}' nicht gefunden.")
+                return
+            if await is_admin(self._conn, target["telegram_id"]):
+                await self._api.send_message(chat_id, "Admins können nicht gemutet werden.")
+                return
+            try:
+                minutes = int(parts[2]) if len(parts) >= 3 else 0
+            except ValueError:
+                minutes = 0
+            until = await self._set_mute(target["telegram_id"], minutes)
+            dur = f"für {minutes} min" if until else "unbegrenzt"
+            await self._api.send_message(
+                chat_id,
+                f"🔇 {target.get('name') or target['telegram_id']} stumm {dur}. Nachrichten werden still mitgelesen.\nAufheben: /unmute {parts[1]}",
+            )
+
+        elif cmd == "/unmute":
+            if not await is_admin(self._conn, from_id):
+                await self._api.send_message(chat_id, "Nur für Admins.")
+                return
+            if len(parts) < 2:
+                await self._api.send_message(chat_id, "Usage: /unmute <name|telegram_id>")
+                return
+            target = await self._resolve_user(parts[1])
+            if not target:
+                await self._api.send_message(chat_id, f"User '{parts[1]}' nicht gefunden.")
+                return
+            if await self._clear_mute(target["telegram_id"]):
+                await self._api.send_message(chat_id, f"🔊 {target.get('name') or target['telegram_id']} wieder freigegeben.")
+            else:
+                await self._api.send_message(chat_id, f"{target.get('name') or target['telegram_id']} war nicht gemutet.")
+
+        elif cmd == "/muted":
+            if not await is_admin(self._conn, from_id):
+                return
+            if not self._muted_users:
+                await self._api.send_message(chat_id, "Niemand gemutet.")
+                return
+            lines = []
+            for tid, until in self._muted_users.items():
+                u = await self._resolve_user(str(tid))
+                name = (u.get("name") if u else None) or str(tid)
+                if until == 0:
+                    lines.append(f"🔇 {name} — unbegrenzt")
+                else:
+                    remaining = max(0, until - int(time.time())) // 60
+                    lines.append(f"🔇 {name} — noch ~{remaining} min")
+            await self._api.send_message(chat_id, "\n".join(lines))
 
         elif cmd == "/repair" and len(parts) >= 2:
             if not await is_admin(self._conn, from_id):
@@ -1649,6 +1813,18 @@ Rules:
                 if not v: break
                 all_config_updates.append(v)
 
+            all_mutes: list[tuple] = []
+            while True:
+                clean_result, v = _extract_mute_tag(clean_result)
+                if not v: break
+                all_mutes.append(v)
+
+            all_unmutes: list[str] = []
+            while True:
+                clean_result, v = _extract_unmute_tag(clean_result)
+                if not v: break
+                all_unmutes.append(v)
+
             reply_markup = {"inline_keyboard": keyboard} if keyboard is not None else None
             initial_msg_id = self._pending_initial_msgs.pop(task.id, None) if task.id else None
             if initial_msg_id and task.id:
@@ -1781,6 +1957,7 @@ Rules:
                             conn, title=title, content=content,
                             type=entry_type, tags=tags, source="agent",
                             user_id=task.user_id,
+                            visibility=trust_mod.VISIBILITY_PRIVATE,  # neue Einträge immer privat
                         )
                         await conn.close()
                         logger.info("KB_SAVE: created entry %d by agent for task=%d", entry_id, task.id)
@@ -1790,6 +1967,13 @@ Rules:
             for entry_id, title, entry_type, tags, content in all_kb_updates:
                 try:
                     conn = await db.get_conn()
+                    # Trust-Gate: Eintrag nur änderbar, wenn für diesen Chat sichtbar
+                    trust = await trust_mod.chat_trust(conn, task.chat_id, task.user_id)
+                    entry = await knowledge_store.get(conn, entry_id)
+                    if entry is not None and not trust_mod.can_see({"trust_level": trust}, entry):
+                        await conn.close()
+                        logger.warning("KB_UPDATE: entry %d hidden for trust=%d (task=%d) — blocked", entry_id, trust, task.id)
+                        continue
                     ok = await knowledge_store.update(
                         conn, entry_id,
                         title=title, content=content, type=entry_type, tags=tags,
@@ -1830,6 +2014,35 @@ Rules:
                 except Exception as e:
                     logger.warning("CONFIG_UPDATE failed for task=%d: %s", task.id, e)
                     await self._api.send_message(task.chat_id, f"⚠ CONFIG_UPDATE '{cfg_path}' failed: {e}")
+
+            for ident, minutes in all_mutes:
+                # Only an admin's request may mute; admins themselves are unmutable.
+                if not await is_admin(self._conn, task.user_id):
+                    logger.warning("MUTE tag from non-admin user=%d ignored (task=%d)", task.user_id, task.id)
+                    continue
+                target = await self._resolve_user(ident)
+                if not target:
+                    await self._api.send_message(task.chat_id, f"⚠ Mute fehlgeschlagen: User '{ident}' nicht gefunden.")
+                    continue
+                if await is_admin(self._conn, target["telegram_id"]):
+                    await self._api.send_message(task.chat_id, "⚠ Admins können nicht gemutet werden.")
+                    continue
+                until = await self._set_mute(target["telegram_id"], minutes)
+                dur = f"für {minutes} min" if until else "unbegrenzt"
+                await self._api.send_message(
+                    task.chat_id,
+                    f"🔇 Daemon-Mute aktiv: {target.get('name') or target['telegram_id']} {dur} (hart erzwungen, kein LLM-Versprechen).",
+                )
+
+            for ident in all_unmutes:
+                if not await is_admin(self._conn, task.user_id):
+                    logger.warning("UNMUTE tag from non-admin user=%d ignored (task=%d)", task.user_id, task.id)
+                    continue
+                target = await self._resolve_user(ident)
+                if target and await self._clear_mute(target["telegram_id"]):
+                    await self._api.send_message(
+                        task.chat_id, f"🔊 {target.get('name') or target['telegram_id']} wieder freigegeben."
+                    )
 
             for plugin_name, plugin_cfg in all_plugin_config_sets:
                 try:
@@ -1903,6 +2116,105 @@ Rules:
         )
         await self._conn.commit()
 
+    # ──────────────────────────────────────────────────────────
+    # Hard mute + group guard (enforced in dispatch, not in prompt)
+    # ──────────────────────────────────────────────────────────
+
+    async def _load_muted_users(self) -> None:
+        try:
+            async with self._conn.execute(
+                "SELECT value FROM daemon_state WHERE key = 'muted_users'"
+            ) as cur:
+                row = await cur.fetchone()
+            if row:
+                import json as _json
+                self._muted_users = {int(k): int(v) for k, v in _json.loads(row[0]).items()}
+                logger.info("Loaded %d muted users", len(self._muted_users))
+        except Exception as e:
+            logger.warning("Failed to load muted_users: %s", e)
+
+    async def _save_muted_users(self) -> None:
+        import json as _json
+        await self._conn.execute(
+            """INSERT OR REPLACE INTO daemon_state (key, value, updated_at) VALUES (?, ?, ?)""",
+            ("muted_users", _json.dumps({str(k): v for k, v in self._muted_users.items()}), int(time.time())),
+        )
+        await self._conn.commit()
+
+    def _is_muted(self, telegram_id: int) -> bool:
+        until = self._muted_users.get(telegram_id)
+        if until is None:
+            return False
+        if until != 0 and time.time() > until:
+            # Expired — prune lazily; persistence happens on next explicit change
+            del self._muted_users[telegram_id]
+            logger.info("Mute expired for user=%d", telegram_id)
+            return False
+        return True
+
+    async def _set_mute(self, telegram_id: int, minutes: int) -> int:
+        """Mute user. minutes<=0 → indefinite. Returns until-epoch (0 = indefinite)."""
+        until = 0 if minutes <= 0 else int(time.time()) + minutes * 60
+        self._muted_users[telegram_id] = until
+        await self._save_muted_users()
+        logger.info("Muted user=%d until=%s", telegram_id, until or "indefinite")
+        return until
+
+    async def _clear_mute(self, telegram_id: int) -> bool:
+        if telegram_id in self._muted_users:
+            del self._muted_users[telegram_id]
+            await self._save_muted_users()
+            logger.info("Unmuted user=%d", telegram_id)
+            return True
+        return False
+
+    async def _resolve_user(self, ident: str) -> "dict | None":
+        """Resolve a user by telegram_id or (partial) name. Returns row dict or None."""
+        ident = ident.strip().lstrip("@")
+        try:
+            tid = int(ident)
+            async with self._conn.execute(
+                "SELECT * FROM users WHERE telegram_id = ?", (tid,)
+            ) as cur:
+                row = await cur.fetchone()
+            return dict(row) if row else None
+        except ValueError:
+            pass
+        async with self._conn.execute(
+            "SELECT * FROM users WHERE LOWER(name) LIKE ? ORDER BY last_seen DESC LIMIT 1",
+            (f"%{ident.lower()}%",),
+        ) as cur:
+            row = await cur.fetchone()
+        return dict(row) if row else None
+
+    def _group_guard_allows(self, chat_id: int, user_id: int) -> bool:
+        """Loop brake for group chats: sliding-window reply budget per user +
+        max consecutive bot↔same-user exchanges. Admins are exempt (checked by caller)."""
+        try:
+            cfg = config.section("group_guard") or {}
+        except Exception:
+            cfg = {}
+        max_replies = int(cfg.get("max_replies_per_window", 3))
+        window = int(cfg.get("window_seconds", 600))
+        max_depth = int(cfg.get("max_consecutive_replies", 4))
+        now = time.time()
+        key = (chat_id, user_id)
+        recent = [t for t in self._group_reply_log.get(key, []) if now - t < window]
+        self._group_reply_log[key] = recent
+        if len(recent) >= max_replies:
+            logger.info("Group guard: window budget hit (%d/%ds) chat=%d user=%d", max_replies, window, chat_id, user_id)
+            return False
+        depth_user, depth = self._exchange_depth.get(chat_id, (0, 0))
+        if depth_user == user_id and depth >= max_depth:
+            logger.info("Group guard: exchange depth %d hit chat=%d user=%d", max_depth, chat_id, user_id)
+            return False
+        return True
+
+    def _record_group_reply(self, chat_id: int, user_id: int) -> None:
+        self._group_reply_log.setdefault((chat_id, user_id), []).append(time.time())
+        depth_user, depth = self._exchange_depth.get(chat_id, (0, 0))
+        self._exchange_depth[chat_id] = (user_id, depth + 1 if depth_user == user_id else 1)
+
     async def _load_chat_history(self, chat_id: int, limit: int = 30) -> list[dict]:
         """Load recent conversation from DB as {role, content} pairs, chronological order.
 
@@ -1964,7 +2276,7 @@ Rules:
             result = await asyncio.wait_for(agent.run(content), timeout=300.0)
             preliminary_msg_id: int | None = None
             for _ in range(5):
-                clean, tool_feedback = await self._exec_tool_tags(result)
+                clean, tool_feedback = await self._exec_tool_tags(result, user_id=user_id, chat_id=chat_id)
                 if not tool_feedback:
                     result = clean
                     break
@@ -2033,7 +2345,7 @@ Rules:
             self._stop_typing(chat_id)
             self._flush_chat_queue(chat_id)
 
-    async def _exec_tool_tags(self, result: str) -> "tuple[str, str | None]":
+    async def _exec_tool_tags(self, result: str, user_id: int | None = None, chat_id: int | None = None) -> "tuple[str, str | None]":
         """Execute read-only tool tags in result, return (cleaned_result, tool_output_or_None).
 
         Only GET GitHub calls and READ_EMAIL are auto-executed so the agent can process
@@ -2131,7 +2443,8 @@ Rules:
             result = clean
             try:
                 conn = await db.get_conn()
-                entries = await knowledge_store.search(conn, kb_query, limit=10)
+                trust = await trust_mod.chat_trust(conn, chat_id, user_id)
+                entries = await knowledge_store.search(conn, kb_query, limit=10, trust=trust)
                 await conn.close()
                 if entries:
                     lines = []

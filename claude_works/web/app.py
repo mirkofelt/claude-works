@@ -623,6 +623,10 @@ async def add_knowledge(body: dict):
     if not title or not content:
         raise HTTPException(status_code=400, detail="title and content required")
     conn = await _get_conn()
+    visibility = body.get("visibility", 0)
+    if visibility not in (0, 1, 2, 3):
+        await conn.close()
+        raise HTTPException(status_code=400, detail="Invalid visibility (0-3)")
     entry_id = await knowledge_store.add(
         conn,
         title=title,
@@ -630,6 +634,7 @@ async def add_knowledge(body: dict):
         type=body.get("type", "note"),
         tags=body.get("tags"),
         source="admin",
+        visibility=visibility,
     )
     await conn.close()
     return {"id": entry_id}
@@ -642,6 +647,10 @@ async def update_knowledge(entry_id: int, body: dict):
     tags = raw_tags if isinstance(raw_tags, list) else (
         [t.strip() for t in raw_tags.split(",") if t.strip()] if isinstance(raw_tags, str) else None
     )
+    visibility = body.get("visibility")
+    if visibility is not None and visibility not in (0, 1, 2, 3):
+        await conn.close()
+        raise HTTPException(status_code=400, detail="Invalid visibility (0-3)")
     ok = await knowledge_store.update(
         conn,
         entry_id,
@@ -649,6 +658,7 @@ async def update_knowledge(entry_id: int, body: dict):
         content=body.get("content") or None,
         type=body.get("type") or None,
         tags=tags,
+        visibility=visibility,
     )
     await conn.close()
     if not ok:
@@ -716,6 +726,13 @@ async def update_user(telegram_id: int, body: dict):
             await conn.close()
             raise HTTPException(status_code=400, detail="Invalid role")
         await set_role(conn, telegram_id, role)
+    trust_level = body.get("trust_level")
+    if trust_level is not None:
+        if trust_level not in (0, 1, 2, 3):
+            await conn.close()
+            raise HTTPException(status_code=400, detail="Invalid trust_level (0-3)")
+        from ..auth.users import set_trust
+        await set_trust(conn, telegram_id, trust_level)
     if "persona" in body:
         persona = body["persona"] or None
         await conn.execute("UPDATE users SET persona = ? WHERE telegram_id = ?", (persona, telegram_id))

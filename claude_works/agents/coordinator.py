@@ -4,6 +4,7 @@ import time
 
 from ..config import section, get as _get_config
 from .. import db
+from ..auth import trust as trust_mod
 from ..knowledge import store as knowledge_store
 from ..kanban.board import KanbanBoard
 from ..kanban.models import AgentClass, KanbanTask
@@ -28,13 +29,17 @@ _KB_ENTRY_MAX_CHARS = 400
 _CODETEAM_PREVIEW_LEN = 100
 
 
-async def _inject_knowledge(content: str, user_id: int | None) -> str:
-    """Prepend relevant knowledge base entries to task content for agent context."""
+async def _inject_knowledge(content: str, user_id: int | None, chat_id: int | None = None) -> str:
+    """Prepend relevant knowledge base entries to task content for agent context.
+
+    Filtert nach Vertrauensstufe: nur Einträge mit visibility >= effektiver
+    Stufe des Chats (Gruppen: lockerste Stufe aller Mitglieder)."""
     if len(content.split()) < _KB_MIN_WORDS:
         return content
     try:
         conn = await db.get_conn()
-        entries = await knowledge_store.search(conn, content, user_id=user_id, limit=5)
+        trust = await trust_mod.chat_trust(conn, chat_id, user_id)
+        entries = await knowledge_store.search(conn, content, user_id=user_id, limit=5, trust=trust)
         await conn.close()
     except Exception:
         return content
@@ -238,7 +243,7 @@ class AgentCoordinator:
                 await self._board.fail(task.id, "Empty task content")
                 return
 
-            content = await _inject_knowledge(task.content, task.user_id)
+            content = await _inject_knowledge(task.content, task.user_id, task.chat_id)
             sys_mode = _get_config().get("system", {}).get("mode", "run")
             if sys_mode != "run":
                 content = f"[SYSTEM MODE: {sys_mode.upper()}]\n\n{content}"
@@ -246,7 +251,7 @@ class AgentCoordinator:
             # Tool loop — feed read-tool results back so agent can continue processing
             if self._exec_tools:
                 for _ in range(5):
-                    clean, tool_feedback = await self._exec_tools(result)
+                    clean, tool_feedback = await self._exec_tools(result, user_id=task.user_id, chat_id=task.chat_id)
                     if not tool_feedback:
                         result = clean
                         break
