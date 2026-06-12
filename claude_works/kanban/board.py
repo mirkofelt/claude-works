@@ -8,6 +8,24 @@ from .models import AgentClass, KanbanTask, Lane
 
 logger = logging.getLogger(__name__)
 
+# Marker prepended to task content when an inline chat run is offloaded to the
+# board after a timeout. Checked before offloading to prevent an endless
+# inline → board → inline loop: marked content is never offloaded again.
+OFFLOAD_MARKER = "[Inline-Timeout-Offload]"
+
+
+def build_offload_content(content: str, elapsed_seconds: float) -> str:
+    """Wrap original task content with the offload marker + context note."""
+    return (
+        f"{OFFLOAD_MARKER} Inline-Lauf nach {int(elapsed_seconds)}s abgebrochen — "
+        f"bitte komplett neu bearbeiten.\n\n{content}"
+    )
+
+
+def is_offloaded(content: str | None) -> bool:
+    """True if content was already offloaded once (re-offload forbidden)."""
+    return OFFLOAD_MARKER in (content or "")
+
 
 class KanbanBoard:
     def __init__(self, conn: aiosqlite.Connection) -> None:
@@ -250,6 +268,26 @@ class KanbanBoard:
         if updated:
             self._notify.set()
             logger.info("Kanban recover id=%d content_updated=%s", task_id, content is not None)
+        return updated > 0
+
+    async def offload(self, task_id: int, content: str) -> bool:
+        """Move a timed-out inline chat task back to BACKLOG with updated content.
+
+        Re-uses the existing task row (no duplicate for FAILED-lane recovery to
+        pick up) — the controller routes it to a specialist like any new task.
+        """
+        async with self._conn.execute(
+            """UPDATE kanban_tasks SET lane = ?, content = ?, error = NULL,
+               agent_class = NULL, agent_id = NULL,
+               assigned_at = NULL, started_at = NULL, completed_at = NULL
+               WHERE id = ? AND lane = ?""",
+            (Lane.BACKLOG.value, content, task_id, Lane.IN_PROGRESS.value),
+        ) as cur:
+            updated = cur.rowcount
+        await self._conn.commit()
+        if updated:
+            self._notify.set()
+            logger.info("Kanban offload id=%d → backlog content_len=%d", task_id, len(content))
         return updated > 0
 
     async def wait_for_work(self, timeout: float = 30.0) -> None:

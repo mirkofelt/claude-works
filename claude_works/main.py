@@ -24,7 +24,7 @@ from .telegram.poller import TelegramPoller
 from .telegram.reactions import resolve_action, extract_reaction_emoji
 from .tasks.models import IncomingMessage
 from .tasks.bundler import should_bundle, merge_content
-from .kanban.board import KanbanBoard
+from .kanban.board import KanbanBoard, build_offload_content, is_offloaded
 from .kanban.models import AgentClass, KanbanTask
 from .telemetry.tokens import TokenTracker
 from .knowledge import store as knowledge_store
@@ -2379,9 +2379,9 @@ Rules:
             real_task = KanbanTask(id=task_id, chat_id=chat_id, user_id=user_id, content=content)
             await self._on_agent_result(real_task, result, None)
         except asyncio.TimeoutError:
-            if task_id and self._board:
-                await self._board.fail(task_id, f"timeout ({reply_timeout:.0f}s)")
-            await self._api.send_message(chat_id, "Timeout.")
+            await self._offload_after_timeout(
+                chat_id, user_id, content, task_id, reply_timeout
+            )
         except RateLimitError as exc:
             wait = int(exc.retry_after or 30)
             if task_id and self._board:
@@ -2411,6 +2411,46 @@ Rules:
                 self._chat_task_ids.discard(task_id)
             self._stop_typing(chat_id)
             self._flush_chat_queue(chat_id)
+
+    async def _offload_after_timeout(
+        self,
+        chat_id: int,
+        user_id: int,
+        content: str,
+        task_id: int | None,
+        elapsed: float,
+    ) -> None:
+        """Inline run hit timeout: hand the job to the kanban board instead of killing it.
+
+        The original request goes back to BACKLOG (existing task re-used via
+        board.offload, fallback: fresh push) and the controller routes it to a
+        background specialist. Content already carrying the offload marker is
+        never offloaded again — prevents an endless inline → board loop.
+        """
+        if not self._board or is_offloaded(content):
+            if task_id and self._board:
+                await self._board.fail(task_id, f"timeout ({elapsed:.0f}s) — bereits offloaded, kein erneuter Versuch")
+            logger.warning("Chat %d: timeout after %.0fs, no offload (board=%s, marked=%s)",
+                           chat_id, elapsed, bool(self._board), is_offloaded(content))
+            await self._api.send_message(chat_id, "Timeout. Hat auch im zweiten Anlauf nicht geklappt.")
+            return
+
+        offload_content = build_offload_content(content, elapsed)
+        offloaded = False
+        if task_id:
+            offloaded = await self._board.offload(task_id, offload_content)
+        if not offloaded:
+            # No active board task (or lane race) — push a fresh one instead
+            await self._board.push(
+                KanbanTask(id=None, chat_id=chat_id, user_id=user_id, content=offload_content)
+            )
+        logger.info(
+            "Chat %d: inline run timed out after %.0fs — offloaded to board (task=%s)",
+            chat_id, elapsed, task_id,
+        )
+        await self._api.send_message(
+            chat_id, "Dauert länger. Läuft jetzt im Hintergrund, melde mich mit Ergebnis."
+        )
 
     async def _exec_tool_tags(self, result: str, user_id: int | None = None, chat_id: int | None = None) -> "tuple[str, str | None]":
         """Execute read-only tool tags in result, return (cleaned_result, tool_output_or_None).
