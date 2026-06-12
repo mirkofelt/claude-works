@@ -158,6 +158,27 @@ _TOR_SOCKS_DEFAULT = "socks5://127.0.0.1:9050"
 _build_git_clone_cmd = _tags.build_git_clone_cmd
 _extract_tor_restart_tag = _tags.extract_tor_restart
 
+_logger = logging.getLogger(__name__)
+
+# ── User-facing error abstraction ─────────────────────────────────────────────
+
+def _user_error(context: str, exc: Exception | None = None) -> str:
+    """Return a user-friendly error string. Logs the full exception internally.
+
+    Never exposes raw exception messages, stack traces, or internal details to
+    the user. context describes WHAT failed; exc is logged but not shown.
+    """
+    if exc is not None:
+        _logger.warning("%s: %s", context, exc)
+    _FRIENDLY: dict[type, str] = {
+        asyncio.TimeoutError: "Zeitüberschreitung.",
+    }
+    if exc is not None:
+        for exc_type, msg in _FRIENDLY.items():
+            if isinstance(exc, exc_type):
+                return f"⚠️ {context} — {msg}"
+    return f"⚠️ {context}."
+
 
 async def _restart_tor() -> str:
     """Start or restart Tor daemon inside container. Returns status string."""
@@ -888,7 +909,7 @@ Rules:
                     await self._api.send_message(chat_id, "✓ Claude CLI authenticated.")
                 else:
                     out = stdout.decode(errors="replace") if stdout else ""
-                    await self._api.send_message(chat_id, f"Auth failed: {out[:200]}")
+                    await self._api.send_message(chat_id, _user_error("Authentifizierung fehlgeschlagen"))
             except asyncio.TimeoutError:
                 try:
                     proc.kill()
@@ -1321,7 +1342,7 @@ Rules:
                 await set_role(self._conn, target_id, "user")
                 await self._api.send_message(chat_id, f"User {target_id} approved.")
             except Exception as e:
-                await self._api.send_message(chat_id, f"Error: {e}")
+                await self._api.send_message(chat_id, _user_error("Aktion fehlgeschlagen", e))
 
         elif cmd == "/block" and len(parts) >= 2:
             if not await is_admin(self._conn, from_id):
@@ -1331,7 +1352,7 @@ Rules:
                 await set_role(self._conn, target_id, "blocked")
                 await self._api.send_message(chat_id, f"User {target_id} blocked.")
             except Exception as e:
-                await self._api.send_message(chat_id, f"Error: {e}")
+                await self._api.send_message(chat_id, _user_error("Aktion fehlgeschlagen", e))
 
         elif cmd == "/approve" and len(parts) >= 2:
             if not await is_admin(self._conn, from_id):
@@ -1340,7 +1361,7 @@ Rules:
                 ok = self._security.approve(int(parts[1]), from_id)
                 await self._api.send_message(chat_id, f"✓ Approved #{parts[1]}" if ok else f"No pending approval #{parts[1]}")
             except Exception as e:
-                await self._api.send_message(chat_id, f"Error: {e}")
+                await self._api.send_message(chat_id, _user_error("Aktion fehlgeschlagen", e))
 
         elif cmd == "/deny" and len(parts) >= 2:
             if not await is_admin(self._conn, from_id):
@@ -1349,7 +1370,7 @@ Rules:
                 ok = self._security.deny(int(parts[1]), from_id)
                 await self._api.send_message(chat_id, f"✗ Denied #{parts[1]}" if ok else f"No pending approval #{parts[1]}")
             except Exception as e:
-                await self._api.send_message(chat_id, f"Error: {e}")
+                await self._api.send_message(chat_id, _user_error("Aktion fehlgeschlagen", e))
 
         elif cmd == "/trust":
             if not await is_admin(self._conn, from_id):
@@ -1371,7 +1392,7 @@ Rules:
                 else:
                     await self._api.send_message(chat_id, f"User {target_id} unbekannt.")
             except Exception as e:
-                await self._api.send_message(chat_id, f"Error: {e}")
+                await self._api.send_message(chat_id, _user_error("Aktion fehlgeschlagen", e))
 
         elif cmd == "/kb-level":
             if not await is_admin(self._conn, from_id):
@@ -1398,7 +1419,7 @@ Rules:
                 else:
                     await self._api.send_message(chat_id, f"KB-Eintrag {entry_id} nicht gefunden.")
             except Exception as e:
-                await self._api.send_message(chat_id, f"Error: {e}")
+                await self._api.send_message(chat_id, _user_error("Aktion fehlgeschlagen", e))
 
         elif cmd == "/status":
             h = self.health()
@@ -1452,7 +1473,7 @@ Rules:
                 else:
                     await self._api.send_message(chat_id, "No config found in DB.")
             except Exception as e:
-                await self._api.send_message(chat_id, f"Reload failed: {e}")
+                await self._api.send_message(chat_id, _user_error("Reload fehlgeschlagen", e))
 
         elif cmd == "/mention":
             if not await is_allowed(self._conn, from_id):
@@ -1636,7 +1657,7 @@ Rules:
                     url = m.group().rstrip('.')
                     break
         except Exception as exc:
-            await self._api.send_message(chat_id, f"Auth start failed: {exc}")
+            await self._api.send_message(chat_id, _user_error("Authentifizierung konnte nicht gestartet werden", exc))
             return
         if not url:
             await self._api.send_message(chat_id, f"No auth URL found. Output: {buf[:300]}")
@@ -1866,7 +1887,7 @@ Rules:
                             await self._api.send_voice(task.chat_id, audio)
                         elif tts_error:
                             logger.warning("TTS failed for task=%d: %s", task.id, tts_error)
-                            await self._api.send_message(task.chat_id, f"🔇 TTS fehlgeschlagen: {tts_error}")
+                            await self._api.send_message(task.chat_id, _user_error("Sprachausgabe fehlgeschlagen"))
                     except Exception as e:
                         logger.warning("TTS failed for task=%d: %s", task.id, e)
                 else:
@@ -1913,7 +1934,7 @@ Rules:
                         await self._api.send_message(task.chat_id, "Email not sent: email configuration missing.")
                     except Exception as e:
                         logger.warning("Email send failed for task=%d: %s", task.id, e)
-                        await self._api.send_message(task.chat_id, f"Email send failed: {e}")
+                        await self._api.send_message(task.chat_id, _user_error("E-Mail konnte nicht gesendet werden", e))
 
             for method, endpoint, body in all_github:
                 is_write = method in ("POST", "PUT", "PATCH", "DELETE")
@@ -1948,7 +1969,7 @@ Rules:
                         await self._api.send_message(task.chat_id, "GitHub access failed: token missing.")
                     except Exception as e:
                         logger.warning("GitHub API failed for task=%d: %s", task.id, e)
-                        await self._api.send_message(task.chat_id, f"GitHub error: {e}")
+                        await self._api.send_message(task.chat_id, _user_error("GitHub-Aktion fehlgeschlagen", e))
 
             for title, entry_type, tags, content in all_kb_saves:
                 if title and content:
@@ -2065,7 +2086,7 @@ Rules:
                     logger.info("CONFIG_UPDATE: set '%s' by agent for task=%d", cfg_path, task.id)
                 except Exception as e:
                     logger.warning("CONFIG_UPDATE failed for task=%d: %s", task.id, e)
-                    await self._api.send_message(task.chat_id, f"⚠ CONFIG_UPDATE '{cfg_path}' failed: {e}")
+                    await self._api.send_message(task.chat_id, _user_error(f"Konfiguration '{cfg_path}' konnte nicht aktualisiert werden", e))
 
             for ident, minutes in all_mutes:
                 # Only an admin's request may mute; admins themselves are unmutable.
@@ -2469,7 +2490,7 @@ Rules:
                 except Exception:
                     pass
             logger.exception("Chat handler error for chat=%d", chat_id)
-            await self._api.send_message(chat_id, f"⚠️ Error: {exc}")
+            await self._api.send_message(chat_id, _user_error("Fehler bei der Verarbeitung", exc))
             self._chat_exception_count += 1
             if self._chat_exception_count >= 3:
                 self._chat_exception_count = 0
@@ -2783,7 +2804,7 @@ Rules:
             await self._api.send_message(chat_id, "Git clone timed out (120s).")
         except Exception as e:
             logger.warning("Git clone error for %s: %s", repo_url, e)
-            await self._api.send_message(chat_id, f"Git clone error: {e}")
+            await self._api.send_message(chat_id, _user_error("Repository konnte nicht geklont werden", e))
 
     async def _notify_admin_new_user(self, telegram_id: int, name: str | None) -> None:
         cfg = config.section("users")
