@@ -141,6 +141,11 @@
     .btn-approve { background: var(--green); color: #0d1117; }
     .btn-deny { background: var(--red); color: #fff; }
     .b-security { background: #3a1c3a; color: var(--purple); }
+    /* token sources */
+    .b-main_loop  { background: #1e1e1e; color: var(--muted); }
+    .b-coderteam  { background: #2a1c2a; color: var(--purple); }
+    .b-background { background: #1c2238; color: #58a6ff; }
+    .run-row:hover { background: #1c2128; }
 
     /* role select */
     select.role-sel { background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 3px 6px; border-radius: 4px; font-size: 12px; cursor: pointer; }
@@ -618,6 +623,17 @@
         <th>Class</th><th>Input</th><th>Output</th><th>Cache Read</th><th>Cache Write</th><th>Calls</th><th>Total</th><th>Cost (USD)</th>
       </tr></thead>
       <tbody id="tokenBody"><tr><td colspan="8" class="empty">No data</td></tr></tbody>
+    </table>
+  </div>
+  <div class="card" id="tokenRunsCard" style="margin-top:16px">
+    <div style="padding:10px 12px 0;font-size:.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">
+      Sub-Agent Runs <span style="text-transform:none">(coderteam / background — click a row to expand individual API calls)</span>
+    </div>
+    <table>
+      <thead><tr>
+        <th>Source</th><th>Run</th><th>Task</th><th>Model(s)</th><th>Calls</th><th>Input</th><th>Output</th><th>Total</th><th>Cost (USD)</th>
+      </tr></thead>
+      <tbody id="tokenRunsBody"><tr><td colspan="9" class="empty">No sub-agent runs</td></tr></tbody>
     </table>
   </div>
 </div>
@@ -1499,6 +1515,7 @@ async function loadTokens() {
   if (!classes.length) {
     b.innerHTML = '<tr><td colspan="8" class="empty">No token data for this period</td></tr>';
     drawTokenChart([]);
+    renderTokenRuns([]);
     return;
   }
 
@@ -1533,6 +1550,76 @@ async function loadTokens() {
   drawTokenChart(data.timeseries || []);
   drawCostChart(data.timeseries || [], data.total_cost_usd || 0);
   drawUsageChart(data.cli_usage || [], data.is_cli || false);
+  renderTokenRuns(data.runs || []);
+}
+
+function _tsShort(ts) {
+  if (!ts) return '–';
+  const d = new Date(ts * 1000);
+  return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function renderTokenRuns(runs) {
+  const body = document.getElementById('tokenRunsBody');
+  if (!body) return;
+  if (!runs.length) {
+    body.innerHTML = '<tr><td colspan="9" class="empty">No sub-agent runs for this period</td></tr>';
+    return;
+  }
+  body.innerHTML = runs.map(r => {
+    const rid = r.run_id || '';
+    const models = (r.models || []).join(', ') || '–';
+    const task = r.task_id != null ? '#' + r.task_id : '–';
+    return `<tr class="run-row" style="cursor:pointer" onclick="toggleRun(this, '${encodeURIComponent(rid)}')">
+      <td><span class="badge b-${r.source}">${r.source}</span></td>
+      <td class="mono"><span class="run-caret">▸</span> ${rid}</td>
+      <td class="mono">${task}</td>
+      <td class="mono" style="font-size:.8em">${models}</td>
+      <td class="mono">${r.calls || 0}</td>
+      <td class="mono">${fmt(r.input)}</td>
+      <td class="mono">${fmt(r.output)}</td>
+      <td class="mono" style="color:var(--accent)">${fmt(r.total)}</td>
+      <td class="mono" style="color:var(--yellow)">${r.cost_usd ? '$' + r.cost_usd.toFixed(4) : '–'}</td>
+    </tr>
+    <tr class="run-detail" data-run="${rid}" style="display:none"><td colspan="9" style="padding:0"></td></tr>`;
+  }).join('');
+}
+
+async function toggleRun(rowEl, ridEnc) {
+  const rid = decodeURIComponent(ridEnc);
+  const detail = rowEl.nextElementSibling;
+  const caret = rowEl.querySelector('.run-caret');
+  if (!detail) return;
+  if (detail.style.display !== 'none') {
+    detail.style.display = 'none';
+    if (caret) caret.textContent = '▸';
+    return;
+  }
+  if (caret) caret.textContent = '▾';
+  detail.style.display = '';
+  const cell = detail.firstElementChild;
+  cell.innerHTML = '<div style="padding:8px 12px;color:var(--muted)">Loading…</div>';
+  const data = await api('/api/tokens/run?run_id=' + encodeURIComponent(rid));
+  const calls = (data && data.calls) || [];
+  if (!calls.length) {
+    cell.innerHTML = '<div style="padding:8px 12px;color:var(--muted)">No calls</div>';
+    return;
+  }
+  cell.innerHTML = `<table style="margin:0;background:#0d1117">
+    <thead><tr style="font-size:.7rem;color:var(--muted)">
+      <th>Time</th><th>Agent</th><th>Class</th><th>Model</th><th>Input</th><th>Output</th><th>Total</th><th>Cost</th>
+    </tr></thead>
+    <tbody>${calls.map(c => `<tr>
+      <td class="mono" style="font-size:.8em">${_tsShort(c.timestamp)}</td>
+      <td class="mono" style="font-size:.8em">${c.agent_id || '–'}</td>
+      <td class="mono" style="font-size:.8em">${c.agent_class || '–'}</td>
+      <td class="mono" style="font-size:.8em">${c.model || '–'}</td>
+      <td class="mono">${fmt(c.input)}</td>
+      <td class="mono">${fmt(c.output)}</td>
+      <td class="mono" style="color:var(--accent)">${fmt(c.total)}</td>
+      <td class="mono" style="color:var(--yellow)">${c.cost_usd ? '$' + c.cost_usd.toFixed(4) : '–'}</td>
+    </tr>`).join('')}</tbody>
+  </table>`;
 }
 
 function _setupCanvas(canvas, W, H) {
