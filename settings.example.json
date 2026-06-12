@@ -26,10 +26,16 @@
     "_comment_usage_poll": "Seconds between /usage polls (cli provider only). 0 = disabled.",
     "usage_poll_interval_seconds": 300
   },
+  "agent": {
+    "_comment": "Heartbeat-based task supervision. reply_timeout: hard cap for inline chat runs (then offload to board). idle_timeout: kill only when agent shows no life sign (LLM/tool activity) this long. max_runtime: hard cap for background board tasks.",
+    "reply_timeout_seconds": 300,
+    "idle_timeout_seconds": 120,
+    "max_runtime_seconds": 1800
+  },
   "agents": {
     "_comment_po_timeout": "Seconds the PO waits for child tasks to complete. Actual wall time per PO task = decompose_time + po_timeout_seconds + synthesize_time.",
+    "_comment_task_timeout": "Legacy: pre-heartbeat wall-clock kill. Still honored as max_runtime fallback when agent.max_runtime_seconds is absent. Prefer the 'agent' section.",
     "max_parallel": 4,
-    "task_timeout_seconds": 600,
     "po_timeout_seconds": 3600,
     "max_retries": 3,
     "model_tiers": {
