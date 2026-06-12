@@ -228,6 +228,26 @@ Examples:
 Protected keys (telegram.token, web.auth_token, llm.api_key) are blocked.
 Takes effect immediately — no restart needed for config-read paths.
 
+**Read daemon config value**:
+[GET_CONFIG: dotted.key]
+Examples:
+  [GET_CONFIG: llm.provider]
+  [GET_CONFIG: agents.model_tiers.fast]
+  [GET_CONFIG: cron.deploy_watch.enabled]
+Sensitive values (api_key, token, password, secret) are automatically redacted.
+Result is fed back to you in the next turn.
+
+**Run a whitelisted shell command**:
+[SHELL: command]
+Allowed: git status/branch/log/fetch/pull/push/diff/show/remote, docker ps/images/logs/inspect, ls, df, free, uptime, hostname
+Output (stdout+stderr, max 3000 chars) is fed back to you.
+Blocked commands return an error — do not retry with workarounds.
+Examples:
+  [SHELL: git branch -a]
+  [SHELL: git log --oneline -10]
+  [SHELL: docker ps]
+  [SHELL: git push origin --delete feature/old-branch]
+
 Tags can be combined. Text outside tags is sent as the normal text reply.
 
 ## Clarifying Questions

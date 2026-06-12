@@ -193,6 +193,59 @@ def _extract_unmute_tag(text: str) -> "tuple[str, str | None]":
     return clean, m.group(1).strip()
 
 
+def _extract_get_config_tag(text: str) -> "tuple[str, str | None]":
+    """Extract [GET_CONFIG: key]. Returns (clean_text, dot-notation key or None)."""
+    m = re.search(r'\[GET_CONFIG:\s*([^\]]+)\]', text)
+    if not m:
+        return text, None
+    clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
+    return clean, m.group(1).strip()
+
+
+def _extract_shell_tag(text: str) -> "tuple[str, str | None]":
+    """Extract [SHELL: command]. Returns (clean_text, command or None)."""
+    m = re.search(r'\[SHELL:\s*([^\]]+)\]', text, re.DOTALL)
+    if not m:
+        return text, None
+    clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
+    return clean, m.group(1).strip()
+
+
+_SHELL_WHITELIST = re.compile(
+    r'^('
+    r'git (status|branch|log|fetch|pull|push|diff|show|remote|tag|stash|clone|checkout|merge|rebase|reset|rev-parse|describe)(\s.*)?'
+    r'|docker (ps|images|logs|inspect|stats|version)(\s.*)?'
+    r'|ls(\s.*)?|pwd|whoami|uname(\s.*)?|df(\s.*)?|free(\s.*)?|uptime'
+    r'|cat /proc/version|hostname'
+    r')$',
+    re.IGNORECASE,
+)
+
+_SECRET_KEY_RE = re.compile(r'(key|token|password|secret|passwd|credential|auth)', re.IGNORECASE)
+
+
+def _redact_config_value(key: str, value: object) -> object:
+    if _SECRET_KEY_RE.search(key) and isinstance(value, str) and value:
+        return "<redacted>"
+    return value
+
+
+def _get_config_by_dotpath(key: str) -> str:
+    import json as _json
+    parts = key.split(".")
+    node: object = config.get()
+    for part in parts:
+        if not isinstance(node, dict):
+            return f"GET_CONFIG '{key}': path not found ('{part}' is not a dict)"
+        node = node.get(part)
+        if node is None:
+            return f"GET_CONFIG '{key}': not set"
+    display = _redact_config_value(parts[-1], node)
+    if isinstance(display, (dict, list)):
+        display = _json.dumps(display, ensure_ascii=False, indent=2)
+    return f"GET_CONFIG '{key}': {display}"
+
+
 def _extract_board_task_tag(text: str) -> "tuple[str, str | None]":
     """Extract [BOARD_TASK: task description]. Returns (clean_text, task_description or None)."""
     m = re.search(r'\[BOARD_TASK:\s*([^\]]+)\]', text, re.DOTALL)
@@ -2494,6 +2547,39 @@ Rules:
         if found_restart:
             status = await _restart_tor()
             tool_results.append(f"TOR_RESTART: {status}")
+
+        while True:
+            clean, cfg_key = _extract_get_config_tag(result)
+            if not cfg_key:
+                break
+            result = clean
+            tool_results.append(_get_config_by_dotpath(cfg_key))
+
+        while True:
+            clean, shell_cmd = _extract_shell_tag(result)
+            if not shell_cmd:
+                break
+            result = clean
+            extra_patterns = config.section("shell").get("whitelist", [])
+            allowed = _SHELL_WHITELIST.match(shell_cmd) or any(
+                re.match(p, shell_cmd) for p in extra_patterns
+            )
+            if not allowed:
+                tool_results.append(f"SHELL '{shell_cmd}': blocked — not in whitelist")
+                continue
+            try:
+                proc = await asyncio.create_subprocess_shell(
+                    shell_cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                )
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30.0)
+                out = stdout.decode(errors="replace")[:3000]
+                tool_results.append(f"SHELL '{shell_cmd}' (rc={proc.returncode}):\n{out}")
+            except asyncio.TimeoutError:
+                tool_results.append(f"SHELL '{shell_cmd}': timeout (30s)")
+            except Exception as e:
+                tool_results.append(f"SHELL '{shell_cmd}': error: {e}")
 
         # DEPLOY_STATUS / DEPLOY_TRIGGER tags
         if "[DEPLOY_STATUS]" in result:
