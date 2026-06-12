@@ -131,6 +131,8 @@ CREATE TABLE IF NOT EXISTS knowledge (
     source TEXT,
     user_id INTEGER,
     visibility INTEGER NOT NULL DEFAULT 0,
+    origin_chat_id INTEGER,
+    quarantined INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );
@@ -295,6 +297,10 @@ _MIGRATIONS = [
     # Admins are always effective level 0 (effective_trust maps role='admin' → 0);
     # backfill the column too so Web UI / raw queries show the truth. Idempotent.
     "UPDATE users SET trust_level = 0 WHERE role = 'admin' AND trust_level != 0",
+    # Write-side trust gating: knowledge.origin_chat_id (woher kam der Eintrag),
+    # knowledge.quarantined (1 = aus nicht vertrautem Chat, wartet auf Admin-Freigabe).
+    "ALTER TABLE knowledge ADD COLUMN origin_chat_id INTEGER",
+    "ALTER TABLE knowledge ADD COLUMN quarantined INTEGER NOT NULL DEFAULT 0",
 ]
 
 

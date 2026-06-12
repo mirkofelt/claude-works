@@ -604,13 +604,14 @@ async def get_knowledge(q: str | None = None, type: str | None = None, page: int
     page_size = max(1, min(page_size, 200))
     page = max(1, page)
     conn = await _get_conn()
+    # Admin-UI: quarantänierte Einträge mit anzeigen (markiert via 'quarantined'-Flag im JSON)
     if q:
-        items = await knowledge_store.search(conn, q, limit=page_size)
+        items = await knowledge_store.search(conn, q, limit=page_size, include_quarantined=True)
         total = len(items)
     else:
-        total = await knowledge_store.count(conn, type=type)
+        total = await knowledge_store.count(conn, type=type, include_quarantined=True)
         offset = (page - 1) * page_size
-        items = await knowledge_store.list_all(conn, type=type, limit=page_size, offset=offset)
+        items = await knowledge_store.list_all(conn, type=type, limit=page_size, offset=offset, include_quarantined=True)
     await conn.close()
     pages = max(1, (total + page_size - 1) // page_size)
     return {"items": items, "total": total, "page": page, "page_size": page_size, "pages": pages}

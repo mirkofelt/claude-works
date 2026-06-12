@@ -96,6 +96,15 @@ def _extract_map_tag(text: str) -> "tuple[str, str | None]":
     return clean, m.group(1).strip()
 
 
+def _kb_write_allowed(trust: int) -> bool:
+    """Schreibzugriff auf die KB nur für Owner (0) und Vertraut (1).
+
+    Alles darüber (Kontakt/Unbekannt, insbesondere Gruppen mit nicht
+    vertrauten Mitgliedern) darf nicht direkt schreiben — Schutz gegen
+    Prompt-Injection aus fremden Chats."""
+    return trust <= 1
+
+
 def _parse_buttons(text: str) -> "tuple[str, list[list[dict]] | None]":
     """Extract [BUTTONS: ...] tag from text. Returns (clean_text, inline_keyboard or None).
     Format: [BUTTONS: label1|data1, label2|data2, ...]
@@ -1375,6 +1384,39 @@ Rules:
                     await self._api.send_message(chat_id, reply)
             return
 
+        if data.startswith("kb_approve:") or data.startswith("kb_reject:"):
+            await self._api.answer_callback_query(callback_query_id)
+            if not await is_admin(self._conn, telegram_id):
+                logger.warning("KB quarantine callback from non-admin user=%d ignored", telegram_id)
+                return
+            try:
+                entry_id = int(data.split(":", 1)[1])
+            except ValueError:
+                return
+            conn = await db.get_conn()
+            if data.startswith("kb_approve:"):
+                ok = await knowledge_store.approve(conn, entry_id)
+                reply = f"✅ KB-Eintrag {entry_id} freigegeben." if ok else f"⚠ KB-Eintrag {entry_id} nicht gefunden."
+            else:
+                ok = await knowledge_store.delete(conn, entry_id)
+                reply = f"🗑 KB-Eintrag {entry_id} gelöscht." if ok else f"⚠ KB-Eintrag {entry_id} nicht gefunden."
+            await conn.close()
+            kb_orig_msg = cq.get("message") or {}
+            kb_orig_id = kb_orig_msg.get("message_id", 0)
+            kb_orig_text = kb_orig_msg.get("text", "")
+            if kb_orig_id and kb_orig_text:
+                try:
+                    await self._api.edit_message(
+                        chat_id, kb_orig_id,
+                        f"{kb_orig_text}\n\n→ {reply}",
+                        remove_keyboard=True,
+                    )
+                except Exception:
+                    await self._api.send_message(chat_id, reply)
+            else:
+                await self._api.send_message(chat_id, reply)
+            return
+
         await self._api.answer_callback_query(callback_query_id)
         # Resolve button label from the original message's inline keyboard
         orig_msg = cq.get("message") or {}
@@ -1953,14 +1995,33 @@ Rules:
                 if title and content:
                     try:
                         conn = await db.get_conn()
-                        entry_id = await knowledge_store.add(
-                            conn, title=title, content=content,
-                            type=entry_type, tags=tags, source="agent",
-                            user_id=task.user_id,
-                            visibility=trust_mod.VISIBILITY_PRIVATE,  # neue Einträge immer privat
-                        )
-                        await conn.close()
-                        logger.info("KB_SAVE: created entry %d by agent for task=%d", entry_id, task.id)
+                        # Trust-Gate (Schreibseite): nicht vertraute Chats → Quarantäne
+                        trust = await trust_mod.chat_trust(conn, task.chat_id, task.user_id)
+                        if _kb_write_allowed(trust):
+                            entry_id = await knowledge_store.add(
+                                conn, title=title, content=content,
+                                type=entry_type, tags=tags, source=f"chat:{task.chat_id}",
+                                user_id=task.user_id,
+                                visibility=trust_mod.VISIBILITY_PRIVATE,  # neue Einträge immer privat
+                                origin_chat_id=task.chat_id,
+                            )
+                            await conn.close()
+                            logger.info("KB_SAVE: created entry %d by agent for task=%d", entry_id, task.id)
+                        else:
+                            entry_id = await knowledge_store.add(
+                                conn, title=title, content=content,
+                                type=entry_type, tags=tags, source=f"chat:{task.chat_id}",
+                                user_id=task.user_id,
+                                visibility=trust,
+                                origin_chat_id=task.chat_id,
+                                quarantined=1,
+                            )
+                            await conn.close()
+                            logger.warning(
+                                "KB_SAVE: entry %d quarantined (trust=%d, chat=%d, task=%d) — pending admin review",
+                                entry_id, trust, task.chat_id, task.id,
+                            )
+                            await self._notify_admins_kb_quarantine(entry_id, title, task.chat_id, trust)
                     except Exception as e:
                         logger.warning("KB_SAVE failed for task=%d: %s", task.id, e)
 
@@ -1969,6 +2030,11 @@ Rules:
                     conn = await db.get_conn()
                     # Trust-Gate: Eintrag nur änderbar, wenn für diesen Chat sichtbar
                     trust = await trust_mod.chat_trust(conn, task.chat_id, task.user_id)
+                    # Schreibseite: Updates nur für Owner/Vertraut (trust <= 1)
+                    if not _kb_write_allowed(trust):
+                        await conn.close()
+                        logger.warning("KB_UPDATE blocked: trust=%d (entry=%d, task=%d)", trust, entry_id, task.id)
+                        continue
                     entry = await knowledge_store.get(conn, entry_id)
                     if entry is not None and not trust_mod.can_see({"trust_level": trust}, entry):
                         await conn.close()
@@ -2533,6 +2599,26 @@ Rules:
                 admin_id,
                 f"New user requesting access: {name or 'unknown'} (ID: {telegram_id})\n/auth {telegram_id}",
             )
+
+    async def _notify_admins_kb_quarantine(self, entry_id: int, title: str, chat_id: int, trust: int) -> None:
+        """Admin über quarantänierten KB-Eintrag informieren (Freigabe/Löschung per Button)."""
+        cfg = config.section("users")
+        tg_cfg = config.section("telegram")
+        admin_ids = cfg.get("admin_ids", tg_cfg.get("admin_chat_ids", []))
+        label = trust_mod.TRUST_LABELS.get(trust, str(trust))
+        msg = (
+            f"🧪 KB-Quarantäne: Eintrag '{title}' aus Chat {chat_id} "
+            f"(Trust {trust} – {label}). Freigeben oder löschen?"
+        )
+        keyboard = {"inline_keyboard": [[
+            {"text": "✅ Freigeben", "callback_data": f"kb_approve:{entry_id}"},
+            {"text": "🗑 Löschen", "callback_data": f"kb_reject:{entry_id}"},
+        ]]}
+        for admin_id in admin_ids:
+            try:
+                await self._api.send_message(admin_id, msg, reply_markup=keyboard)
+            except Exception as e:
+                logger.warning("KB quarantine notification to admin %d failed: %s", admin_id, e)
 
     async def _log_approval(self, *, action_types, content_preview, task_id, chat_id, decision, decided_by, requested_at, decided_at) -> None:
         import json as _json_al
