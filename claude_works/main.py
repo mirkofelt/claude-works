@@ -1000,17 +1000,7 @@ Rules:
         del self._pending_messages[chat_id]
         content = incoming.text or ""
         if incoming.voice_file_id:
-            try:
-                audio_bytes = await self._api.get_file(incoming.voice_file_id)
-                api_key = config.section("tts").get("elevenlabs_api_key", "")
-                transcript = await _transcribe_audio(api_key, audio_bytes)
-                if transcript:
-                    content = transcript + ("\n" + content if content else "")
-                else:
-                    content = "[Voice message — transcription unavailable]" + ("\n" + content if content else "")
-            except Exception as e:
-                logger.warning("Voice download/transcription error: %s", e)
-                content = "[Voice message — transcription failed]" + ("\n" + content if content else "")
+            content = await self._enrich_voice(incoming.voice_file_id, content)
 
         if not content.strip():
             # Photo/sticker/document without caption, or bare @mention.
@@ -1131,6 +1121,19 @@ Rules:
                     self._handle_chat(chat_id, telegram_id, content, incoming.telegram_message_id),
                     name=f"chat-{chat_id}",
                 )
+
+    async def _enrich_voice(self, voice_file_id: str, existing_text: str) -> str:
+        """Download and transcribe a voice message. Returns enriched content string."""
+        try:
+            audio_bytes = await self._api.get_file(voice_file_id)
+            api_key = config.section("tts").get("elevenlabs_api_key", "")
+            transcript = await _transcribe_audio(api_key, audio_bytes)
+            if transcript:
+                return transcript + ("\n" + existing_text if existing_text else "")
+            return "[Voice message — transcription unavailable]" + ("\n" + existing_text if existing_text else "")
+        except Exception as e:
+            logger.warning("Voice download/transcription error: %s", e)
+            return "[Voice message — transcription failed]" + ("\n" + existing_text if existing_text else "")
 
     async def _handle_reaction(self, reaction_data: dict) -> None:
         chat_id = reaction_data.get("chat", {}).get("id")
