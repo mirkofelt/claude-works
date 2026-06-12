@@ -927,6 +927,69 @@ async def save_config_endpoint(body: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+_GROUP_FIELDS = ("persona", "focus", "communication_style")
+
+
+def _parse_group_id(raw: Any) -> int:
+    """Validate a Telegram group chat_id. Must be a negative integer."""
+    try:
+        cid = int(raw)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="chat_id must be an integer")
+    if cid >= 0:
+        raise HTTPException(status_code=400, detail="chat_id must be negative (a group)")
+    return cid
+
+
+async def _save_groups(groups: dict) -> None:
+    cfg = dict(config.get())
+    cfg["groups"] = groups
+    conn = await db.init_config()
+    await _store_save_config(conn, cfg)
+    await conn.close()
+    config.set(cfg)
+
+
+@app.get("/api/groups", dependencies=[Depends(_verify_token)])
+async def list_groups():
+    return {"groups": config.section("groups")}
+
+
+@app.post("/api/groups", dependencies=[Depends(_verify_token)])
+async def upsert_group(body: dict):
+    cid = _parse_group_id(body.get("chat_id"))
+    entry = {}
+    for f in _GROUP_FIELDS:
+        v = body.get(f)
+        if v is not None and str(v).strip():
+            entry[f] = str(v).strip()
+    groups = dict(config.section("groups"))
+    groups[str(cid)] = entry
+    # Drop any stale int-keyed duplicate from legacy configs.
+    groups.pop(cid, None)
+    try:
+        await _save_groups(groups)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"ok": True, "chat_id": str(cid), "group": entry}
+
+
+@app.delete("/api/groups/{chat_id}", dependencies=[Depends(_verify_token)])
+async def delete_group(chat_id: str):
+    cid = _parse_group_id(chat_id)
+    groups = dict(config.section("groups"))
+    existed = groups.pop(str(cid), None)
+    if groups.pop(cid, None) is not None:
+        existed = True
+    if existed is None:
+        raise HTTPException(status_code=404, detail=f"Group {cid} not configured")
+    try:
+        await _save_groups(groups)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"ok": True, "deleted": str(cid)}
+
+
 @app.post("/api/config/reload", dependencies=[Depends(_verify_token)])
 async def reload_config():
     from ..config_store import load_config as _load_db_cfg
