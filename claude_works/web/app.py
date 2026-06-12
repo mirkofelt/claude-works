@@ -836,6 +836,111 @@ async def remove_from_allowlist(action_type: str):
     return {"ok": True}
 
 
+# ---------------------------------------------------------------------------
+# Write-approval whitelist (pre-approval rules). Stored in daemon_config under
+# the "whitelist" key. Changing the whitelist is itself meta-protected: every
+# POST/DELETE here ALWAYS requires a one-shot supervisor approval and can never
+# be self-whitelisted away.
+# ---------------------------------------------------------------------------
+
+_WHITELIST_TYPES = ("github_merge", "github_api_write", "send_email", "config_put")
+_WHITELIST_MATCHER_FIELDS = {
+    "github_merge": ("repo", "branch"),
+    "github_api_write": ("method", "endpoint"),
+    "send_email": ("recipient", "domain"),
+    "config_put": ("key", "key_prefix"),
+}
+
+
+def _whitelist_rules() -> list[dict]:
+    rules = config.section("whitelist").get("rules")
+    return [dict(r) for r in rules] if isinstance(rules, list) else []
+
+
+async def _save_whitelist_rules(rules: list[dict]) -> None:
+    cfg = dict(config.get())
+    wl = dict(cfg.get("whitelist") or {})
+    wl["rules"] = rules
+    cfg["whitelist"] = wl
+    conn = await db.init_config()
+    await _store_save_config(conn, cfg)
+    await conn.close()
+    config.set(cfg)
+
+
+def _validate_whitelist_rule(body: dict) -> dict:
+    rtype = body.get("type")
+    if rtype not in _WHITELIST_TYPES:
+        raise HTTPException(status_code=400, detail=f"type must be one of {_WHITELIST_TYPES}")
+    matcher_in = body.get("matcher")
+    if not isinstance(matcher_in, dict):
+        raise HTTPException(status_code=400, detail="matcher must be an object")
+    allowed = _WHITELIST_MATCHER_FIELDS[rtype]
+    matcher: dict = {}
+    for k, v in matcher_in.items():
+        if k not in allowed:
+            raise HTTPException(status_code=400, detail=f"unknown matcher field '{k}' for type '{rtype}'")
+        if v is None:
+            continue
+        s = str(v).strip()
+        if s:
+            matcher[k] = s
+    if not matcher:
+        # Empty matcher would whitelist EVERY write of this type — refuse.
+        raise HTTPException(status_code=400, detail=f"matcher must constrain at least one of {allowed}")
+    return {"type": rtype, "matcher": matcher, "enabled": bool(body.get("enabled", True))}
+
+
+async def _require_meta_approval(summary: str) -> None:
+    """Block until a supervisor approves a whitelist change. 403 on deny."""
+    if not _daemon_ref or not getattr(_daemon_ref, "_security", None):
+        raise HTTPException(status_code=503, detail="Security supervisor not available")
+    approved = await _daemon_ref._security.require_approval(
+        ["whitelist_change"], summary,
+    )
+    if not approved:
+        raise HTTPException(status_code=403, detail="Whitelist change denied by supervisor")
+
+
+@app.get("/api/whitelist", dependencies=[Depends(_verify_token)])
+async def list_whitelist():
+    return {"rules": _whitelist_rules()}
+
+
+@app.post("/api/whitelist", dependencies=[Depends(_verify_token)])
+async def add_whitelist_rule(body: dict):
+    rule = _validate_whitelist_rule(body)
+    await _require_meta_approval(
+        f"Whitelist ADD: {rule['type']} {rule['matcher']}"
+    )
+    import uuid
+    rule["id"] = uuid.uuid4().hex[:8]
+    rules = _whitelist_rules()
+    rules.append(rule)
+    try:
+        await _save_whitelist_rules(rules)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"ok": True, "rule": rule}
+
+
+@app.delete("/api/whitelist/{rule_id}", dependencies=[Depends(_verify_token)])
+async def delete_whitelist_rule(rule_id: str):
+    rules = _whitelist_rules()
+    target = next((r for r in rules if r.get("id") == rule_id), None)
+    if target is None:
+        raise HTTPException(status_code=404, detail=f"No whitelist rule '{rule_id}'")
+    await _require_meta_approval(
+        f"Whitelist DELETE: {target.get('type')} {target.get('matcher')}"
+    )
+    remaining = [r for r in rules if r.get("id") != rule_id]
+    try:
+        await _save_whitelist_rules(remaining)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"ok": True, "deleted": rule_id}
+
+
 @app.get("/api/kanban", dependencies=[Depends(_verify_token)])
 async def get_kanban(lane: str | None = None, limit: int = 100):
     conn = await _get_conn()
