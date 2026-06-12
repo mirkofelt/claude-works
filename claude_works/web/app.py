@@ -604,13 +604,14 @@ async def get_knowledge(q: str | None = None, type: str | None = None, page: int
     page_size = max(1, min(page_size, 200))
     page = max(1, page)
     conn = await _get_conn()
+    # Admin-UI: quarantänierte Einträge mit anzeigen (markiert via 'quarantined'-Flag im JSON)
     if q:
-        items = await knowledge_store.search(conn, q, limit=page_size)
+        items = await knowledge_store.search(conn, q, limit=page_size, include_quarantined=True)
         total = len(items)
     else:
-        total = await knowledge_store.count(conn, type=type)
+        total = await knowledge_store.count(conn, type=type, include_quarantined=True)
         offset = (page - 1) * page_size
-        items = await knowledge_store.list_all(conn, type=type, limit=page_size, offset=offset)
+        items = await knowledge_store.list_all(conn, type=type, limit=page_size, offset=offset, include_quarantined=True)
     await conn.close()
     pages = max(1, (total + page_size - 1) // page_size)
     return {"items": items, "total": total, "page": page, "page_size": page_size, "pages": pages}
@@ -835,6 +836,111 @@ async def remove_from_allowlist(action_type: str):
     return {"ok": True}
 
 
+# ---------------------------------------------------------------------------
+# Write-approval whitelist (pre-approval rules). Stored in daemon_config under
+# the "whitelist" key. Changing the whitelist is itself meta-protected: every
+# POST/DELETE here ALWAYS requires a one-shot supervisor approval and can never
+# be self-whitelisted away.
+# ---------------------------------------------------------------------------
+
+_WHITELIST_TYPES = ("github_merge", "github_api_write", "send_email", "config_put")
+_WHITELIST_MATCHER_FIELDS = {
+    "github_merge": ("repo", "branch"),
+    "github_api_write": ("method", "endpoint"),
+    "send_email": ("recipient", "domain"),
+    "config_put": ("key", "key_prefix"),
+}
+
+
+def _whitelist_rules() -> list[dict]:
+    rules = config.section("whitelist").get("rules")
+    return [dict(r) for r in rules] if isinstance(rules, list) else []
+
+
+async def _save_whitelist_rules(rules: list[dict]) -> None:
+    cfg = dict(config.get())
+    wl = dict(cfg.get("whitelist") or {})
+    wl["rules"] = rules
+    cfg["whitelist"] = wl
+    conn = await db.init_config()
+    await _store_save_config(conn, cfg)
+    await conn.close()
+    config.set(cfg)
+
+
+def _validate_whitelist_rule(body: dict) -> dict:
+    rtype = body.get("type")
+    if rtype not in _WHITELIST_TYPES:
+        raise HTTPException(status_code=400, detail=f"type must be one of {_WHITELIST_TYPES}")
+    matcher_in = body.get("matcher")
+    if not isinstance(matcher_in, dict):
+        raise HTTPException(status_code=400, detail="matcher must be an object")
+    allowed = _WHITELIST_MATCHER_FIELDS[rtype]
+    matcher: dict = {}
+    for k, v in matcher_in.items():
+        if k not in allowed:
+            raise HTTPException(status_code=400, detail=f"unknown matcher field '{k}' for type '{rtype}'")
+        if v is None:
+            continue
+        s = str(v).strip()
+        if s:
+            matcher[k] = s
+    if not matcher:
+        # Empty matcher would whitelist EVERY write of this type — refuse.
+        raise HTTPException(status_code=400, detail=f"matcher must constrain at least one of {allowed}")
+    return {"type": rtype, "matcher": matcher, "enabled": bool(body.get("enabled", True))}
+
+
+async def _require_meta_approval(summary: str) -> None:
+    """Block until a supervisor approves a whitelist change. 403 on deny."""
+    if not _daemon_ref or not getattr(_daemon_ref, "_security", None):
+        raise HTTPException(status_code=503, detail="Security supervisor not available")
+    approved = await _daemon_ref._security.require_approval(
+        ["whitelist_change"], summary,
+    )
+    if not approved:
+        raise HTTPException(status_code=403, detail="Whitelist change denied by supervisor")
+
+
+@app.get("/api/whitelist", dependencies=[Depends(_verify_token)])
+async def list_whitelist():
+    return {"rules": _whitelist_rules()}
+
+
+@app.post("/api/whitelist", dependencies=[Depends(_verify_token)])
+async def add_whitelist_rule(body: dict):
+    rule = _validate_whitelist_rule(body)
+    await _require_meta_approval(
+        f"Whitelist ADD: {rule['type']} {rule['matcher']}"
+    )
+    import uuid
+    rule["id"] = uuid.uuid4().hex[:8]
+    rules = _whitelist_rules()
+    rules.append(rule)
+    try:
+        await _save_whitelist_rules(rules)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"ok": True, "rule": rule}
+
+
+@app.delete("/api/whitelist/{rule_id}", dependencies=[Depends(_verify_token)])
+async def delete_whitelist_rule(rule_id: str):
+    rules = _whitelist_rules()
+    target = next((r for r in rules if r.get("id") == rule_id), None)
+    if target is None:
+        raise HTTPException(status_code=404, detail=f"No whitelist rule '{rule_id}'")
+    await _require_meta_approval(
+        f"Whitelist DELETE: {target.get('type')} {target.get('matcher')}"
+    )
+    remaining = [r for r in rules if r.get("id") != rule_id]
+    try:
+        await _save_whitelist_rules(remaining)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"ok": True, "deleted": rule_id}
+
+
 @app.get("/api/kanban", dependencies=[Depends(_verify_token)])
 async def get_kanban(lane: str | None = None, limit: int = 100):
     conn = await _get_conn()
@@ -987,6 +1093,44 @@ async def get_tokens(period: str = "24h"):
     ) as cur:
         ts_rows = await cur.fetchall()
 
+    # Per-source rollup (main_loop / coderteam / background).
+    async with conn.execute(
+        """SELECT source,
+                  SUM(input_tokens) as input_total,
+                  SUM(output_tokens) as output_total,
+                  SUM(cache_read_tokens) as cache_read_total,
+                  SUM(cache_write_tokens) as cache_write_total,
+                  SUM(cost_usd) as cost_total,
+                  COUNT(*) as calls,
+                  COUNT(DISTINCT run_id) as runs
+           FROM token_usage WHERE timestamp >= ?
+           GROUP BY source""",
+        (since,),
+    ) as cur:
+        source_rows = await cur.fetchall()
+
+    # Sub-agent runs: one row per logical run (run_id), so the Token tab can show
+    # each CodeTeam / background run and expand it to its individual API calls.
+    async with conn.execute(
+        """SELECT source, run_id, task_id,
+                  SUM(input_tokens) as input_total,
+                  SUM(output_tokens) as output_total,
+                  SUM(cache_read_tokens) as cache_read_total,
+                  SUM(cache_write_tokens) as cache_write_total,
+                  SUM(cost_usd) as cost_total,
+                  COUNT(*) as calls,
+                  MIN(timestamp) as first_ts,
+                  MAX(timestamp) as last_ts,
+                  GROUP_CONCAT(DISTINCT model) as models
+           FROM token_usage
+           WHERE timestamp >= ? AND source != 'main_loop' AND run_id IS NOT NULL
+           GROUP BY source, run_id
+           ORDER BY last_ts DESC
+           LIMIT 200""",
+        (since,),
+    ) as cur:
+        run_rows = await cur.fetchall()
+
     # Subscription limit snapshots (Claude Max plan: session + weekly percentages)
     llm_cfg = config.section("llm")
     billing_since = int(time.time()) - 2592000
@@ -1037,13 +1181,84 @@ async def get_tokens(period: str = "24h"):
         }
         for r in ts_rows
     ]
+    by_source = {
+        r["source"]: {
+            "input": r["input_total"] or 0,
+            "output": r["output_total"] or 0,
+            "cache_read": r["cache_read_total"] or 0,
+            "cache_write": r["cache_write_total"] or 0,
+            "cost_usd": round(r["cost_total"] or 0.0, 6),
+            "calls": r["calls"] or 0,
+            "runs": r["runs"] or 0,
+        }
+        for r in source_rows
+    }
+    runs = [
+        {
+            "source": r["source"],
+            "run_id": r["run_id"],
+            "task_id": r["task_id"],
+            "input": r["input_total"] or 0,
+            "output": r["output_total"] or 0,
+            "cache_read": r["cache_read_total"] or 0,
+            "cache_write": r["cache_write_total"] or 0,
+            "total": (r["input_total"] or 0) + (r["output_total"] or 0)
+            + (r["cache_read_total"] or 0) + (r["cache_write_total"] or 0),
+            "cost_usd": round(r["cost_total"] or 0.0, 6),
+            "calls": r["calls"] or 0,
+            "first_ts": r["first_ts"],
+            "last_ts": r["last_ts"],
+            "models": (r["models"] or "").split(",") if r["models"] else [],
+        }
+        for r in run_rows
+    ]
     return {
         "period": period,
         "stats": stats,
+        "by_source": by_source,
+        "runs": runs,
         "total_cost_usd": round(total_cost, 6),
         "timeseries": timeseries,
         "cli_usage": cli_usage_ts,
         "is_cli": True,  # always show usage chart; limit data unavailable for Max plan
+    }
+
+
+@app.get("/api/tokens/run", dependencies=[Depends(_verify_token)])
+async def get_token_run(run_id: str):
+    """Drill-down: every individual API call belonging to one run_id."""
+    conn = await _get_conn()
+    async with conn.execute(
+        """SELECT id, agent_id, agent_class, source, model, task_id,
+                  input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+                  cost_usd, timestamp
+           FROM token_usage WHERE run_id = ?
+           ORDER BY timestamp ASC, id ASC""",
+        (run_id,),
+    ) as cur:
+        rows = await cur.fetchall()
+    await conn.close()
+    return {
+        "run_id": run_id,
+        "calls": [
+            {
+                "id": r["id"],
+                "agent_id": r["agent_id"],
+                "agent_class": r["agent_class"],
+                "source": r["source"],
+                "model": r["model"],
+                "task_id": r["task_id"],
+                "input": r["input_tokens"] or 0,
+                "output": r["output_tokens"] or 0,
+                "cache_read": r["cache_read_tokens"] or 0,
+                "cache_write": r["cache_write_tokens"] or 0,
+                "total": (r["input_tokens"] or 0) + (r["output_tokens"] or 0)
+                + (r["cache_read_tokens"] or 0) + (r["cache_write_tokens"] or 0),
+                "cost_usd": round(r["cost_usd"] or 0.0, 6),
+                "timestamp": r["timestamp"],
+            }
+            for r in rows
+        ],
     }
 
 

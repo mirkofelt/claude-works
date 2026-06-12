@@ -141,6 +141,11 @@
     .btn-approve { background: var(--green); color: #0d1117; }
     .btn-deny { background: var(--red); color: #fff; }
     .b-security { background: #3a1c3a; color: var(--purple); }
+    /* token sources */
+    .b-main_loop  { background: #1e1e1e; color: var(--muted); }
+    .b-coderteam  { background: #2a1c2a; color: var(--purple); }
+    .b-background { background: #1c2238; color: #58a6ff; }
+    .run-row:hover { background: #1c2128; }
 
     /* role select */
     select.role-sel { background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 3px 6px; border-radius: 4px; font-size: 12px; cursor: pointer; }
@@ -375,6 +380,7 @@
   <button onclick="showTab('users')">Users</button>
   <button onclick="showTab('knowledge')">Knowledge</button>
   <button onclick="showTab('approvals')">Approvals</button>
+  <button onclick="showTab('whitelist')">Whitelist</button>
   <button onclick="showTab('kanban')">Kanban</button>
   <button onclick="showTab('tokens')">Tokens</button>
   <button onclick="showTab('logs')">Logs</button>
@@ -524,6 +530,38 @@
   </div>
 </div>
 
+<div class="section" id="tab-whitelist">
+  <div class="toolbar">
+    <button class="btn btn-ghost" onclick="loadWhitelist()">Refresh</button>
+  </div>
+  <div class="card" style="margin-bottom:16px">
+    <div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:10px">Add pre-approval rule</div>
+    <p class="sub" style="margin-top:0">Matching write ops skip security approval. Adding or removing a rule itself always requires a one-shot Telegram approval.</p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+      <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)">Type
+        <select id="wlType" onchange="renderWlFields()">
+          <option value="github_merge">github_merge</option>
+          <option value="github_api_write">github_api_write</option>
+          <option value="send_email">send_email</option>
+          <option value="config_put">config_put</option>
+        </select>
+      </label>
+      <div id="wlFields" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end"></div>
+      <button class="btn btn-approve" onclick="addWhitelistRule()">Add rule</button>
+    </div>
+    <div id="wlMsg" style="margin-top:8px;font-size:12px;color:var(--muted)"></div>
+  </div>
+  <div class="card">
+    <div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin-bottom:10px">Active rules</div>
+    <table>
+      <thead><tr>
+        <th>Type</th><th>Matcher</th><th>Enabled</th><th>ID</th><th>Actions</th>
+      </tr></thead>
+      <tbody id="wlBody"><tr><td colspan="5" class="empty">No rules</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
 <div class="section" id="tab-kanban">
   <div class="lane-counts" id="laneCounts"></div>
   <div class="toolbar">
@@ -618,6 +656,17 @@
         <th>Class</th><th>Input</th><th>Output</th><th>Cache Read</th><th>Cache Write</th><th>Calls</th><th>Total</th><th>Cost (USD)</th>
       </tr></thead>
       <tbody id="tokenBody"><tr><td colspan="8" class="empty">No data</td></tr></tbody>
+    </table>
+  </div>
+  <div class="card" id="tokenRunsCard" style="margin-top:16px">
+    <div style="padding:10px 12px 0;font-size:.75rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">
+      Sub-Agent Runs <span style="text-transform:none">(coderteam / background — click a row to expand individual API calls)</span>
+    </div>
+    <table>
+      <thead><tr>
+        <th>Source</th><th>Run</th><th>Task</th><th>Model(s)</th><th>Calls</th><th>Input</th><th>Output</th><th>Total</th><th>Cost (USD)</th>
+      </tr></thead>
+      <tbody id="tokenRunsBody"><tr><td colspan="9" class="empty">No sub-agent runs</td></tr></tbody>
     </table>
   </div>
 </div>
@@ -726,9 +775,12 @@
       <summary>Agents</summary>
       <div class="cfg-body">
         <div class="field"><label>Max Parallel</label><input type="number" id="s_ag_parallel"></div>
-        <div class="field"><label>Task Timeout (s)</label><input type="number" id="s_ag_task_timeout"></div>
+        <div class="field"><label>Task Timeout (s, legacy)</label><input type="number" id="s_ag_task_timeout"></div>
         <div class="field"><label>PO Timeout (s)</label><input type="number" id="s_ag_po_timeout"></div>
         <div class="field"><label>Max Retries</label><input type="number" id="s_ag_retries"></div>
+        <div class="field"><label>Reply Timeout (s)</label><input type="number" id="s_agt_reply" placeholder="300"></div>
+        <div class="field"><label>Idle/Heartbeat Timeout (s)</label><input type="number" id="s_agt_idle" placeholder="120"></div>
+        <div class="field"><label>Max Runtime (s)</label><input type="number" id="s_agt_max_runtime" placeholder="1800"></div>
         <div class="field wide"><label>Model Tiers (JSON)</label><textarea id="s_ag_tiers" rows="3"></textarea><div class="hint">{"fast":"claude-haiku-4-5-20251001", "balanced":"claude-sonnet-4-6", "best":"claude-opus-4-8"}</div></div>
         <div class="field wide"><label>Per-Agent Models (JSON)</label><textarea id="s_ag_models" rows="6"></textarea></div>
       </div>
@@ -916,7 +968,7 @@ let selectedTaskId = null;
 let logPollTimer = null;
 let logLastTs = 0;
 
-const TABS = ['messages', 'users', 'knowledge', 'approvals', 'kanban', 'tokens', 'logs', 'chat', 'settings'];
+const TABS = ['messages', 'users', 'knowledge', 'approvals', 'whitelist', 'kanban', 'tokens', 'logs', 'chat', 'settings'];
 
 const LANE_COLORS = {
   backlog: '#8b949e', assigned: '#58a6ff', in_progress: '#d29922',
@@ -1200,6 +1252,7 @@ function loadTab(t) {
   else if (t === 'users') loadUsers();
   else if (t === 'knowledge') loadKnowledge();
   else if (t === 'approvals') loadApprovals();
+  else if (t === 'whitelist') loadWhitelist();
   else if (t === 'kanban') loadKanban();
   else if (t === 'tokens') loadTokens();
   else if (t === 'logs') loadLogs();
@@ -1371,6 +1424,64 @@ async function decideApproval(id, action) {
   loadApprovals();
 }
 
+// --- Whitelist (pre-approval rules) ---------------------------------------
+const WL_FIELDS = {
+  github_merge:     [{k:'repo', ph:'owner/repo'}, {k:'branch', ph:'feature/*'}],
+  github_api_write: [{k:'method', ph:'POST or *'}, {k:'endpoint', ph:'/repos/owner/repo/*'}],
+  send_email:       [{k:'domain', ph:'example.com'}, {k:'recipient', ph:'(optional) exact addr'}],
+  config_put:       [{k:'key_prefix', ph:'tts.'}],
+};
+
+function renderWlFields() {
+  const type = document.getElementById('wlType').value;
+  const fields = WL_FIELDS[type] || [];
+  document.getElementById('wlFields').innerHTML = fields.map(f => `
+    <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)">${f.k}
+      <input id="wl_${f.k}" placeholder="${f.ph}" style="min-width:160px">
+    </label>`).join('');
+}
+
+async function loadWhitelist() {
+  renderWlFields();
+  const data = await api('/api/whitelist');
+  const rules = data?.rules || [];
+  const b = document.getElementById('wlBody');
+  if (!rules.length) { b.innerHTML = '<tr><td colspan="5" class="empty">No rules</td></tr>'; return; }
+  b.innerHTML = rules.map(r => `
+    <tr>
+      <td><span class="badge b-security">${esc(r.type)}</span></td>
+      <td class="mono">${esc(JSON.stringify(r.matcher || {}))}</td>
+      <td>${r.enabled === false ? '✗' : '✓'}</td>
+      <td class="mono" style="color:var(--muted);font-size:12px">${esc(r.id || '')}</td>
+      <td style="padding:6px 12px">
+        <button class="btn btn-deny" onclick="deleteWhitelistRule('${esc(r.id)}')">Delete</button>
+      </td>
+    </tr>`).join('');
+}
+
+async function addWhitelistRule() {
+  const type = document.getElementById('wlType').value;
+  const matcher = {};
+  for (const f of (WL_FIELDS[type] || [])) {
+    const v = (document.getElementById('wl_' + f.k)?.value || '').trim();
+    if (v) matcher[f.k] = v;
+  }
+  const msg = document.getElementById('wlMsg');
+  msg.textContent = 'Waiting for Telegram approval…';
+  const res = await api('/api/whitelist', { method: 'POST', body: { type, matcher } });
+  if (res?.ok) { msg.textContent = 'Rule added.'; loadWhitelist(); }
+  else { msg.textContent = 'Rule not added (denied, timed out, or invalid).'; }
+}
+
+async function deleteWhitelistRule(id) {
+  if (!confirm('Delete rule ' + id + '? Requires Telegram approval.')) return;
+  const msg = document.getElementById('wlMsg');
+  msg.textContent = 'Waiting for Telegram approval…';
+  const res = await api('/api/whitelist/' + id, { method: 'DELETE' });
+  if (res?.ok) { msg.textContent = 'Rule deleted.'; loadWhitelist(); }
+  else { msg.textContent = 'Rule not deleted (denied or timed out).'; }
+}
+
 async function cancelTask(id, e) {
   if (e) e.stopPropagation();
   if (!confirm('Task #' + id + ' abbrechen?')) return;
@@ -1496,6 +1607,7 @@ async function loadTokens() {
   if (!classes.length) {
     b.innerHTML = '<tr><td colspan="8" class="empty">No token data for this period</td></tr>';
     drawTokenChart([]);
+    renderTokenRuns([]);
     return;
   }
 
@@ -1530,6 +1642,76 @@ async function loadTokens() {
   drawTokenChart(data.timeseries || []);
   drawCostChart(data.timeseries || [], data.total_cost_usd || 0);
   drawUsageChart(data.cli_usage || [], data.is_cli || false);
+  renderTokenRuns(data.runs || []);
+}
+
+function _tsShort(ts) {
+  if (!ts) return '–';
+  const d = new Date(ts * 1000);
+  return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function renderTokenRuns(runs) {
+  const body = document.getElementById('tokenRunsBody');
+  if (!body) return;
+  if (!runs.length) {
+    body.innerHTML = '<tr><td colspan="9" class="empty">No sub-agent runs for this period</td></tr>';
+    return;
+  }
+  body.innerHTML = runs.map(r => {
+    const rid = r.run_id || '';
+    const models = (r.models || []).join(', ') || '–';
+    const task = r.task_id != null ? '#' + r.task_id : '–';
+    return `<tr class="run-row" style="cursor:pointer" onclick="toggleRun(this, '${encodeURIComponent(rid)}')">
+      <td><span class="badge b-${r.source}">${r.source}</span></td>
+      <td class="mono"><span class="run-caret">▸</span> ${rid}</td>
+      <td class="mono">${task}</td>
+      <td class="mono" style="font-size:.8em">${models}</td>
+      <td class="mono">${r.calls || 0}</td>
+      <td class="mono">${fmt(r.input)}</td>
+      <td class="mono">${fmt(r.output)}</td>
+      <td class="mono" style="color:var(--accent)">${fmt(r.total)}</td>
+      <td class="mono" style="color:var(--yellow)">${r.cost_usd ? '$' + r.cost_usd.toFixed(4) : '–'}</td>
+    </tr>
+    <tr class="run-detail" data-run="${rid}" style="display:none"><td colspan="9" style="padding:0"></td></tr>`;
+  }).join('');
+}
+
+async function toggleRun(rowEl, ridEnc) {
+  const rid = decodeURIComponent(ridEnc);
+  const detail = rowEl.nextElementSibling;
+  const caret = rowEl.querySelector('.run-caret');
+  if (!detail) return;
+  if (detail.style.display !== 'none') {
+    detail.style.display = 'none';
+    if (caret) caret.textContent = '▸';
+    return;
+  }
+  if (caret) caret.textContent = '▾';
+  detail.style.display = '';
+  const cell = detail.firstElementChild;
+  cell.innerHTML = '<div style="padding:8px 12px;color:var(--muted)">Loading…</div>';
+  const data = await api('/api/tokens/run?run_id=' + encodeURIComponent(rid));
+  const calls = (data && data.calls) || [];
+  if (!calls.length) {
+    cell.innerHTML = '<div style="padding:8px 12px;color:var(--muted)">No calls</div>';
+    return;
+  }
+  cell.innerHTML = `<table style="margin:0;background:#0d1117">
+    <thead><tr style="font-size:.7rem;color:var(--muted)">
+      <th>Time</th><th>Agent</th><th>Class</th><th>Model</th><th>Input</th><th>Output</th><th>Total</th><th>Cost</th>
+    </tr></thead>
+    <tbody>${calls.map(c => `<tr>
+      <td class="mono" style="font-size:.8em">${_tsShort(c.timestamp)}</td>
+      <td class="mono" style="font-size:.8em">${c.agent_id || '–'}</td>
+      <td class="mono" style="font-size:.8em">${c.agent_class || '–'}</td>
+      <td class="mono" style="font-size:.8em">${c.model || '–'}</td>
+      <td class="mono">${fmt(c.input)}</td>
+      <td class="mono">${fmt(c.output)}</td>
+      <td class="mono" style="color:var(--accent)">${fmt(c.total)}</td>
+      <td class="mono" style="color:var(--yellow)">${c.cost_usd ? '$' + c.cost_usd.toFixed(4) : '–'}</td>
+    </tr>`).join('')}</tbody>
+  </table>`;
 }
 
 function _setupCanvas(canvas, W, H) {
@@ -2444,11 +2626,14 @@ async function testDeployGuard() {
   btn.disabled = false; btn.textContent = 'Test Connection';
 }
 
+let _rawConfig = {};  // last loaded config — preserved on save so unknown sections (cron, agent extras, …) survive
+
 async function loadSettings() {
   const msg = document.getElementById('settingsMsg');
   try {
     const data = await api('/api/config');
     const c = data.config;
+    _rawConfig = c;
     const tg = c.telegram || {}, llm = c.llm || {}, ag = c.agents || {};
     const web = c.web || {}, sec = c.security || {}, sp = c.spending || {};
     const tts = c.tts || {}, em = c.email || {}, gh = c.github || {};
@@ -2462,6 +2647,9 @@ async function loadSettings() {
     _set('s_llm_ctx_warn', llm.context_warn_threshold); _set('s_llm_ctx_compact', llm.context_compact_threshold);
     _set('s_ag_parallel', ag.max_parallel); _set('s_ag_task_timeout', ag.task_timeout_seconds);
     _set('s_ag_po_timeout', ag.po_timeout_seconds); _set('s_ag_retries', ag.max_retries);
+    const agt = c.agent || {};
+    _set('s_agt_reply', agt.reply_timeout_seconds); _set('s_agt_idle', agt.idle_timeout_seconds);
+    _set('s_agt_max_runtime', agt.max_runtime_seconds);
     _setj('s_ag_tiers', ag.model_tiers); _setj('s_ag_models', ag.models);
     _set('s_web_token', web.auth_token); _set('s_web_port', web.port); _set('s_web_host', web.host);
     _setb('s_web_proxy', web.trusted_proxy);
@@ -2554,7 +2742,13 @@ async function saveSettings() {
     const reactionMap = reactionMapRead(), mcpServers = _sj('s_mcp_servers');
     const backoff = _sj('s_sv_backoff');
     const adminIds = _sa('s_tg_admin_ids');
+    const agentTimeouts = {};
+    if (_sn('s_agt_reply') !== null) agentTimeouts.reply_timeout_seconds = _sn('s_agt_reply');
+    if (_sn('s_agt_idle') !== null) agentTimeouts.idle_timeout_seconds = _sn('s_agt_idle');
+    if (_sn('s_agt_max_runtime') !== null) agentTimeouts.max_runtime_seconds = _sn('s_agt_max_runtime');
     cfg = {
+      ..._rawConfig,  // preserve sections this form doesn't know (cron, …)
+      agent: agentTimeouts,
       telegram: { token: _sv('s_tg_token'), admin_chat_ids: adminIds, allowed_updates: ['message','edited_message','message_reaction'], reaction_map: reactionMap || {} },
       llm: { provider: _sv('s_llm_provider'), api_key: _sv('s_llm_api_key'), cli_binary: _sv('s_llm_cli_binary'), model: _sv('s_llm_model'), max_tokens: _sn('s_llm_max_tokens'), max_context_tokens: _sn('s_llm_max_ctx'), context_warn_threshold: _sn('s_llm_ctx_warn'), context_compact_threshold: _sn('s_llm_ctx_compact') },
       agents: { max_parallel: _sn('s_ag_parallel'), task_timeout_seconds: _sn('s_ag_task_timeout'), po_timeout_seconds: _sn('s_ag_po_timeout'), max_retries: _sn('s_ag_retries'), model_tiers: tiers, models: models },
