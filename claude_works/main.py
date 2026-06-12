@@ -24,17 +24,19 @@ from .telegram.poller import TelegramPoller
 from .telegram.reactions import resolve_action, extract_reaction_emoji
 from .tasks.models import IncomingMessage
 from .tasks.bundler import should_bundle, merge_content
-from .kanban.board import KanbanBoard
+from .kanban.board import KanbanBoard, build_offload_content, is_offloaded
 from .kanban.models import AgentClass, KanbanTask
 from .telemetry.tokens import TokenTracker
 from .knowledge import store as knowledge_store
 from .agents.coordinator import AgentCoordinator
+from .agents.heartbeat import run_with_heartbeat
 from .llm.errors import RateLimitError
 from .agents.mechanic import MechanicAgent, MechanicContext
 from .agents.specialist.generalist import GeneralistAgent
 from .auth.users import upsert_user, is_allowed, is_admin, set_role, set_trust
 from .auth import trust as trust_mod
 from .security import SecuritySupervisor
+from .security import whitelist as _whitelist
 from .web.app import app as web_app, set_daemon as _set_web_daemon, set_setup_token as _set_web_setup_token
 from .logging_setup import setup as _setup_logging, uvicorn_log_config as _uvicorn_log_config
 
@@ -78,6 +80,53 @@ def _strip_echoed_tool_results(text: str) -> str:
     return _ECHOED_TOOL_RE.sub("[tool output stripped]", text).strip()
 
 
+def _strip_echoed_payloads(text: str, payloads: "list[str]") -> str:
+    """Strip tool-output / fetched content the agent echoed verbatim into its reply.
+
+    Content-based, not format-based: we know the exact payloads handed to the agent
+    this turn (GitHub JSON, web-fetch text, KB results, …), so we remove their literal
+    occurrences. This catches raw JSON, HTML and web text that the GitHub-only
+    `_ECHOED_TOOL_RE` regex never matched. The regex still runs afterwards as a
+    backstop for the no-payloads-tracked case.
+    """
+    if not text or not payloads:
+        return _strip_echoed_tool_results(text)
+
+    echo_lines: set[str] = set()       # distinctive long lines
+    echo_lines_short: set[str] = set()  # short structural/JSON lines (only stripped if they look like data)
+    for p in payloads:
+        block = p.strip()
+        # Whole-payload echo: drop it outright before line filtering.
+        if len(block) >= _MIN_ECHO_LINE_CHARS and block in text:
+            text = text.replace(block, "")
+        for ln in p.splitlines():
+            s = ln.strip()
+            if not s:
+                continue
+            if len(s) >= _MIN_ECHO_LINE_CHARS:
+                echo_lines.add(s)
+            else:
+                echo_lines_short.add(s)
+
+    def _is_echo(line: str) -> bool:
+        s = line.strip()
+        if s in echo_lines:
+            return True
+        # Short lines only count as echoes when they're clearly serialized data
+        # (JSON braces/brackets or "key": value pairs) — never natural prose.
+        if s in echo_lines_short and _STRUCTURAL_LINE_RE.match(s):
+            return True
+        return False
+
+    if echo_lines or echo_lines_short:
+        kept = [ln for ln in text.splitlines() if not _is_echo(ln)]
+        text = "\n".join(kept)
+
+    # Collapse blank runs left by removed lines, then apply the regex backstop.
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return _strip_echoed_tool_results(text)
+
+
 def _extract_voice_tag(text: str) -> "tuple[str, str | None]":
     """Extract [VOICE: text] tag. Returns (clean_text, tts_text or None)."""
     m = re.search(r'\[VOICE:\s*([^\]]+)\]', text, re.DOTALL)
@@ -94,6 +143,15 @@ def _extract_map_tag(text: str) -> "tuple[str, str | None]":
         return text, None
     clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
     return clean, m.group(1).strip()
+
+
+def _kb_write_allowed(trust: int) -> bool:
+    """Schreibzugriff auf die KB nur für Owner (0) und Vertraut (1).
+
+    Alles darüber (Kontakt/Unbekannt, insbesondere Gruppen mit nicht
+    vertrauten Mitgliedern) darf nicht direkt schreiben — Schutz gegen
+    Prompt-Injection aus fremden Chats."""
+    return trust <= 1
 
 
 def _parse_buttons(text: str) -> "tuple[str, list[list[dict]] | None]":
@@ -344,10 +402,23 @@ def _extract_plugin_config_set_tag(text: str) -> "tuple[str, tuple[str, dict] | 
     return clean, (plugin_name, cfg_dict)
 
 
+_LONG_RUN_NOTICE_SECONDS = 60.0  # one-shot "still working" notice for inline chat runs
+
 _PLUGINS_DIR = os.environ.get("PLUGINS_DIR", "/data/plugins")
 _URL_RE = re.compile(r'https?://[^\s<>"\']+')
 _MAX_FETCH_URLS = 3
 _MAX_FETCH_CHARS = 4000
+# Hard cap on any single tool-output block injected back into the agent prompt.
+# Keep in sync with _MAX_FETCH_CHARS so no source can blow past the context budget.
+_MAX_TOOL_OUTPUT_CHARS = 4000
+# Shortest verbatim line treated as an echoed tool-output line (below this we keep it,
+# to avoid nuking legitimate short prose that happens to match).
+_MIN_ECHO_LINE_CHARS = 24
+# Short echoed lines are only stripped when they look like serialized data, never prose:
+# JSON braces/brackets (`{`, `},`, `[`) or `"key": value` pairs.
+_STRUCTURAL_LINE_RE = re.compile(r'^(?:[{}\[\],]+|"[\w-]+":.*)$')
+# Cap on retained payloads per chat so the echo-filter accumulator can't grow unbounded.
+_MAX_TRACKED_PAYLOADS = 24
 _TOR_SOCKS_DEFAULT = "socks5://127.0.0.1:9050"
 
 
@@ -481,6 +552,13 @@ class Daemon:
         self._pending_direct_fetches: dict[str, dict] = {}
         self._pending_reauth: dict[int, asyncio.subprocess.Process] = {}  # chat_id → proc
         self._chat_agents: dict[int, GeneralistAgent] = {}  # chat_id → persistent chat agent
+        # chat_id → fingerprint of the config-derived inputs baked into that agent's
+        # system prompt. On config reload we drop only agents whose fingerprint changed,
+        # instead of nuking every warm conversation project-wide.
+        self._chat_agent_fingerprints: dict[int, tuple] = {}
+        # chat_id → tool-output / fetched payloads handed to the agent this turn.
+        # Used by _strip_echoed_payloads to remove verbatim echoes before sending.
+        self._recent_tool_payloads: dict[int, list[str]] = {}
         self._bot_username: str = ""  # loaded at startup via getMe
         self._bot_id: int = 0  # loaded at startup via getMe
         self._mention_only_chats: set[int] = set()  # chat_ids where bot only responds to @mention
@@ -1243,6 +1321,7 @@ Rules:
                 page_text = await _fetch_url_content(url, proxy=tor_proxy)
                 if page_text is not None:
                     fetched_sections.append(f"[Content of {url}]\n{page_text}")
+                    self._track_payloads(chat_id, [page_text])
                     logger.debug("Fetched URL via Tor: %s (%d chars)", url, len(page_text))
                 else:
                     urls_blocked.append(url)
@@ -1388,6 +1467,7 @@ Rules:
                     page_text = await _fetch_url_content(url)  # direct, no proxy
                     if page_text:
                         content = content + f"\n\n---\n\n[Content of {url}]\n{page_text}"
+                        self._track_payloads(chat_id, [page_text])
                         logger.info("Direct URL fetch approved by user: %s", url)
             task = KanbanTask(
                 id=None,
@@ -1436,6 +1516,39 @@ Rules:
                         await self._api.send_message(chat_id, reply)
                 else:
                     await self._api.send_message(chat_id, reply)
+            return
+
+        if data.startswith("kb_approve:") or data.startswith("kb_reject:"):
+            await self._api.answer_callback_query(callback_query_id)
+            if not await is_admin(self._conn, telegram_id):
+                logger.warning("KB quarantine callback from non-admin user=%d ignored", telegram_id)
+                return
+            try:
+                entry_id = int(data.split(":", 1)[1])
+            except ValueError:
+                return
+            conn = await db.get_conn()
+            if data.startswith("kb_approve:"):
+                ok = await knowledge_store.approve(conn, entry_id)
+                reply = f"✅ KB-Eintrag {entry_id} freigegeben." if ok else f"⚠ KB-Eintrag {entry_id} nicht gefunden."
+            else:
+                ok = await knowledge_store.delete(conn, entry_id)
+                reply = f"🗑 KB-Eintrag {entry_id} gelöscht." if ok else f"⚠ KB-Eintrag {entry_id} nicht gefunden."
+            await conn.close()
+            kb_orig_msg = cq.get("message") or {}
+            kb_orig_id = kb_orig_msg.get("message_id", 0)
+            kb_orig_text = kb_orig_msg.get("text", "")
+            if kb_orig_id and kb_orig_text:
+                try:
+                    await self._api.edit_message(
+                        chat_id, kb_orig_id,
+                        f"{kb_orig_text}\n\n→ {reply}",
+                        remove_keyboard=True,
+                    )
+                except Exception:
+                    await self._api.send_message(chat_id, reply)
+            else:
+                await self._api.send_message(chat_id, reply)
             return
 
         await self._api.answer_callback_query(callback_query_id)
@@ -1609,7 +1722,11 @@ Rules:
                     config.set(cfg)
                     if row:
                         config._config_updated_at = row["updated_at"]
-                    await self._api.send_message(chat_id, "Config reloaded from DB.")
+                    dropped = self._invalidate_stale_chat_agents()
+                    await self._api.send_message(
+                        chat_id,
+                        f"Config reloaded from DB. {dropped} chat agent(s) refreshed.",
+                    )
                     logger.info("Config reloaded via /reload_config by user=%d", from_id)
                 else:
                     await self._api.send_message(chat_id, "No config found in DB.")
@@ -1808,6 +1925,11 @@ Rules:
 
         if task.parent_id is not None:
             return
+        # Top-level turn finished (success OR error): always release this chat's
+        # echo-payload bucket. A turn that errors before reaching the strip below
+        # must not leave stale payloads that filter legitimate text out of the
+        # NEXT turn's reply.
+        echoed_payloads = self._recent_tool_payloads.pop(task.chat_id, [])
         if result:
             allowed = await self._security.check(
                 result, task_id=task.id, chat_id=task.chat_id, user_id=task.user_id
@@ -1897,8 +2019,10 @@ Rules:
                 except Exception:
                     pass
 
-            # Strip raw tool-result blocks the agent may have echoed back
-            clean_result = _strip_echoed_tool_results(clean_result)
+            # Strip tool-output / fetched content the agent may have echoed back.
+            # Content-based: use the exact payloads handed to the agent this turn
+            # (popped above so both success and error paths release the bucket).
+            clean_result = _strip_echoed_payloads(clean_result, echoed_payloads)
 
             if clean_result.strip():
                 html_result = _md_to_telegram_html(clean_result)
@@ -1964,9 +2088,13 @@ Rules:
 
             for to, subject, body in all_send_emails:
                 email_content = f"To: {to}\nSubject: {subject}\n\n{body}"
-                email_allowed = await self._security.check_action(
-                    "email_send", email_content, task_id=task.id, chat_id=task.chat_id, user_id=task.user_id
-                )
+                if self._security.whitelisted("send_email", _whitelist.email_context(to)):
+                    logger.info("Email to %s pre-approved by whitelist for task=%d", to, task.id)
+                    email_allowed = True
+                else:
+                    email_allowed = await self._security.check_action(
+                        "email_send", email_content, task_id=task.id, chat_id=task.chat_id, user_id=task.user_id
+                    )
                 if not email_allowed:
                     logger.info("Email send blocked by security officer for task=%d", task.id)
                     await self._api.send_message(task.chat_id, "Email blocked by security officer — possible data leak detected.")
@@ -1986,14 +2114,20 @@ Rules:
                 is_write = method in ("POST", "PUT", "PATCH", "DELETE")
                 do_exec = True
                 if is_write:
-                    gh_content = f"{method} {endpoint}\n\n{body or ''}"
-                    gh_allowed = await self._security.check_action(
-                        "github_write", gh_content, task_id=task.id, chat_id=task.chat_id, user_id=task.user_id
-                    )
-                    if not gh_allowed:
-                        logger.info("GitHub write blocked by security officer for task=%d", task.id)
-                        await self._api.send_message(task.chat_id, "GitHub write blocked by security officer — possible data leak detected.")
-                        do_exec = False
+                    wl_type = _whitelist.classify_github(method, endpoint)
+                    wl_ctx = _whitelist.github_context(method, endpoint, body)
+                    if self._security.whitelisted(wl_type, wl_ctx):
+                        logger.info("GitHub %s %s pre-approved by whitelist (%s) for task=%d",
+                                    method, endpoint, wl_type, task.id)
+                    else:
+                        gh_content = f"{method} {endpoint}\n\n{body or ''}"
+                        gh_allowed = await self._security.check_action(
+                            "github_write", gh_content, task_id=task.id, chat_id=task.chat_id, user_id=task.user_id
+                        )
+                        if not gh_allowed:
+                            logger.info("GitHub write blocked by security officer for task=%d", task.id)
+                            await self._api.send_message(task.chat_id, "GitHub write blocked by security officer — possible data leak detected.")
+                            do_exec = False
                 if do_exec:
                     try:
                         github_cfg = config.section("github")
@@ -2016,28 +2150,42 @@ Rules:
                 if title and content:
                     try:
                         conn = await db.get_conn()
-                        # Hard-Gate: Gruppenchats/unverifizierte Quellen schreiben NIE ins KB
                         trust = await trust_mod.chat_trust(conn, task.chat_id, task.user_id)
-                        if not trust_mod.can_write_kb(trust, task.chat_id):
+                        # Hard-Gate: Gruppenchats schreiben NIE ins KB — auch keine Quarantäne.
+                        if task.chat_id is not None and task.chat_id < 0:
                             await conn.close()
                             logger.warning(
-                                "KB_SAVE blocked: chat=%s trust=%d task=%d — unverified source",
+                                "KB_SAVE blocked: group chat=%s trust=%d task=%d — unverified source",
                                 task.chat_id, trust, task.id,
                             )
-                            if task.chat_id is not None and task.chat_id >= 0:
-                                await self._api.send_message(
-                                    task.chat_id,
-                                    "🔒 KB-Schreibzugriff verweigert: Quelle nicht verifiziert.",
-                                )
                             continue
-                        entry_id = await knowledge_store.add(
-                            conn, title=title, content=content,
-                            type=entry_type, tags=tags, source="agent",
-                            user_id=task.user_id,
-                            visibility=trust_mod.VISIBILITY_PRIVATE,  # neue Einträge immer privat
-                        )
-                        await conn.close()
-                        logger.info("KB_SAVE: created entry %d by agent for task=%d", entry_id, task.id)
+                        if _kb_write_allowed(trust):
+                            # Direkt-Chat, Owner/Vertraut → direkt ins KB
+                            entry_id = await knowledge_store.add(
+                                conn, title=title, content=content,
+                                type=entry_type, tags=tags, source=f"chat:{task.chat_id}",
+                                user_id=task.user_id,
+                                visibility=trust_mod.VISIBILITY_PRIVATE,  # neue Einträge immer privat
+                                origin_chat_id=task.chat_id,
+                            )
+                            await conn.close()
+                            logger.info("KB_SAVE: created entry %d by agent for task=%d", entry_id, task.id)
+                        else:
+                            # Direkt-Chat, nicht ausreichend vertraut → Quarantäne, Admin-Review
+                            entry_id = await knowledge_store.add(
+                                conn, title=title, content=content,
+                                type=entry_type, tags=tags, source=f"chat:{task.chat_id}",
+                                user_id=task.user_id,
+                                visibility=trust,
+                                origin_chat_id=task.chat_id,
+                                quarantined=1,
+                            )
+                            await conn.close()
+                            logger.warning(
+                                "KB_SAVE: entry %d quarantined (trust=%d, chat=%d, task=%d) — pending admin review",
+                                entry_id, trust, task.chat_id, task.id,
+                            )
+                            await self._notify_admins_kb_quarantine(entry_id, title, task.chat_id, trust)
                     except Exception as e:
                         logger.warning("KB_SAVE failed for task=%d: %s", task.id, e)
 
@@ -2045,13 +2193,18 @@ Rules:
                 try:
                     conn = await db.get_conn()
                     trust = await trust_mod.chat_trust(conn, task.chat_id, task.user_id)
-                    # Hard-Gate: Gruppenchats/unverifizierte Quellen schreiben NIE ins KB
-                    if not trust_mod.can_write_kb(trust, task.chat_id):
+                    # Hard-Gate: Gruppenchats dürfen KB nie ändern.
+                    if task.chat_id is not None and task.chat_id < 0:
                         await conn.close()
                         logger.warning(
-                            "KB_UPDATE blocked: entry=%d chat=%s trust=%d task=%d — unverified source",
-                            entry_id, task.chat_id, trust, task.id,
+                            "KB_UPDATE blocked: group chat=%s entry=%d trust=%d task=%d — unverified source",
+                            task.chat_id, entry_id, trust, task.id,
                         )
+                        continue
+                    # Schreibseite: Updates nur für Owner/Vertraut (trust <= 1)
+                    if not _kb_write_allowed(trust):
+                        await conn.close()
+                        logger.warning("KB_UPDATE blocked: trust=%d (entry=%d, task=%d)", trust, entry_id, task.id)
                         continue
                     # Trust-Gate: Eintrag nur änderbar, wenn für diesen Chat sichtbar
                     entry = await knowledge_store.get(conn, entry_id)
@@ -2076,6 +2229,18 @@ Rules:
                     logger.warning("CONFIG_UPDATE: blocked sensitive path '%s' for task=%d", cfg_path, task.id)
                     await self._api.send_message(task.chat_id, f"⚠ CONFIG_UPDATE blocked: '{cfg_path}' is a protected key.")
                     continue
+                # config_put write gate — whitelist (key-prefix) bypasses review.
+                if self._security.whitelisted("config_put", _whitelist.config_context(cfg_path)):
+                    logger.info("CONFIG_UPDATE '%s' pre-approved by whitelist for task=%d", cfg_path, task.id)
+                else:
+                    cfg_allowed = await self._security.check_action(
+                        "config_put", f"{cfg_path} = {cfg_value_json}",
+                        task_id=task.id, chat_id=task.chat_id, user_id=task.user_id,
+                    )
+                    if not cfg_allowed:
+                        logger.info("CONFIG_UPDATE '%s' blocked by security officer for task=%d", cfg_path, task.id)
+                        await self._api.send_message(task.chat_id, f"⚠ CONFIG_UPDATE '{cfg_path}' blocked by security officer.")
+                        continue
                 try:
                     import json as _json
                     new_val = _json.loads(cfg_value_json)
@@ -2324,22 +2489,36 @@ Rules:
         """Handle a conversational message directly, bypassing kanban controller."""
         self._start_typing(chat_id)
         task_id: int | None = None
+        reply_timeout = config.agent_timeout("reply_timeout_seconds")
+        idle_timeout = config.agent_timeout("idle_timeout_seconds")
+        run_started = time.monotonic()
+        # One-shot user notice when the run takes long (cancelled in finally)
+        notice_task = asyncio.create_task(self._long_run_notice(chat_id))
         try:
             agent = self._chat_agents.get(chat_id)
             if agent is None:
-                # Per-user persona overrides global chief persona
+                # Per-user persona overrides global chief persona;
+                # a per-group persona (if configured) wins inside that group.
                 persona = self._user_personas.get(user_id, "")
                 if not persona and self._coordinator and self._coordinator._chief:
                     persona = self._coordinator._chief.persona
+                grp = config.group_config(chat_id)
+                if grp.get("persona"):
+                    persona = grp["persona"]
+                user_context = {
+                    "user_id": user_id,
+                    "chat_id": chat_id,
+                    "background": self._user_backgrounds.get(user_id, ""),
+                    "is_group": chat_id < 0,
+                }
+                if grp.get("focus"):
+                    user_context["focus"] = grp["focus"]
+                if grp.get("communication_style"):
+                    user_context["communication_style"] = grp["communication_style"]
                 provider = self._coordinator._get_provider() if self._coordinator else None
                 agent = GeneralistAgent(
                     task_id=0,
-                    user_context={
-                        "user_id": user_id,
-                        "chat_id": chat_id,
-                        "background": self._user_backgrounds.get(user_id, ""),
-                        "is_group": chat_id < 0,
-                    },
+                    user_context=user_context,
                     provider=provider,
                     token_tracker=self._token_tracker,
                     persona=persona,
@@ -2350,6 +2529,7 @@ Rules:
                     agent._messages = history
                     logger.info("Chat %d: restored %d history messages from DB", chat_id, len(history))
                 self._chat_agents[chat_id] = agent
+                self._chat_agent_fingerprints[chat_id] = self._chat_config_fingerprint(chat_id)
             # Insert real kanban task so it's visible in Web UI
             if self._board:
                 proto = KanbanTask(id=None, chat_id=chat_id, user_id=user_id, content=content)
@@ -2358,10 +2538,17 @@ Rules:
                     self._chat_task_ids.add(task_id)
                     if reply_to_msg_id:
                         self._chat_reply_to[task_id] = reply_to_msg_id
-            result = await asyncio.wait_for(agent.run(content), timeout=300.0)
+            # Idle-based supervision instead of hard kill: abort only when the
+            # agent shows no life sign for idle_timeout; reply_timeout stays the
+            # hard cap for the whole inline run (incl. tool loop) — then offload.
+            deadline = run_started + reply_timeout
+            result = await run_with_heartbeat(
+                agent.run(content), agent.heartbeat, idle_timeout, deadline=deadline
+            )
             preliminary_msg_id: int | None = None
             for _ in range(5):
                 clean, tool_feedback = await self._exec_tool_tags(result, user_id=user_id, chat_id=chat_id)
+                agent.heartbeat.beat()  # tool execution is progress
                 if not tool_feedback:
                     result = clean
                     break
@@ -2380,9 +2567,9 @@ Rules:
                     except Exception:
                         pass
                 logger.info("Chat %d: tool results fed back, continuing", chat_id)
-                result = await asyncio.wait_for(
+                result = await run_with_heartbeat(
                     agent.run(f"[Tool results]\n{tool_feedback}\n\nContinue with the task."),
-                    timeout=300.0,
+                    agent.heartbeat, idle_timeout, deadline=deadline,
                 )
             # Check for BOARD_TASK self-routing tag
             clean_result, board_task_desc = _extract_board_task_tag(result)
@@ -2397,9 +2584,9 @@ Rules:
             real_task = KanbanTask(id=task_id, chat_id=chat_id, user_id=user_id, content=content)
             await self._on_agent_result(real_task, result, None)
         except asyncio.TimeoutError:
-            if task_id and self._board:
-                await self._board.fail(task_id, "timeout (300s)")
-            await self._api.send_message(chat_id, "Timeout.")
+            await self._offload_after_timeout(
+                chat_id, user_id, content, task_id, time.monotonic() - run_started
+            )
         except RateLimitError as exc:
             wait = int(exc.retry_after or 30)
             if task_id and self._board:
@@ -2425,10 +2612,105 @@ Rules:
             self._chat_exception_count = 0
         finally:
             # Always clear typing + drain queue, even if task_id is None or _on_agent_result was skipped
+            notice_task.cancel()
             if task_id:
                 self._chat_task_ids.discard(task_id)
             self._stop_typing(chat_id)
             self._flush_chat_queue(chat_id)
+
+    async def _long_run_notice(self, chat_id: int) -> None:
+        """Send a single status message when an inline run exceeds the notice delay."""
+        try:
+            await asyncio.sleep(_LONG_RUN_NOTICE_SECONDS)
+            await self._api.send_message(chat_id, "⏳ Dauert noch. Bin dran.")
+            logger.info("Chat %d: long-run notice sent after %.0fs", chat_id, _LONG_RUN_NOTICE_SECONDS)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            pass
+
+    async def _offload_after_timeout(
+        self,
+        chat_id: int,
+        user_id: int,
+        content: str,
+        task_id: int | None,
+        elapsed: float,
+    ) -> None:
+        """Inline run hit timeout: hand the job to the kanban board instead of killing it.
+
+        The original request goes back to BACKLOG (existing task re-used via
+        board.offload, fallback: fresh push) and the controller routes it to a
+        background specialist. Content already carrying the offload marker is
+        never offloaded again — prevents an endless inline → board loop.
+        """
+        if not self._board or is_offloaded(content):
+            if task_id and self._board:
+                await self._board.fail(task_id, f"timeout ({elapsed:.0f}s) — bereits offloaded, kein erneuter Versuch")
+            logger.warning("Chat %d: timeout after %.0fs, no offload (board=%s, marked=%s)",
+                           chat_id, elapsed, bool(self._board), is_offloaded(content))
+            await self._api.send_message(chat_id, "Timeout. Hat auch im zweiten Anlauf nicht geklappt.")
+            return
+
+        offload_content = build_offload_content(content, elapsed)
+        offloaded = False
+        if task_id:
+            offloaded = await self._board.offload(task_id, offload_content)
+        if not offloaded:
+            # No active board task (or lane race) — push a fresh one instead
+            await self._board.push(
+                KanbanTask(id=None, chat_id=chat_id, user_id=user_id, content=offload_content)
+            )
+        logger.info(
+            "Chat %d: inline run timed out after %.0fs — offloaded to board (task=%s)",
+            chat_id, elapsed, task_id,
+        )
+        await self._api.send_message(
+            chat_id, "Dauert länger. Läuft jetzt im Hintergrund, melde mich mit Ergebnis."
+        )
+
+    def _chat_config_fingerprint(self, chat_id: int) -> tuple:
+        """Config-derived inputs that determine a chat agent's system prompt.
+
+        Per-user persona is runtime state (not config) so it's excluded — a config
+        reload can't change it. Only the global chief persona and per-group
+        persona/focus/style come from config and can shift on reload.
+        """
+        chief_persona = ""
+        if self._coordinator and self._coordinator._chief:
+            chief_persona = self._coordinator._chief.persona
+        grp = config.group_config(chat_id)
+        return (
+            chief_persona,
+            grp.get("persona", ""),
+            grp.get("focus", ""),
+            grp.get("communication_style", ""),
+        )
+
+    def _invalidate_stale_chat_agents(self) -> int:
+        """Drop only chat agents whose config-derived prompt inputs changed.
+
+        Called after a config reload. Preserves warm in-memory context for every
+        chat the change didn't touch, instead of clearing the whole cache.
+        Returns the number of agents dropped.
+        """
+        dropped = 0
+        for chat_id in list(self._chat_agents.keys()):
+            current = self._chat_config_fingerprint(chat_id)
+            if self._chat_agent_fingerprints.get(chat_id) != current:
+                self._chat_agents.pop(chat_id, None)
+                self._chat_agent_fingerprints.pop(chat_id, None)
+                dropped += 1
+        return dropped
+
+    def _track_payloads(self, chat_id: "int | None", payloads: "list[str]") -> None:
+        """Record tool/fetch payloads for this chat so _on_agent_result can strip echoes."""
+        if chat_id is None or not payloads:
+            return
+        bucket = self._recent_tool_payloads.setdefault(chat_id, [])
+        bucket.extend(payloads)
+        if len(bucket) > _MAX_TRACKED_PAYLOADS:
+            del bucket[:-_MAX_TRACKED_PAYLOADS]
 
     async def _exec_tool_tags(self, result: str, user_id: int | None = None, chat_id: int | None = None) -> "tuple[str, str | None]":
         """Execute read-only tool tags in result, return (cleaned_result, tool_output_or_None).
@@ -2464,7 +2746,7 @@ Rules:
                 if resp.status_code == 200:
                     data = resp.json()
                     data_str = _json.dumps(data, ensure_ascii=False, indent=2)
-                    tool_results.append(f"GitHub GET {endpoint}:\n{data_str[:4000]}")
+                    tool_results.append(f"GitHub GET {endpoint}:\n{data_str[:_MAX_TOOL_OUTPUT_CHARS]}")
                 else:
                     tool_results.append(f"GitHub GET {endpoint}: HTTP {resp.status_code} — {resp.text[:200]}")
             except Exception as e:
@@ -2594,6 +2876,7 @@ Rules:
             deploy_result = await self._deploy_guard_action("trigger")
             tool_results.append(f"DEPLOY_TRIGGER: {deploy_result}")
 
+        self._track_payloads(chat_id, tool_results)
         return result, "\n\n".join(tool_results) if tool_results else None
 
     async def _deploy_guard_action(self, action: str) -> str:
@@ -2651,6 +2934,26 @@ Rules:
                 admin_id,
                 f"New user requesting access: {name or 'unknown'} (ID: {telegram_id})\n/auth {telegram_id}",
             )
+
+    async def _notify_admins_kb_quarantine(self, entry_id: int, title: str, chat_id: int, trust: int) -> None:
+        """Admin über quarantänierten KB-Eintrag informieren (Freigabe/Löschung per Button)."""
+        cfg = config.section("users")
+        tg_cfg = config.section("telegram")
+        admin_ids = cfg.get("admin_ids", tg_cfg.get("admin_chat_ids", []))
+        label = trust_mod.TRUST_LABELS.get(trust, str(trust))
+        msg = (
+            f"🧪 KB-Quarantäne: Eintrag '{title}' aus Chat {chat_id} "
+            f"(Trust {trust} – {label}). Freigeben oder löschen?"
+        )
+        keyboard = {"inline_keyboard": [[
+            {"text": "✅ Freigeben", "callback_data": f"kb_approve:{entry_id}"},
+            {"text": "🗑 Löschen", "callback_data": f"kb_reject:{entry_id}"},
+        ]]}
+        for admin_id in admin_ids:
+            try:
+                await self._api.send_message(admin_id, msg, reply_markup=keyboard)
+            except Exception as e:
+                logger.warning("KB quarantine notification to admin %d failed: %s", admin_id, e)
 
     async def _log_approval(self, *, action_types, content_preview, task_id, chat_id, decision, decided_by, requested_at, decided_at) -> None:
         import json as _json_al
@@ -2721,7 +3024,10 @@ Rules:
                         if cfg:
                             config.set(cfg)
                             config._config_updated_at = row["updated_at"]
-                            logger.info("Config reloaded from DB")
+                            # Rebuild only the chat agents whose group/persona/focus
+                            # overrides actually changed; leave warm conversations alone.
+                            dropped = self._invalidate_stale_chat_agents()
+                            logger.info("Config reloaded from DB (%d chat agent(s) refreshed)", dropped)
                     await conn.close()
                 except Exception as exc:
                     logger.debug("Config watcher error: %s", exc)

@@ -104,9 +104,14 @@ class CodeTeam:
         self._provider = provider
         self._token_tracker = token_tracker
         self._persona = persona
+        # Token attribution: every member call in this pipeline shares one run_id
+        # (the CodeTeam id) so the 4 stages group into a single run. May be
+        # overridden by the coordinator after construction.
+        self.source = "coderteam"
+        self.run_id = self.id
 
     def _member(self, addendum: str, stage: str) -> _TeamMember:
-        return _TeamMember(
+        member = _TeamMember(
             task_id=self._task_id,
             user_context=self._user_context,
             provider=self._provider,
@@ -115,6 +120,9 @@ class CodeTeam:
             addendum=addendum,
             stage=stage,
         )
+        member.source = self.source
+        member.run_id = self.run_id
+        return member
 
     _SMALL_TASK_THRESHOLD = 500
 

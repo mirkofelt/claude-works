@@ -29,23 +29,29 @@ class TokenTracker:
         output_tokens: int,
         cache_read_tokens: int = 0,
         cache_write_tokens: int = 0,
+        source: str = "main_loop",
+        run_id: str | None = None,
     ) -> None:
         now = int(time.time())
-        cost = estimate_cost(model, input_tokens, output_tokens)
+        cost = estimate_cost(
+            model, input_tokens, output_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
+        )
         await self._conn.execute(
             """INSERT INTO token_usage
                (agent_id, agent_class, task_id, user_id, chat_id, model,
                 input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
-                cost_usd, timestamp)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                cost_usd, source, run_id, timestamp)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (agent_id, agent_class, task_id, user_id, chat_id, model,
              input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
-             cost, now),
+             cost, source, run_id, now),
         )
         await self._conn.commit()
         logger.debug(
-            "Tokens %s[%s] task=%s in=%d out=%d cost=$%.6f",
-            agent_class, agent_id, task_id, input_tokens, output_tokens, cost,
+            "Tokens %s[%s] src=%s run=%s task=%s in=%d out=%d cost=$%.6f",
+            agent_class, agent_id, source, run_id, task_id, input_tokens, output_tokens, cost,
         )
 
     async def _sum_cost(self, since: int) -> float:

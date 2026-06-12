@@ -317,7 +317,9 @@ SQLite-backed. `asyncio.Event` wakes waiting loops when tasks enter a lane.
 
 Persists every LLM call to `token_usage` table. Calculates cost at insert time via `estimate_cost()`. Enforces spending limits before each API call.
 
-- `log(...)` — insert row including `cost_usd` (calculated from model pricing)
+**Cost formula** (per call): `input·in_rate + output·out_rate + cache_read·read_rate + cache_write·write_rate`, all in USD per MTok. Cache tokens are reported by the API separately from `input_tokens` and dominate cost in agent workloads — they must be priced. If a model entry lacks explicit cache rates, fallback multipliers apply: cache read = 0.1× input rate, 5m cache write = 1.25× input rate (Anthropic standard). Unknown models log a warning and book $0 — add new models to `spending.model_pricing` (daemon config) or `_MODEL_PRICING_DEFAULTS` (`config.py`). Defaults verified against platform.claude.com on 2026-06-12: Haiku 4.5 $1/$5, Sonnet 4.6 $3/$15, Opus 4.8 $5/$25, Fable 5 $10/$50 (in/out per MTok).
+
+- `log(...)` — insert row including `cost_usd` (calculated from model pricing incl. cache tokens)
 - `get_allowed_model(requested_model)` → model to use or `None` (reject). Checks daily/monthly limits; returns cheaper model on `on_limit_exceeded=downgrade`, `None` on `reject`. Called by `BaseAgent.run()` before every API call.
 - `total_cost(since?)` → total USD spent in period
 - `stats(since?)` → per-class aggregates including `cost_usd`
@@ -579,6 +581,7 @@ Two SQLite databases, both in WAL mode with `synchronous=NORMAL`.
       "mechanic":   "<tier-or-model-id>"
     }
   },
+  "agent":     { "reply_timeout_seconds", "idle_timeout_seconds", "max_runtime_seconds" },
   "web":       { "port", "host", "auth_token" },
   "users":     { "default_role", "admin_ids" },
   "supervisor":{ "health_check_interval", "max_restart_attempts", "restart_backoff_seconds" },
@@ -595,6 +598,13 @@ Two SQLite databases, both in WAL mode with `synchronous=NORMAL`.
 ```
 
 `llm.provider`: `"api"` (default). Values: `"api"` | `"cli"`.
+
+**Agent timeouts** (`agent` section, read via `config.agent_timeout(key)` in `config.py`):
+- `reply_timeout_seconds` (default 300) — hard cap for an inline chat run; on timeout the job is offloaded to the kanban board instead of being killed
+- `idle_timeout_seconds` (default 120) — inline run aborts early when no agent activity (LLM turn finished, tool round-trip) for this long
+- `max_runtime_seconds` (default 1800) — hard cap for background (board) specialist runs; legacy `agents.task_timeout_seconds` still wins when explicitly set
+
+All three are stored in `daemon_config` (SQLite) like every other key and are editable through the Web UI via the generic `/api/config` + `/api/config/save` endpoints — no dedicated UI needed.
 
 **Per-agent model selection** (`agents.models` + `agents.model_tiers`): each agent class and CodeTeam stage resolves its model via `get_agent_model(agent_class, stage?)` in `config.py`.
 
@@ -620,6 +630,136 @@ See `settings.example.json` for full structure with all fields and placeholders.
 Manual reload triggers:
 - Telegram command `/reload_config` (admin only)
 - `POST /api/config/reload` (Web API)
+
+---
+
+## Task Supervision, Timeouts, and Heartbeat
+
+### Timeout Configuration
+
+Long-running tasks are protected by heartbeat-based supervision (`agents/heartbeat.py`) instead of pure wall-clock kills:
+
+**`agent.idle_timeout_seconds`** (default 120s):
+- A run is cancelled only when the agent emits no life sign for this long
+- Life signs (`Heartbeat.beat()`): provider call in flight (beat every 15s via `_beat_while_running`), LLM turn finished, tool round-trip, compaction
+- Applies to chief, all specialists and the inline chat handler
+
+**`agent.max_runtime_seconds`** (default 1800s):
+- Hard wall-clock cap per board task (chief + specialists), spans the whole run incl. tool loop
+- Legacy `agents.task_timeout_seconds` is honored as fallback when `agent.max_runtime_seconds` is unset
+- On abort → task moved to FAILED lane (`HeartbeatTimeout`, subclass of `asyncio.TimeoutError`)
+
+**`agent.reply_timeout_seconds`** (default 300s):
+- Hard cap for inline Telegram chat runs (`main.py:_handle_chat`)
+- On timeout the job is **not** killed silently: it is offloaded to the kanban board (`board.offload()`) with a context note and re-run by a background specialist; the user gets a short notice and the result later
+- The offload marker (`kanban/board.py:OFFLOAD_MARKER`) prevents re-offload loops; board-worker timeouts go to FAILED (bounded controller recovery), never back onto the board
+- Inline runs > 60s additionally trigger a one-shot "⏳ Dauert noch" notice (`_LONG_RUN_NOTICE_SECONDS`)
+
+**`agents.po_timeout_seconds`** (default 3600s / 1 hour):
+- Applies to ProductOwnerAgent project decomposition, synthesis, and child await cycles
+- Prevents hung project decompositions from blocking the PO loop forever
+- Configurable the same way; independent from the heartbeat supervisor
+
+All values live in `daemon_config` (hot-reloadable, no restart required).
+
+Example configuration:
+```json
+{
+  "agent": {
+    "reply_timeout_seconds": 300,   // inline chat cap before background offload
+    "idle_timeout_seconds": 120,    // no-life-sign abort
+    "max_runtime_seconds": 1800     // hard cap for board tasks
+  },
+  "agents": {
+    "po_timeout_seconds": 1800,     // 30 minutes for PO decomposition cycles
+    ...
+  }
+}
+```
+
+### Background Task Execution
+
+All long-running work executes as background tasks via the KanbanBoard queue system:
+
+1. **Task Queue Lifecycle** (kanban/board.py):
+   - BACKLOG → ControllerAgent assigns to specialist class → ASSIGNED
+   - ASSIGNED → AgentCoordinator specialist loop picks up task → IN_PROGRESS
+   - IN_PROGRESS → agent.run() executes with timeout → DONE (success) / FAILED (timeout, error, budget exceeded)
+   - Terminal states (DONE, FAILED, BLOCKED) → _on_agent_result() for post-processing
+
+2. **Non-Blocking Execution** (agents/coordinator.py):
+   - Each specialist runs as `asyncio.create_task()` (fire-and-forget)
+   - Specialist loops don't block on task completion
+   - Multiple tasks of the same class run in parallel, respecting `agents.max_parallel` limit
+   - Active tasks tracked in `self._active[key]` dict with done callbacks for cleanup
+
+3. **Long-Running Task Examples**:
+   - **Knowledge Base audit/quarantine**: Ingesting group chat entries triggers KB trust-level checks; on untrusted source → entry quarantined, admin notified
+   - **Project decomposition (PO)**: Complex multi-step goals decomposed into 2-8 subtasks, executed in parallel, results synthesized
+   - **Rate-limit recovery**: Tasks requeued to ASSIGNED on RateLimitError with exponential backoff (no immediate retry, prevents thundering herd)
+
+4. **Preventing Long-Task Timeout**:
+   - Increase `agent.max_runtime_seconds` in daemon_config for slow agents
+   - Decompose complex tasks into simpler subtasks assigned to different specialist classes
+   - Use ProductOwnerAgent (PO class) for multi-step projects — decomposes automatically
+
+### Heartbeat and Supervision Mechanisms
+
+The daemon includes multiple layers of heartbeat and supervision to detect and recover from stuck tasks:
+
+**0. Heartbeat Supervisor** (agents/heartbeat.py):
+- Each `BaseAgent` owns a `Heartbeat`; `run_with_heartbeat(coro, heartbeat, idle_timeout, deadline)` cancels a run only on missing life signs or hard deadline — raises `HeartbeatTimeout` (an `asyncio.TimeoutError`)
+- Providers emit beats every 15s while a call is in flight, so slow-but-alive LLM calls are never killed by the idle timer
+- Inline chat timeouts → background offload (see above); board task timeouts → FAILED lane
+
+**1. Stuck Chat Watchdog** (main.py:_stuck_chat_watchdog):
+- Monitors Telegram chat handler tasks for age > 600 seconds (10 minutes)
+- Runs every 60 seconds
+- On stuck chat detected → cancels handler task, notifies user `"⚠️ Vorheriger Request hat sich aufgehängt"`
+- Prevents chat handlers from silently blocking forever (separate from background specialist timeout)
+
+**2. Health Endpoint** (GET `/health`):
+- Returns daemon status: `{status, mode, poller, active_agents, security_pending, rate_limited_until?, llm_usage?}`
+- Shows: active specialist count, rate-limit state, LLM token usage, mechanic status
+- Always available (all daemon modes)
+- Used by supervisor.py watchdog every 60 seconds (configurable via `supervisor.health_check_interval`)
+
+**3. Supervisor Process** (supervisor/supervisor.py):
+- Separate watchdog process (runs outside the main daemon container)
+- Polls `/health` endpoint every N seconds (HEALTH_INTERVAL env var, default 60s)
+- Heartbeat timeout: 5 seconds per HTTP call
+- On health check failure (timeout, non-200 response) → counts restart attempt
+- Exponential backoff on restart: [5, 15, 60] seconds (configurable via `supervisor.restart_backoff_seconds`)
+- Max restart attempts before giving up: 3 (configurable via `supervisor.max_restart_attempts`)
+- After max attempts → sends Telegram alert to admins: `"⛔ claude-works daemon failed N times. Manual intervention required."`
+- On daemon exit (any code) → captured and restarted immediately (if under restart cap)
+
+**4. Config Watcher** (main.py:_config_watcher_loop):
+- Polls config.db every 5 seconds for changes (timestamp-based detection)
+- Hot-reloads daemon_config into memory on change
+- No restart required for config changes (except Telegram token, DB paths, port)
+- Allows updating task_timeout_seconds without stopping active work
+
+**5. Task Reset on Startup** (main.py:__init__ or boot sequence):
+- On daemon start, scans `kanban_tasks` for stale tasks in IN_PROGRESS / ASSIGNED / REVIEW lanes
+- Moves stale tasks back to BACKLOG (gives them a second chance)
+- Clears orphaned hourglass reactions from previous sessions
+- Updates stale bot message reactions with restart notice
+- Prevents hung tasks from persisting across restarts
+
+**6. Rate-Limit Cooldown** (agents/coordinator.py:_specialist_loop):
+- On RateLimitError → exponential backoff: `cooldown = min(retry_after * 2^(count-1), 900s)`
+- All specialist loops pause until cooldown expires (checks every 30s max)
+- Any successful LLM call resets backoff counter (prevents permanent growth)
+- Max cooldown: 900s (15 minutes) regardless of retry count
+- Rate limits do NOT trigger REPAIR mode — treated as expected operational state
+
+**Supervision Gaps and Future Work**:
+- No process-level CPU/memory limits per task (would require cgroup/ulimit)
+- No inter-task deadlock detection (e.g., if PO awaits children indefinitely)
+- No auto-retry policy on N consecutive failures (failed tasks stay in FAILED state)
+- Mechanic agent is blocking during REPAIR mode (no fallback if mechanic fails)
+- Heartbeat granularity: an in-flight provider call always counts as alive (providers are non-streaming, no token-level signal) — a truly hung HTTP call is only bounded by the SDK/CLI timeout and `max_runtime_seconds`
 
 ---
 

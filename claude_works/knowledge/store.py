@@ -63,17 +63,19 @@ async def add(
     source: str = "agent",
     user_id: int | None = None,
     visibility: int = 0,
+    origin_chat_id: int | None = None,
+    quarantined: int = 0,
 ) -> int:
     now = int(time.time())
     tags_json = json.dumps(tags or [])
     async with conn.execute(
-        """INSERT INTO knowledge (type, title, content, tags, source, user_id, visibility, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (type, title, content, tags_json, source, user_id, visibility, now, now),
+        """INSERT INTO knowledge (type, title, content, tags, source, user_id, visibility, origin_chat_id, quarantined, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (type, title, content, tags_json, source, user_id, visibility, origin_chat_id, quarantined, now, now),
     ) as cur:
         entry_id = cur.lastrowid
     await conn.commit()
-    logger.info("knowledge add id=%d title=%r type=%s source=%s", entry_id, title, type, source)
+    logger.info("knowledge add id=%d title=%r type=%s source=%s quarantined=%d", entry_id, title, type, source, quarantined)
     return entry_id  # type: ignore[return-value]
 
 
@@ -114,6 +116,28 @@ async def update(
     return updated > 0
 
 
+async def list_quarantined(conn: aiosqlite.Connection) -> list[dict]:
+    """Alle quarantänierten Einträge (Admin-Review)."""
+    async with conn.execute(
+        "SELECT * FROM knowledge WHERE quarantined != 0 ORDER BY created_at DESC"
+    ) as cur:
+        rows = await cur.fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
+async def approve(conn: aiosqlite.Connection, entry_id: int) -> bool:
+    """Quarantäne aufheben (Admin-Freigabe)."""
+    now = int(time.time())
+    async with conn.execute(
+        "UPDATE knowledge SET quarantined = 0, updated_at = ? WHERE id = ?", (now, entry_id)
+    ) as cur:
+        updated = cur.rowcount
+    await conn.commit()
+    if updated > 0:
+        logger.info("knowledge approve id=%d (quarantine cleared)", entry_id)
+    return updated > 0
+
+
 async def delete(conn: aiosqlite.Connection, entry_id: int) -> bool:
     async with conn.execute("DELETE FROM knowledge WHERE id = ?", (entry_id,)) as cur:
         deleted = cur.rowcount
@@ -130,11 +154,13 @@ async def get(conn: aiosqlite.Connection, entry_id: int) -> dict | None:
 _FTS_MIN_SCORE = -0.1  # BM25 scores are negative; filter near-zero relevance hits
 
 
-async def search(conn: aiosqlite.Connection, query: str, user_id: int | None = None, limit: int = 10, trust: int = 0) -> list[dict]:
+async def search(conn: aiosqlite.Connection, query: str, user_id: int | None = None, limit: int = 10, trust: int = 0, include_quarantined: bool = False) -> list[dict]:
     """Full-text search via FTS5 with LIKE fallback for short or special queries.
 
     trust: effektive Vertrauensstufe des Lesers — nur Einträge mit
-    visibility >= trust werden geliefert (0 = Owner, sieht alles)."""
+    visibility >= trust werden geliefert (0 = Owner, sieht alles).
+    Quarantänierte Einträge sind standardmäßig ausgeschlossen
+    (include_quarantined=True nur für Admin-Review)."""
     if not query or not query.strip():
         return []
 
@@ -146,6 +172,8 @@ async def search(conn: aiosqlite.Connection, query: str, user_id: int | None = N
     if trust > 0:
         extra_sql += " AND k.visibility >= ?"
         extra_params.append(trust)
+    if not include_quarantined:
+        extra_sql += " AND k.quarantined = 0"
 
     # Try FTS5 first (better recall, BM25 ranking)
     try:
@@ -176,7 +204,7 @@ async def search(conn: aiosqlite.Connection, query: str, user_id: int | None = N
     return [_row_to_dict(r) for r in rows]
 
 
-async def count(conn: aiosqlite.Connection, user_id: int | None = None, type: str | None = None, trust: int = 0) -> int:
+async def count(conn: aiosqlite.Connection, user_id: int | None = None, type: str | None = None, trust: int = 0, include_quarantined: bool = False) -> int:
     conditions: list[str] = []
     params: list = []
     if user_id is not None:
@@ -188,13 +216,15 @@ async def count(conn: aiosqlite.Connection, user_id: int | None = None, type: st
     if trust > 0:
         conditions.append("visibility >= ?")
         params.append(trust)
+    if not include_quarantined:
+        conditions.append("quarantined = 0")
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     async with conn.execute(f"SELECT COUNT(*) FROM knowledge {where}", params) as cur:
         row = await cur.fetchone()
     return row[0] if row else 0
 
 
-async def list_all(conn: aiosqlite.Connection, user_id: int | None = None, type: str | None = None, limit: int = 25, offset: int = 0, trust: int = 0) -> list[dict]:
+async def list_all(conn: aiosqlite.Connection, user_id: int | None = None, type: str | None = None, limit: int = 25, offset: int = 0, trust: int = 0, include_quarantined: bool = False) -> list[dict]:
     conditions: list[str] = []
     params: list = []
     if user_id is not None:
@@ -206,6 +236,8 @@ async def list_all(conn: aiosqlite.Connection, user_id: int | None = None, type:
     if trust > 0:
         conditions.append("visibility >= ?")
         params.append(trust)
+    if not include_quarantined:
+        conditions.append("quarantined = 0")
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     params.extend([limit, offset])
     async with conn.execute(
@@ -221,4 +253,6 @@ def _row_to_dict(row: aiosqlite.Row) -> dict:
         d["tags"] = json.loads(d.get("tags") or "[]")
     except (json.JSONDecodeError, TypeError):
         d["tags"] = []
+    d.setdefault("origin_chat_id", None)
+    d.setdefault("quarantined", 0)
     return d
