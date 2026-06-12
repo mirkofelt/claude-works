@@ -32,7 +32,8 @@ from .agents.coordinator import AgentCoordinator
 from .llm.errors import RateLimitError
 from .agents.mechanic import MechanicAgent, MechanicContext
 from .agents.specialist.generalist import GeneralistAgent
-from .auth.users import upsert_user, is_allowed, is_admin, set_role
+from .auth.users import upsert_user, is_allowed, is_admin, set_role, set_trust
+from .auth import trust as trust_mod
 from .security import SecuritySupervisor
 from .web.app import app as web_app, set_daemon as _set_web_daemon, set_setup_token as _set_web_setup_token
 from .logging_setup import setup as _setup_logging, uvicorn_log_config as _uvicorn_log_config
@@ -406,6 +407,9 @@ class Daemon:
         self._bot_username: str = ""  # loaded at startup via getMe
         self._bot_id: int = 0  # loaded at startup via getMe
         self._mention_only_chats: set[int] = set()  # chat_ids where bot only responds to @mention
+        self._muted_users: dict[int, int] = {}  # telegram_id → muted-until epoch (0 = indefinite)
+        self._group_reply_log: dict[tuple[int, int], list[float]] = {}  # (chat_id, user_id) → bot-reply timestamps
+        self._exchange_depth: dict[int, tuple[int, int]] = {}  # chat_id → (user_id, consecutive bot replies to that user)
         self._pending_reactions: dict[int, tuple[int, int]] = {}  # kanban task_id → (chat_id, tg_msg_id)
         self._pending_initial_msgs: dict[int, int] = {}  # kanban task_id → preliminary tg_msg_id
 
@@ -496,6 +500,7 @@ class Daemon:
             logger.error("getMe failed after 3 attempts — bot will be silent in mention-only groups")
 
         await self._load_mention_only_chats()
+        await self._load_muted_users()
 
         self._board = KanbanBoard(self._conn)
         self._token_tracker = TokenTracker(self._conn)
@@ -1396,6 +1401,55 @@ Rules:
             except Exception as e:
                 await self._api.send_message(chat_id, f"Error: {e}")
 
+        elif cmd == "/trust":
+            if not await is_admin(self._conn, from_id):
+                await self._api.send_message(chat_id, "Nur für Admins.")
+                return
+            if len(parts) < 3:
+                await self._api.send_message(
+                    chat_id,
+                    "Usage: /trust <telegram_id> <stufe>\n0=Owner 1=Vertraut 2=Kontakt 3=Unbekannt",
+                )
+                return
+            try:
+                target_id = int(parts[1].lstrip("@"))
+                level = int(parts[2])
+                ok = await set_trust(self._conn, target_id, level)
+                if ok:
+                    label = trust_mod.TRUST_LABELS.get(level, str(level))
+                    await self._api.send_message(chat_id, f"User {target_id} → Stufe {level} ({label}).")
+                else:
+                    await self._api.send_message(chat_id, f"User {target_id} unbekannt.")
+            except Exception as e:
+                await self._api.send_message(chat_id, f"Error: {e}")
+
+        elif cmd == "/kb-level":
+            if not await is_admin(self._conn, from_id):
+                await self._api.send_message(chat_id, "Nur für Admins.")
+                return
+            if len(parts) < 3:
+                await self._api.send_message(
+                    chat_id,
+                    "Usage: /kb-level <eintrag_id> <stufe>\n0=privat 1=vertraut 2=Kontakte 3=öffentlich",
+                )
+                return
+            try:
+                entry_id = int(parts[1])
+                level = int(parts[2])
+                if level not in (0, 1, 2, 3):
+                    await self._api.send_message(chat_id, "Stufe muss 0–3 sein.")
+                    return
+                conn = await db.get_conn()
+                ok = await knowledge_store.update(conn, entry_id, visibility=level)
+                await conn.close()
+                if ok:
+                    label = trust_mod.VISIBILITY_LABELS.get(level, str(level))
+                    await self._api.send_message(chat_id, f"KB-Eintrag {entry_id} → {label} ({level}).")
+                else:
+                    await self._api.send_message(chat_id, f"KB-Eintrag {entry_id} nicht gefunden.")
+            except Exception as e:
+                await self._api.send_message(chat_id, f"Error: {e}")
+
         elif cmd == "/status":
             h = self.health()
             mode_info = f" | mode: {h['mode']}"
@@ -1781,6 +1835,7 @@ Rules:
                             conn, title=title, content=content,
                             type=entry_type, tags=tags, source="agent",
                             user_id=task.user_id,
+                            visibility=trust_mod.VISIBILITY_PRIVATE,  # neue Einträge immer privat
                         )
                         await conn.close()
                         logger.info("KB_SAVE: created entry %d by agent for task=%d", entry_id, task.id)
@@ -1790,6 +1845,13 @@ Rules:
             for entry_id, title, entry_type, tags, content in all_kb_updates:
                 try:
                     conn = await db.get_conn()
+                    # Trust-Gate: Eintrag nur änderbar, wenn für diesen Chat sichtbar
+                    trust = await trust_mod.chat_trust(conn, task.chat_id, task.user_id)
+                    entry = await knowledge_store.get(conn, entry_id)
+                    if entry is not None and not trust_mod.can_see({"trust_level": trust}, entry):
+                        await conn.close()
+                        logger.warning("KB_UPDATE: entry %d hidden for trust=%d (task=%d) — blocked", entry_id, trust, task.id)
+                        continue
                     ok = await knowledge_store.update(
                         conn, entry_id,
                         title=title, content=content, type=entry_type, tags=tags,
@@ -1964,7 +2026,7 @@ Rules:
             result = await asyncio.wait_for(agent.run(content), timeout=300.0)
             preliminary_msg_id: int | None = None
             for _ in range(5):
-                clean, tool_feedback = await self._exec_tool_tags(result)
+                clean, tool_feedback = await self._exec_tool_tags(result, user_id=user_id, chat_id=chat_id)
                 if not tool_feedback:
                     result = clean
                     break
@@ -2033,7 +2095,7 @@ Rules:
             self._stop_typing(chat_id)
             self._flush_chat_queue(chat_id)
 
-    async def _exec_tool_tags(self, result: str) -> "tuple[str, str | None]":
+    async def _exec_tool_tags(self, result: str, user_id: int | None = None, chat_id: int | None = None) -> "tuple[str, str | None]":
         """Execute read-only tool tags in result, return (cleaned_result, tool_output_or_None).
 
         Only GET GitHub calls and READ_EMAIL are auto-executed so the agent can process
@@ -2131,7 +2193,8 @@ Rules:
             result = clean
             try:
                 conn = await db.get_conn()
-                entries = await knowledge_store.search(conn, kb_query, limit=10)
+                trust = await trust_mod.chat_trust(conn, chat_id, user_id)
+                entries = await knowledge_store.search(conn, kb_query, limit=10, trust=trust)
                 await conn.close()
                 if entries:
                     lines = []
