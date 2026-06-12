@@ -1,11 +1,15 @@
-"""TAG extraction functions for agent output parsing.
+"""TAG extraction functions and collection helper for agent output parsing.
 
-Each function returns (clean_text, parsed_value_or_None).
+Each extract_* function returns (clean_text, parsed_value_or_None).
 The clean_text has the matched tag removed and whitespace normalized.
+
+collect_output_tags(result) strips ALL output tags in one pass and returns
+a TagCollection — use this in result handlers instead of 15 individual loops.
 """
 import json
 import os
 import re
+from dataclasses import dataclass, field
 
 from .. import config
 
@@ -295,3 +299,77 @@ def extract_remind(text: str) -> "tuple[str, tuple[str, str] | None]":
     if len(parts) < 2 or not parts[0]:
         return text, None
     return _clean(text, m), (parts[0], parts[1])
+
+
+# ── Tag collection ────────────────────────────────────────────────────────────
+
+def _drain(text: str, extractor) -> "tuple[str, list]":
+    """Drain all occurrences of a tag. Returns (clean_text, [values])."""
+    items = []
+    while True:
+        text, v = extractor(text)
+        if v is None:
+            break
+        items.append(v)
+    return text, items
+
+
+@dataclass
+class TagCollection:
+    """All output tags collected from a single agent result string."""
+    clean_result: str
+    keyboard: "list[list[dict]] | None" = field(default=None)
+    tts: "list[str]" = field(default_factory=list)
+    maps: "list[str]" = field(default_factory=list)
+    emails: "list[tuple]" = field(default_factory=list)
+    github: "list[tuple]" = field(default_factory=list)
+    kb_saves: "list[tuple]" = field(default_factory=list)
+    kb_updates: "list[tuple]" = field(default_factory=list)
+    plugin_config_sets: "list[tuple]" = field(default_factory=list)
+    config_updates: "list[tuple]" = field(default_factory=list)
+    mutes: "list[tuple]" = field(default_factory=list)
+    unmutes: "list[str]" = field(default_factory=list)
+    subtasks: "list[str]" = field(default_factory=list)
+    orchestrations: "list[tuple]" = field(default_factory=list)
+    reminders: "list[tuple]" = field(default_factory=list)
+
+
+def collect_output_tags(result: str) -> TagCollection:
+    """Strip all output tags from result and collect their values.
+
+    Read-only tool tags (GitHub GET, READ_EMAIL, etc.) are handled by
+    exec_tool_tags() and should already be gone. This handles write/output tags.
+    """
+    result, keyboard = parse_buttons(result)
+    result, tts = _drain(result, extract_voice)
+    result, maps = _drain(result, extract_map)
+    result, emails = _drain(result, extract_send_email)
+    result, _ = _drain(result, extract_read_email)       # strip surviving read tags
+    result, github = _drain(result, extract_github_api)
+    result, _ = _drain(result, extract_git_clone)        # strip surviving read tags
+    result, kb_saves = _drain(result, extract_kb_save)
+    result, kb_updates = _drain(result, extract_kb_update)
+    result, plugin_cfg_sets = _drain(result, extract_plugin_config_set)
+    result, config_updates = _drain(result, extract_config_update)
+    result, mutes = _drain(result, extract_mute)
+    result, unmutes = _drain(result, extract_unmute)
+    result, subtasks = _drain(result, extract_board_task)
+    result, orchestrations = _drain(result, extract_orchestrate)
+    result, reminders = _drain(result, extract_remind)
+    return TagCollection(
+        clean_result=result,
+        keyboard=keyboard,
+        tts=tts,
+        maps=maps,
+        emails=emails,
+        github=github,
+        kb_saves=kb_saves,
+        kb_updates=kb_updates,
+        plugin_config_sets=plugin_cfg_sets,
+        config_updates=config_updates,
+        mutes=mutes,
+        unmutes=unmutes,
+        subtasks=subtasks,
+        orchestrations=orchestrations,
+        reminders=reminders,
+    )

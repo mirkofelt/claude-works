@@ -36,6 +36,7 @@ from .llm.errors import RateLimitError
 from .agents.mechanic import MechanicAgent, MechanicContext
 from .agents.specialist.generalist import GeneralistAgent
 from .tasks import tags as _tags
+from .tasks.tags import collect_output_tags as _collect_output_tags, TagCollection as _TagCollection
 from .tasks.tor import restart_tor as _restart_tor
 from .tasks.executor import exec_tool_tags as _exec_tool_tags_fn
 from .kanban.models import Lane as _Lane
@@ -1713,99 +1714,23 @@ Rules:
             if not allowed:
                 await self._api.send_message(task.chat_id, "Response blocked by security policy.")
                 return
-            # Strip all tags from clean_result (collect lists), then send clean text
-            clean_result, keyboard = _parse_buttons(result)
-
-            all_tts: list[str] = []
-            while True:
-                clean_result, v = _extract_voice_tag(clean_result)
-                if not v: break
-                all_tts.append(v)
-
-            all_maps: list[str] = []
-            while True:
-                clean_result, v = _extract_map_tag(clean_result)
-                if not v: break
-                all_maps.append(v)
-
-            all_send_emails: list[tuple] = []
-            while True:
-                clean_result, v = _extract_send_email_tag(clean_result)
-                if not v: break
-                all_send_emails.append(v)
-
-            # READ_EMAIL is a read-only tool — handled in _exec_tool_tags; strip if it somehow survived
-            while True:
-                clean_result, v = _extract_read_email_tag(clean_result)
-                if not v: break
-
-            all_github: list[tuple] = []
-            while True:
-                clean_result, v = _extract_github_api_tag(clean_result)
-                if not v: break
-                all_github.append(v)
-
-            # GIT_CLONE is a read tool — handled in _exec_tool_tags; strip if it somehow survived
-            while True:
-                clean_result, v = _extract_git_clone_tag(clean_result)
-                if not v: break
-
-            all_kb_saves: list[tuple] = []
-            while True:
-                clean_result, v = _extract_kb_save_tag(clean_result)
-                if not v: break
-                all_kb_saves.append(v)
-
-            all_kb_updates: list[tuple] = []
-            while True:
-                clean_result, v = _extract_kb_update_tag(clean_result)
-                if not v: break
-                all_kb_updates.append(v)
-
-            all_plugin_config_sets: list[tuple] = []
-            while True:
-                clean_result, v = _extract_plugin_config_set_tag(clean_result)
-                if not v: break
-                all_plugin_config_sets.append(v)
-
-            all_config_updates: list[tuple] = []
-            while True:
-                clean_result, v = _extract_config_update_tag(clean_result)
-                if not v: break
-                all_config_updates.append(v)
-
-            all_mutes: list[tuple] = []
-            while True:
-                clean_result, v = _extract_mute_tag(clean_result)
-                if not v: break
-                all_mutes.append(v)
-
-            all_unmutes: list[str] = []
-            while True:
-                clean_result, v = _extract_unmute_tag(clean_result)
-                if not v: break
-                all_unmutes.append(v)
-
-            # Sub-task spawning: board tasks may spawn BOARD_TASK sub-tasks (no recursion — sub-agents lack this tag)
-            all_subtasks: list[str] = []
-            while True:
-                clean_result, v = _extract_board_task_tag(clean_result)
-                if not v: break
-                all_subtasks.append(v)
-
-            # Orchestrator: spawns multiple parallel sub-tasks under a project label
-            all_orchestrations: list[tuple[str, list[str]]] = []
-            while True:
-                clean_result, v = _extract_orchestrate_tag(clean_result)
-                if not v: break
-                all_orchestrations.append(v)
-
-            # Reminders: schedule a future notification (no LLM at fire time)
-            all_reminders: list[tuple[str, str]] = []
-            while True:
-                clean_result, v = _extract_remind_tag(clean_result)
-                if not v: break
-                all_reminders.append(v)
+            # Strip all output tags and collect them in one pass
+            _tc: _TagCollection = _collect_output_tags(result)
+            clean_result = _tc.clean_result
+            keyboard = _tc.keyboard
+            all_tts = _tc.tts
+            all_maps = _tc.maps
+            all_send_emails = _tc.emails
+            all_github = _tc.github
+            all_kb_saves = _tc.kb_saves
+            all_kb_updates = _tc.kb_updates
+            all_plugin_config_sets = _tc.plugin_config_sets
+            all_config_updates = _tc.config_updates
+            all_mutes = _tc.mutes
+            all_unmutes = _tc.unmutes
+            all_subtasks = _tc.subtasks
+            all_orchestrations = _tc.orchestrations
+            all_reminders = _tc.reminders
 
             reply_markup = {"inline_keyboard": keyboard} if keyboard is not None else None
             initial_msg_id = self._pending_initial_msgs.pop(task.id, None) if task.id else None
