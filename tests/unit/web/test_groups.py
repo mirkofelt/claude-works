@@ -34,7 +34,7 @@ def base_config():
 
 async def _patched_post(client, body):
     conn = await _make_conn()
-    with patch("claude_works.web.app.db.init_config", AsyncMock(return_value=conn)):
+    with patch("claude_works.web.routes.config.db.init_config", AsyncMock(return_value=conn)):
         async with client as c:
             r = await c.post("/api/groups", json=body)
     await conn.close()
@@ -93,7 +93,7 @@ async def test_upsert_rejects_non_integer(client):
 async def test_delete_group(client):
     cfg_mod.set({"groups": {"-100": {"focus": "x"}}})
     conn = await _make_conn()
-    with patch("claude_works.web.app.db.init_config", AsyncMock(return_value=conn)):
+    with patch("claude_works.web.routes.config.db.init_config", AsyncMock(return_value=conn)):
         async with client as c:
             r = await c.delete("/api/groups/-100")
     await conn.close()
@@ -112,7 +112,7 @@ async def test_delete_missing_group_404(client):
 async def test_delete_removes_legacy_int_key(client):
     cfg_mod.set({"groups": {-100: {"focus": "x"}}})
     conn = await _make_conn()
-    with patch("claude_works.web.app.db.init_config", AsyncMock(return_value=conn)):
+    with patch("claude_works.web.routes.config.db.init_config", AsyncMock(return_value=conn)):
         async with client as c:
             r = await c.delete("/api/groups/-100")
     await conn.close()

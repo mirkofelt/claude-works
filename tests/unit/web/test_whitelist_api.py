@@ -55,7 +55,7 @@ async def test_get_empty(client):
 @pytest.mark.asyncio
 async def test_post_rejects_unknown_type(client):
     daemon = _daemon_with_approval(True)
-    with patch("claude_works.web.app._daemon_ref", daemon):
+    with patch("claude_works.web.state.daemon_ref", daemon):
         async with client as c:
             r = await c.post("/api/whitelist", json={"type": "nope", "matcher": {"x": "y"}})
     assert r.status_code == 400
@@ -65,7 +65,7 @@ async def test_post_rejects_unknown_type(client):
 @pytest.mark.asyncio
 async def test_post_rejects_empty_matcher(client):
     daemon = _daemon_with_approval(True)
-    with patch("claude_works.web.app._daemon_ref", daemon):
+    with patch("claude_works.web.state.daemon_ref", daemon):
         async with client as c:
             r = await c.post("/api/whitelist", json={"type": "send_email", "matcher": {}})
     assert r.status_code == 400
@@ -74,7 +74,7 @@ async def test_post_rejects_empty_matcher(client):
 @pytest.mark.asyncio
 async def test_post_rejects_unknown_matcher_field(client):
     daemon = _daemon_with_approval(True)
-    with patch("claude_works.web.app._daemon_ref", daemon):
+    with patch("claude_works.web.state.daemon_ref", daemon):
         async with client as c:
             r = await c.post("/api/whitelist", json={"type": "send_email", "matcher": {"endpoint": "x"}})
     assert r.status_code == 400
@@ -85,7 +85,7 @@ async def test_post_rejects_unknown_matcher_field(client):
 @pytest.mark.asyncio
 async def test_post_denied_by_supervisor_returns_403(client):
     daemon = _daemon_with_approval(False)
-    with patch("claude_works.web.app._daemon_ref", daemon):
+    with patch("claude_works.web.state.daemon_ref", daemon):
         async with client as c:
             r = await c.post("/api/whitelist", json={"type": "send_email", "matcher": {"domain": "example.com"}})
     assert r.status_code == 403
@@ -98,7 +98,7 @@ async def test_post_denied_by_supervisor_returns_403(client):
 async def test_post_no_security_returns_503(client):
     daemon = MagicMock()
     daemon._security = None
-    with patch("claude_works.web.app._daemon_ref", daemon):
+    with patch("claude_works.web.state.daemon_ref", daemon):
         async with client as c:
             r = await c.post("/api/whitelist", json={"type": "send_email", "matcher": {"domain": "example.com"}})
     assert r.status_code == 503
@@ -108,8 +108,8 @@ async def test_post_no_security_returns_503(client):
 async def test_post_approved_persists_rule(client):
     daemon = _daemon_with_approval(True)
     conn = await _mem_conn()
-    with patch("claude_works.web.app._daemon_ref", daemon), \
-         patch("claude_works.web.app.db.init_config", AsyncMock(return_value=conn)):
+    with patch("claude_works.web.state.daemon_ref", daemon), \
+         patch("claude_works.web.routes.config.db.init_config", AsyncMock(return_value=conn)):
         async with client as c:
             r = await c.post("/api/whitelist", json={
                 "type": "github_merge",
@@ -128,7 +128,7 @@ async def test_post_approved_persists_rule(client):
 @pytest.mark.asyncio
 async def test_delete_unknown_returns_404(client):
     daemon = _daemon_with_approval(True)
-    with patch("claude_works.web.app._daemon_ref", daemon):
+    with patch("claude_works.web.state.daemon_ref", daemon):
         async with client as c:
             r = await c.delete("/api/whitelist/deadbeef")
     assert r.status_code == 404
@@ -142,8 +142,8 @@ async def test_delete_requires_approval_and_removes(client):
     ]}})
     daemon = _daemon_with_approval(True)
     conn = await _mem_conn()
-    with patch("claude_works.web.app._daemon_ref", daemon), \
-         patch("claude_works.web.app.db.init_config", AsyncMock(return_value=conn)):
+    with patch("claude_works.web.state.daemon_ref", daemon), \
+         patch("claude_works.web.routes.config.db.init_config", AsyncMock(return_value=conn)):
         async with client as c:
             r = await c.delete("/api/whitelist/abc123")
     await conn.close()
@@ -158,7 +158,7 @@ async def test_delete_denied_keeps_rule(client):
         {"id": "abc123", "type": "send_email", "matcher": {"domain": "example.com"}, "enabled": True},
     ]}})
     daemon = _daemon_with_approval(False)
-    with patch("claude_works.web.app._daemon_ref", daemon):
+    with patch("claude_works.web.state.daemon_ref", daemon):
         async with client as c:
             r = await c.delete("/api/whitelist/abc123")
     assert r.status_code == 403
