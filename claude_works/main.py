@@ -2305,6 +2305,7 @@ Rules:
         """Handle a conversational message directly, bypassing kanban controller."""
         self._start_typing(chat_id)
         task_id: int | None = None
+        reply_timeout = config.agent_timeout("reply_timeout_seconds")
         try:
             agent = self._chat_agents.get(chat_id)
             if agent is None:
@@ -2339,7 +2340,7 @@ Rules:
                     self._chat_task_ids.add(task_id)
                     if reply_to_msg_id:
                         self._chat_reply_to[task_id] = reply_to_msg_id
-            result = await asyncio.wait_for(agent.run(content), timeout=300.0)
+            result = await asyncio.wait_for(agent.run(content), timeout=reply_timeout)
             preliminary_msg_id: int | None = None
             for _ in range(5):
                 clean, tool_feedback = await self._exec_tool_tags(result, user_id=user_id, chat_id=chat_id)
@@ -2363,7 +2364,7 @@ Rules:
                 logger.info("Chat %d: tool results fed back, continuing", chat_id)
                 result = await asyncio.wait_for(
                     agent.run(f"[Tool results]\n{tool_feedback}\n\nContinue with the task."),
-                    timeout=300.0,
+                    timeout=reply_timeout,
                 )
             # Check for BOARD_TASK self-routing tag
             clean_result, board_task_desc = _extract_board_task_tag(result)
@@ -2379,7 +2380,7 @@ Rules:
             await self._on_agent_result(real_task, result, None)
         except asyncio.TimeoutError:
             if task_id and self._board:
-                await self._board.fail(task_id, "timeout (300s)")
+                await self._board.fail(task_id, f"timeout ({reply_timeout:.0f}s)")
             await self._api.send_message(chat_id, "Timeout.")
         except RateLimitError as exc:
             wait = int(exc.retry_after or 30)

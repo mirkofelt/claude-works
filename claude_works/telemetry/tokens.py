@@ -31,7 +31,11 @@ class TokenTracker:
         cache_write_tokens: int = 0,
     ) -> None:
         now = int(time.time())
-        cost = estimate_cost(model, input_tokens, output_tokens)
+        cost = estimate_cost(
+            model, input_tokens, output_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
+        )
         await self._conn.execute(
             """INSERT INTO token_usage
                (agent_id, agent_class, task_id, user_id, chat_id, model,

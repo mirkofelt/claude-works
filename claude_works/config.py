@@ -1,5 +1,8 @@
+import logging
 from typing import Any
 
+
+logger = logging.getLogger(__name__)
 
 _settings: dict[str, Any] | None = None
 _config_updated_at: int = 0  # DB updated_at timestamp; used for hot-reload detection
@@ -37,12 +40,37 @@ _CODER_STAGE_TIERS: dict[str, str] = {
     "qa":        "balanced",
 }
 
-# Approximate pricing in USD per 1M tokens.
+# Agent run timeouts in seconds. Override via config key "agent" in daemon_config
+# (editable through Web UI /api/config — generic config save applies these too).
+#   reply_timeout_seconds — hard cap for an inline chat run before background offload
+#   idle_timeout_seconds  — abort when no agent activity for this long
+#   max_runtime_seconds   — hard cap for background (board) task runs
+_AGENT_TIMEOUT_DEFAULTS: dict[str, float] = {
+    "reply_timeout_seconds": 300.0,
+    "idle_timeout_seconds": 120.0,
+    "max_runtime_seconds": 1800.0,
+}
+
+# Approximate pricing in USD per 1M tokens (verified 2026-06-12, platform.claude.com/docs).
+# Cache rates: 5m cache write = 1.25x input, cache read = 0.1x input.
 # Override per-model in settings.json spending.model_pricing when prices change.
 _MODEL_PRICING_DEFAULTS: dict[str, dict] = {
-    "claude-haiku-4-5-20251001": {"input_per_mtok": 0.80,  "output_per_mtok": 4.00},
-    "claude-sonnet-4-6":         {"input_per_mtok": 3.00,  "output_per_mtok": 15.00},
-    "claude-opus-4-8":           {"input_per_mtok": 15.00, "output_per_mtok": 75.00},
+    "claude-haiku-4-5-20251001": {
+        "input_per_mtok": 1.00, "output_per_mtok": 5.00,
+        "cache_read_per_mtok": 0.10, "cache_write_per_mtok": 1.25,
+    },
+    "claude-sonnet-4-6": {
+        "input_per_mtok": 3.00, "output_per_mtok": 15.00,
+        "cache_read_per_mtok": 0.30, "cache_write_per_mtok": 3.75,
+    },
+    "claude-opus-4-8": {
+        "input_per_mtok": 5.00, "output_per_mtok": 25.00,
+        "cache_read_per_mtok": 0.50, "cache_write_per_mtok": 6.25,
+    },
+    "claude-fable-5": {
+        "input_per_mtok": 10.00, "output_per_mtok": 50.00,
+        "cache_read_per_mtok": 1.00, "cache_write_per_mtok": 12.50,
+    },
 }
 
 
@@ -60,6 +88,23 @@ def get() -> dict[str, Any]:
 
 def section(key: str) -> dict[str, Any]:
     return get().get(key, {})
+
+
+def agent_timeout(key: str) -> float:
+    """Return agent timeout in seconds from config section "agent", with default fallback.
+
+    Invalid or non-positive values fall back to the hardcoded default so a broken
+    config entry can never disable timeouts entirely.
+    """
+    if key not in _AGENT_TIMEOUT_DEFAULTS:
+        raise KeyError(f"Unknown agent timeout key: {key!r}")
+    default = _AGENT_TIMEOUT_DEFAULTS[key]
+    raw = section("agent").get(key, default)
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
 
 
 def _resolve_tier(value: str) -> str:
@@ -128,13 +173,31 @@ def downgrade_model(model_id: str) -> str | None:
     return _resolve_tier(_TIER_ORDER[idx - 1])
 
 
-def estimate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
-    """Estimate cost in USD for a single API call. Returns 0.0 for unknown models."""
+def estimate_cost(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read_tokens: int = 0,
+    cache_write_tokens: int = 0,
+) -> float:
+    """Estimate cost in USD for a single API call.
+
+    Includes prompt-cache tokens (API reports them separately from input_tokens;
+    in agent workloads they dominate total cost). Unknown models are logged and
+    return 0.0 — add them to spending.model_pricing or _MODEL_PRICING_DEFAULTS.
+    """
     pricing = section("spending").get("model_pricing", {})
     rates = pricing.get(model) or _MODEL_PRICING_DEFAULTS.get(model)
     if not rates:
+        logger.warning(
+            "No pricing for model %s — cost booked as $0. Add to spending.model_pricing.",
+            model,
+        )
         return 0.0
+    input_rate = rates.get("input_per_mtok", 0.0)
     return (
-        input_tokens * rates.get("input_per_mtok", 0.0)
+        input_tokens * input_rate
         + output_tokens * rates.get("output_per_mtok", 0.0)
+        + cache_read_tokens * rates.get("cache_read_per_mtok", input_rate * 0.1)
+        + cache_write_tokens * rates.get("cache_write_per_mtok", input_rate * 1.25)
     ) / 1_000_000
