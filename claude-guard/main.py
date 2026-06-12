@@ -6,6 +6,7 @@ import threading
 import time
 
 import docker
+import requests as http_requests
 from flask import Flask, jsonify, request
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -18,6 +19,7 @@ CONTAINER = os.environ.get("MANAGED_CONTAINER", "claude-works")
 IMAGE = os.environ.get("MANAGED_IMAGE", "ghcr.io/mirkofelt/claude-works:latest")
 COMPOSE_FILE = os.environ.get("COMPOSE_FILE", "")
 COMPOSE_SERVICE = os.environ.get("COMPOSE_SERVICE", "claude-works")
+APP_HEALTH_URL = os.environ.get("APP_HEALTH_URL", "")
 RATE_LIMIT_SECONDS = 300
 HEALTH_WAIT_SECONDS = 30
 
@@ -144,6 +146,13 @@ def _deploy_standalone() -> None:
             _recreate(client, _prev_image, _container_attrs)
         raise RuntimeError("Container vanished after deploy, rolled back")
 
+    if not _check_app_health():
+        log.error("App health check failed after deploy — rolling back to %s", _prev_image)
+        _stop_and_remove(client)
+        if _prev_image and _container_attrs:
+            _recreate(client, _prev_image, _container_attrs)
+        raise RuntimeError(f"App degraded after deploy, rolled back to {_prev_image}")
+
 
 def _stop_and_remove(client: docker.DockerClient) -> None:
     try:
@@ -171,6 +180,21 @@ def _recreate(client: docker.DockerClient, image: str, attrs: dict | None = None
     log.info("Recreated %s with image %s", CONTAINER, image)
 
 
+def _check_app_health(retries: int = 6, interval: int = 5) -> bool:
+    """Poll APP_HEALTH_URL until 200 or retries exhausted."""
+    if not APP_HEALTH_URL:
+        return True
+    for _ in range(retries):
+        try:
+            r = http_requests.get(APP_HEALTH_URL, timeout=5)
+            if r.status_code == 200:
+                return True
+        except Exception:
+            pass
+        time.sleep(interval)
+    return False
+
+
 def _wait_for_running(wait: int = HEALTH_WAIT_SECONDS) -> None:
     time.sleep(wait)
     result = subprocess.run(
@@ -180,6 +204,8 @@ def _wait_for_running(wait: int = HEALTH_WAIT_SECONDS) -> None:
     status = result.stdout.strip()
     if status != "running":
         raise RuntimeError(f"Container status after deploy: {status!r}")
+    if not _check_app_health():
+        raise RuntimeError("App /health returned non-200 after deploy — daemon degraded")
 
 
 if __name__ == "__main__":

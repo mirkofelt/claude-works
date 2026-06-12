@@ -10,6 +10,15 @@ from ..deps import get_conn, verify_token
 router = APIRouter()
 
 
+@router.get("/health")
+async def health_check():
+    from fastapi.responses import JSONResponse
+    d = state.daemon_ref
+    if d is None or d._conn is None or not d._running:
+        return JSONResponse({"status": "degraded"}, status_code=503)
+    return {"status": "ok"}
+
+
 @router.get("/api/status", dependencies=[Depends(verify_token)])
 async def status():
     if state.daemon_ref:
