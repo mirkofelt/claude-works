@@ -16,8 +16,10 @@ from typing import Any
 
 import httpx
 import uvicorn
+from datetime import datetime, timezone as _UTC
 
 from . import config, db
+from .config_store import load_config as _load_db_config, save_config as _save_db_config
 from .mode import DaemonMode, ModeManager, detect_startup_mode
 from .telegram.api import TelegramAPI
 from .telegram.poller import TelegramPoller
@@ -34,6 +36,8 @@ from .llm.errors import RateLimitError
 from .agents.mechanic import MechanicAgent, MechanicContext
 from .agents.specialist.generalist import GeneralistAgent
 from .tasks import tags as _tags
+from .kanban.models import _Lane as _Lane
+from .llm.provider import _get_provider as _get_provider
 from .telegram.renderer import md_to_html as _md_to_telegram_html
 from .tasks.reminders import (
     parse_remind_at as _parse_remind_at,
@@ -158,9 +162,8 @@ _extract_tor_restart_tag = _tags.extract_tor_restart
 async def _restart_tor() -> str:
     """Start or restart Tor daemon inside container. Returns status string."""
     try:
-        import os as _os
-        _os.makedirs("/var/lib/tor", exist_ok=True)
-        _os.makedirs("/run/tor", exist_ok=True)
+        os.makedirs("/var/lib/tor", exist_ok=True)
+        os.makedirs("/run/tor", exist_ok=True)
         proc = await asyncio.create_subprocess_exec(
             "tor", "--RunAsDaemon", "1",
             "--DataDirectory", "/var/lib/tor",
@@ -487,7 +490,6 @@ class Daemon:
 
     async def _reset_stale_tasks(self) -> None:
         """Reset tasks interrupted by previous crash/restart so they're retried cleanly."""
-        from .kanban.models import Lane
         # Clear stale hourglass reactions from previous run
         async with self._conn.execute("SELECT task_id, chat_id, tg_msg_id FROM pending_reactions") as cur:
             stale_reactions = await cur.fetchall()
@@ -514,14 +516,14 @@ class Daemon:
             await self._conn.commit()
             logger.info("Startup cleanup: updated %d stale initial messages", len(stale_initials))
 
-        stale_lanes = (Lane.ASSIGNED.value, Lane.IN_PROGRESS.value, Lane.REVIEW.value)
+        stale_lanes = (_Lane.ASSIGNED.value, _Lane.IN_PROGRESS.value, _Lane.REVIEW.value)
         placeholders = ",".join("?" * len(stale_lanes))
         # Reset root tasks to BACKLOG
         async with self._conn.execute(
             f"""UPDATE kanban_tasks SET lane = ?, agent_class = NULL, agent_id = NULL,
                 started_at = NULL, assigned_at = NULL
                 WHERE lane IN ({placeholders}) AND parent_id IS NULL""",
-            (Lane.BACKLOG.value, *stale_lanes),
+            (_Lane.BACKLOG.value, *stale_lanes),
         ) as cur:
             root_reset = cur.rowcount
         await self._conn.commit()
@@ -615,7 +617,6 @@ class Daemon:
 
     async def _spawn_mechanic(self, context: str, mech_mode: MechanicContext) -> None:
         """Spawn MechanicAgent. Handles both MIGRATE and REPAIR modes."""
-        from .llm.provider import get_provider
 
         self._mode_mgr.transition(
             DaemonMode.MIGRATE if mech_mode == MechanicContext.MIGRATE else DaemonMode.REPAIR,
@@ -623,7 +624,7 @@ class Daemon:
         )
 
         try:
-            provider = get_provider(config.section("llm"))
+            provider = _get_provider(config.section("llm"))
         except Exception:
             provider = None
 
@@ -774,7 +775,6 @@ Rules:
     async def web_admin_chat(self, message: str) -> dict:
         """Process admin message from web UI. Returns {reply, buttons} where buttons is a flat list of {label, data}."""
         if self._web_admin_agent is None:
-            from .prompts import load as _load_prompt
             uplink_persona = self._UPLINK_PERSONA_PREFIX + _load_prompt("generalist")
             self._web_admin_agent = GeneralistAgent(
                 task_id=0,
@@ -845,9 +845,8 @@ Rules:
         user = await upsert_user(self._conn, telegram_id, name)
 
         if user.get("metadata"):
-            import json as _json
             try:
-                meta = _json.loads(user["metadata"]) if isinstance(user["metadata"], str) else user["metadata"]
+                meta = json.loads(user["metadata"]) if isinstance(user["metadata"], str) else user["metadata"]
                 background = meta.get("background", "") if isinstance(meta, dict) else ""
             except Exception:
                 background = ""
@@ -1431,9 +1430,8 @@ Rules:
             if not await is_admin(self._conn, from_id):
                 return
             try:
-                from .config_store import load_config as _load_db_cfg
                 conn = await db.init_config()
-                cfg = await _load_db_cfg(conn)
+                cfg = await _load_db_config(conn)
                 row = None
                 if cfg:
                     async with conn.execute(
@@ -1558,10 +1556,9 @@ Rules:
             if not reminders:
                 await self._api.send_message(chat_id, "Keine ausstehenden Erinnerungen.")
             else:
-                from datetime import datetime, timezone as _tz
                 lines = []
                 for r in reminders:
-                    dt = datetime.fromtimestamp(r["remind_at"], tz=_tz.utc).strftime("%d.%m.%Y %H:%M UTC")
+                    dt = datetime.fromtimestamp(r["remind_at"], tz=_UTC.utc).strftime("%d.%m.%Y %H:%M UTC")
                     lines.append(f"#{r['id']} {dt} — {r['message'][:60]}")
                 await self._api.send_message(chat_id, "⏰ Erinnerungen:\n" + "\n".join(lines))
             return
@@ -1940,8 +1937,7 @@ Rules:
                     try:
                         github_cfg = config.section("github")
                         result_data = await _github_api(method, endpoint, body or None, github_cfg)
-                        import json as _json
-                        result_preview = _json.dumps(result_data, ensure_ascii=False, indent=2)[:1200]
+                        result_preview = json.dumps(result_data, ensure_ascii=False, indent=2)[:1200]
                         gh_msg = f"GitHub `{method} {endpoint}`:\n```\n{result_preview}\n```"
                         try:
                             await self._api.send_message(task.chat_id, _md_to_telegram_html(gh_msg), parse_mode="HTML")
@@ -2050,9 +2046,7 @@ Rules:
                         await self._api.send_message(task.chat_id, f"⚠ CONFIG_UPDATE '{cfg_path}' blocked by security officer.")
                         continue
                 try:
-                    import json as _json
-                    new_val = _json.loads(cfg_value_json)
-                    from .config_store import save_config as _cfg_save
+                    new_val = json.loads(cfg_value_json)
                     current = config.get()
                     # Navigate and patch dotted path
                     updated = {**current}
@@ -2065,7 +2059,7 @@ Rules:
                         target = target[k]
                     target[keys[-1]] = new_val
                     conn = await db.init_config()
-                    await _cfg_save(conn, updated)
+                    await _save_db_config(conn, updated)
                     await conn.close()
                     config.set(updated)
                     logger.info("CONFIG_UPDATE: set '%s' by agent for task=%d", cfg_path, task.id)
@@ -2104,13 +2098,12 @@ Rules:
 
             for plugin_name, plugin_cfg in all_plugin_config_sets:
                 try:
-                    from .config_store import save_config as _cfg_save
                     current = config.get()
                     plugins = dict(current.get("plugins") or {})
                     plugins[plugin_name] = plugin_cfg
                     updated = {**current, "plugins": plugins}
                     conn = await db.init_config()
-                    await _cfg_save(conn, updated)
+                    await _save_db_config(conn, updated)
                     await conn.close()
                     config.set(updated)
                     logger.info("PLUGIN_CONFIG_SET: '%s' saved by agent for task=%d", plugin_name, task.id)
@@ -2135,8 +2128,7 @@ Rules:
                     )
                 else:
                     reminder_id = await _add_reminder(self._conn, task.user_id, task.chat_id, remind_at, message)
-                    from datetime import datetime, timezone as _tz
-                    dt_readable = datetime.fromtimestamp(remind_at, tz=_tz.utc).strftime("%d.%m.%Y %H:%M UTC")
+                    dt_readable = datetime.fromtimestamp(remind_at, tz=_UTC.utc).strftime("%d.%m.%Y %H:%M UTC")
                     await self._api.send_message(
                         task.chat_id,
                         f"⏰ Erinnerung #{reminder_id} gesetzt für **{dt_readable}**:\n_{message}_",
@@ -2206,17 +2198,15 @@ Rules:
             ) as cur:
                 row = await cur.fetchone()
             if row:
-                import json as _json
-                self._mention_only_chats = set(_json.loads(row[0]))
+                self._mention_only_chats = set(json.loads(row[0]))
                 logger.info("Loaded %d mention-only chats", len(self._mention_only_chats))
         except Exception as e:
             logger.warning("Failed to load mention_only_chats: %s", e)
 
     async def _save_mention_only_chats(self) -> None:
-        import json as _json
         await self._conn.execute(
             """INSERT OR REPLACE INTO daemon_state (key, value, updated_at) VALUES (?, ?, ?)""",
-            ("mention_only_chats", _json.dumps(sorted(self._mention_only_chats)), int(time.time())),
+            ("mention_only_chats", json.dumps(sorted(self._mention_only_chats)), int(time.time())),
         )
         await self._conn.commit()
 
@@ -2231,17 +2221,15 @@ Rules:
             ) as cur:
                 row = await cur.fetchone()
             if row:
-                import json as _json
-                self._muted_users = {int(k): int(v) for k, v in _json.loads(row[0]).items()}
+                self._muted_users = {int(k): int(v) for k, v in json.loads(row[0]).items()}
                 logger.info("Loaded %d muted users", len(self._muted_users))
         except Exception as e:
             logger.warning("Failed to load muted_users: %s", e)
 
     async def _save_muted_users(self) -> None:
-        import json as _json
         await self._conn.execute(
             """INSERT OR REPLACE INTO daemon_state (key, value, updated_at) VALUES (?, ?, ?)""",
-            ("muted_users", _json.dumps({str(k): v for k, v in self._muted_users.items()}), int(time.time())),
+            ("muted_users", json.dumps({str(k): v for k, v in self._muted_users.items()}), int(time.time())),
         )
         await self._conn.commit()
 
@@ -2597,7 +2585,6 @@ Rules:
         the data. Write operations and output tags (VOICE, MAP, SEND_EMAIL, BUTTONS) are
         left intact for _on_agent_result to handle after the tool loop ends.
         """
-        import json as _json
         tool_results: list[str] = []
 
         while True:
@@ -2623,7 +2610,7 @@ Rules:
                     resp = await hc.get(url, headers=headers)
                 if resp.status_code == 200:
                     data = resp.json()
-                    data_str = _json.dumps(data, ensure_ascii=False, indent=2)
+                    data_str = json.dumps(data, ensure_ascii=False, indent=2)
                     tool_results.append(f"GitHub GET {endpoint}:\n{data_str[:_MAX_TOOL_OUTPUT_CHARS]}")
                 else:
                     tool_results.append(f"GitHub GET {endpoint}: HTTP {resp.status_code} — {resp.text[:200]}")
@@ -2675,9 +2662,8 @@ Rules:
             result = clean
             plugins = config.get().get("plugins") or {}
             plugin_cfg = plugins.get(plugin_name) if isinstance(plugins, dict) else None
-            import json as _json
             if plugin_cfg:
-                tool_results.append(f"PLUGIN_CONFIG_GET '{plugin_name}':\n{_json.dumps(plugin_cfg, ensure_ascii=False, indent=2)}")
+                tool_results.append(f"PLUGIN_CONFIG_GET '{plugin_name}':\n{json.dumps(plugin_cfg, ensure_ascii=False, indent=2)}")
             else:
                 tool_results.append(f"PLUGIN_CONFIG_GET '{plugin_name}': not configured (use PLUGIN_CONFIG_SET to initialize)")
 
@@ -2756,14 +2742,13 @@ Rules:
 
     async def _deploy_guard_action(self, action: str) -> str:
         """Call deploy-guard for status/trigger. Returns result string."""
-        import httpx as _httpx
         dg = config.section("system").get("deploy_guard", {})
         url = dg.get("url", "").rstrip("/")
         token = dg.get("token", "")
         if not url or not token:
             return "deploy_guard not configured (system.deploy_guard.url and .token required)"
         try:
-            async with _httpx.AsyncClient(timeout=15.0) as client:
+            async with httpx.AsyncClient(timeout=15.0) as client:
                 if action == "status":
                     resp = await client.get(f"{url}/api/deploy/status?token={token}")
                 else:
@@ -2831,13 +2816,12 @@ Rules:
                 logger.warning("KB quarantine notification to admin %d failed: %s", admin_id, e)
 
     async def _log_approval(self, *, action_types, content_preview, task_id, chat_id, decision, decided_by, requested_at, decided_at) -> None:
-        import json as _json_al
         try:
             await self._conn.execute(
                 """INSERT INTO approval_log
                    (action_types, content_preview, task_id, chat_id, decision, decided_by, requested_at, decided_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (_json_al.dumps(action_types), content_preview, task_id, chat_id, decision, decided_by, requested_at, decided_at),
+                (json.dumps(action_types), content_preview, task_id, chat_id, decision, decided_by, requested_at, decided_at),
             )
             await self._conn.commit()
         except Exception as e:
@@ -2884,7 +2868,6 @@ Rules:
 
     async def _config_watcher_loop(self) -> None:
         """Poll config.db every 5s; reload in-memory config when updated_at changes."""
-        from .config_store import load_config as _load_db_config
         try:
             while self._running:
                 await asyncio.sleep(5.0)
@@ -2932,9 +2915,8 @@ Rules:
                 )
                 if has_data:
                     try:
-                        import json as _json
                         first_model_pct = round(stats.weekly_models[0][1] * 100, 1) if stats.weekly_models else None
-                        weekly_models_json = _json.dumps([{"name": n, "pct": round(p * 100, 1)} for n, p in stats.weekly_models]) if stats.weekly_models else None
+                        weekly_models_json = json.dumps([{"name": n, "pct": round(p * 100, 1)} for n, p in stats.weekly_models]) if stats.weekly_models else None
                         await self._conn.execute(
                             """INSERT INTO usage_snapshots
                                (tokens_used, tokens_limit, usage_pct,
