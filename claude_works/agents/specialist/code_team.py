@@ -65,7 +65,7 @@ class _TeamMember(BaseAgent):
         addendum: str,
         stage: str,
     ) -> None:
-        super().__init__(task_id, user_context, "coder", provider, token_tracker)
+        super().__init__(task_id, user_context, "coder", provider, token_tracker, False)
         self._persona = persona
         self._addendum = addendum
         self._stage = stage
@@ -97,6 +97,7 @@ class CodeTeam:
         provider: LLMProvider | None = None,
         token_tracker: TokenTracker | None = None,
         persona: str = "",
+        allow_subtasks: bool = True,
     ) -> None:
         self.id = str(uuid.uuid4())[:8]
         self._task_id = task_id

@@ -20,8 +20,9 @@ class ResearchAgent(BaseAgent):
         provider: LLMProvider | None = None,
         token_tracker: TokenTracker | None = None,
         persona: str = "",
+        allow_subtasks: bool = True,
     ) -> None:
-        super().__init__(task_id, user_context, "researcher", provider, token_tracker)
+        super().__init__(task_id, user_context, "researcher", provider, token_tracker, allow_subtasks)
         self._persona = persona
 
     def _system_prompt(self) -> str:
