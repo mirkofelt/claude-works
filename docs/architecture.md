@@ -317,7 +317,9 @@ SQLite-backed. `asyncio.Event` wakes waiting loops when tasks enter a lane.
 
 Persists every LLM call to `token_usage` table. Calculates cost at insert time via `estimate_cost()`. Enforces spending limits before each API call.
 
-- `log(...)` — insert row including `cost_usd` (calculated from model pricing)
+**Cost formula** (per call): `input·in_rate + output·out_rate + cache_read·read_rate + cache_write·write_rate`, all in USD per MTok. Cache tokens are reported by the API separately from `input_tokens` and dominate cost in agent workloads — they must be priced. If a model entry lacks explicit cache rates, fallback multipliers apply: cache read = 0.1× input rate, 5m cache write = 1.25× input rate (Anthropic standard). Unknown models log a warning and book $0 — add new models to `spending.model_pricing` (daemon config) or `_MODEL_PRICING_DEFAULTS` (`config.py`). Defaults verified against platform.claude.com on 2026-06-12: Haiku 4.5 $1/$5, Sonnet 4.6 $3/$15, Opus 4.8 $5/$25, Fable 5 $10/$50 (in/out per MTok).
+
+- `log(...)` — insert row including `cost_usd` (calculated from model pricing incl. cache tokens)
 - `get_allowed_model(requested_model)` → model to use or `None` (reject). Checks daily/monthly limits; returns cheaper model on `on_limit_exceeded=downgrade`, `None` on `reject`. Called by `BaseAgent.run()` before every API call.
 - `total_cost(since?)` → total USD spent in period
 - `stats(since?)` → per-class aggregates including `cost_usd`
