@@ -36,6 +36,9 @@ VISIBILITY_LEVELS = (VISIBILITY_PRIVATE, 1, VISIBILITY_CONTACTS, VISIBILITY_PUBL
 TRUST_LABELS = {0: "Owner", 1: "Vertraut", 2: "Kontakt", 3: "Unbekannt"}
 VISIBILITY_LABELS = {0: "privat", 1: "vertraut", 2: "Kontakte", 3: "öffentlich"}
 
+# KB-Schreibrechte: maximal erlaubte effektive Stufe (0=nur Owner, 1=Owner+Vertraut)
+KB_WRITE_MAX_TRUST = 1
+
 
 def effective_trust(user: dict | None) -> int:
     """Effektive Vertrauensstufe eines Users. Admins sind immer Stufe 0."""
@@ -45,6 +48,17 @@ def effective_trust(user: dict | None) -> int:
         return TRUST_OWNER
     level = user.get("trust_level")
     return level if isinstance(level, int) else TRUST_CONTACT
+
+
+def can_write_kb(trust_level: int, chat_id: int | None) -> bool:
+    """Hartes KB-Schreib-Gate (Daemon-enforced, keine LLM-Policy).
+
+    Gruppenchats (chat_id < 0) schreiben NIE ins KB — unverifizierte Quelle.
+    Direkt-Chats nur, wenn effektive Stufe <= KB_WRITE_MAX_TRUST.
+    """
+    if chat_id is not None and chat_id < 0:
+        return False
+    return trust_level <= KB_WRITE_MAX_TRUST
 
 
 def can_see(user: dict | None, entry: dict | None) -> bool:

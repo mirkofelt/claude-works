@@ -1953,6 +1953,20 @@ Rules:
                 if title and content:
                     try:
                         conn = await db.get_conn()
+                        # Hard-Gate: Gruppenchats/unverifizierte Quellen schreiben NIE ins KB
+                        trust = await trust_mod.chat_trust(conn, task.chat_id, task.user_id)
+                        if not trust_mod.can_write_kb(trust, task.chat_id):
+                            await conn.close()
+                            logger.warning(
+                                "KB_SAVE blocked: chat=%s trust=%d task=%d — unverified source",
+                                task.chat_id, trust, task.id,
+                            )
+                            if task.chat_id is not None and task.chat_id >= 0:
+                                await self._api.send_message(
+                                    task.chat_id,
+                                    "🔒 KB-Schreibzugriff verweigert: Quelle nicht verifiziert.",
+                                )
+                            continue
                         entry_id = await knowledge_store.add(
                             conn, title=title, content=content,
                             type=entry_type, tags=tags, source="agent",
@@ -1967,8 +1981,16 @@ Rules:
             for entry_id, title, entry_type, tags, content in all_kb_updates:
                 try:
                     conn = await db.get_conn()
-                    # Trust-Gate: Eintrag nur änderbar, wenn für diesen Chat sichtbar
                     trust = await trust_mod.chat_trust(conn, task.chat_id, task.user_id)
+                    # Hard-Gate: Gruppenchats/unverifizierte Quellen schreiben NIE ins KB
+                    if not trust_mod.can_write_kb(trust, task.chat_id):
+                        await conn.close()
+                        logger.warning(
+                            "KB_UPDATE blocked: entry=%d chat=%s trust=%d task=%d — unverified source",
+                            entry_id, task.chat_id, trust, task.id,
+                        )
+                        continue
+                    # Trust-Gate: Eintrag nur änderbar, wenn für diesen Chat sichtbar
                     entry = await knowledge_store.get(conn, entry_id)
                     if entry is not None and not trust_mod.can_see({"trust_level": trust}, entry):
                         await conn.close()
