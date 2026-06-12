@@ -147,6 +147,15 @@
       "interval_minutes": 5,
       "repo": "OWNER/REPO",
       "branch": "main"
+    },
+    "email_watch": {
+      "_comment": "Polls the IMAP folder (email.* credentials) for new mail. relevance_filter uses a cheap LLM pass to forward only mail worth attention (fail-open); set false to forward all new mail.",
+      "enabled": false,
+      "interval_minutes": 60,
+      "folder": "INBOX",
+      "relevance_filter": true,
+      "max_per_tick": 15,
+      "snippet_chars": 1200
     }
   }
 }
