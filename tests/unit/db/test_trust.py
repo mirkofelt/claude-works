@@ -41,6 +41,27 @@ def test_missing_fields_default_safe():
     assert trust.effective_trust({"role": "user"}) == 2
 
 
+# --- can_write_kb: hartes Schreib-Gate ---
+
+def test_group_chats_never_write_kb():
+    # Selbst Owner-Stufe in Gruppe: blockiert
+    assert not trust.can_write_kb(0, -4242)
+    assert not trust.can_write_kb(1, -1)
+    assert not trust.can_write_kb(3, -999)
+
+
+def test_direct_chat_write_by_trust():
+    assert trust.can_write_kb(0, 100)       # Owner
+    assert trust.can_write_kb(1, 100)       # Vertraut
+    assert not trust.can_write_kb(2, 100)   # Kontakt
+    assert not trust.can_write_kb(3, 100)   # Unbekannt
+
+
+def test_write_gate_none_chat_id_uses_trust_only():
+    assert trust.can_write_kb(0, None)
+    assert not trust.can_write_kb(2, None)
+
+
 # --- chat_trust: Gruppen ---
 
 async def _add_user(conn, tid, role="user", level=2):
