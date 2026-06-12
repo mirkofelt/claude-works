@@ -123,8 +123,6 @@ CREATE TABLE IF NOT EXISTS token_usage (
 
 CREATE INDEX IF NOT EXISTS idx_token_usage_time ON token_usage(timestamp);
 CREATE INDEX IF NOT EXISTS idx_token_usage_class ON token_usage(agent_class, timestamp);
-CREATE INDEX IF NOT EXISTS idx_token_usage_run ON token_usage(run_id);
-CREATE INDEX IF NOT EXISTS idx_token_usage_source ON token_usage(source, timestamp);
 
 CREATE TABLE IF NOT EXISTS knowledge (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
