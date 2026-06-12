@@ -113,6 +113,14 @@ class ControllerAgent:
     async def _handle_recovery(self, task: "KanbanTask") -> None:
         from ..kanban.models import KanbanTask as _KanbanTask  # avoid circular at module level
         task_id = task.id
+
+        if not task.content or not task.content.strip():
+            # Nothing to retry, nothing to enrich — recovery is pointless and
+            # would just ping-pong the task between failed and backlog forever.
+            self._exhausted.add(task_id)
+            logger.warning("Recovery: task %d has empty content — abandoning permanently", task_id)
+            return
+
         attempts = self._recovery_attempts.get(task_id, 0) + 1
         self._recovery_attempts[task_id] = attempts
 

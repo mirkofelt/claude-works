@@ -1040,6 +1040,7 @@ Rules:
             return
 
         # Mention-only mode: log message to DB (done above) but skip response unless @mentioned
+        addressed_bot = False
         if chat_id in self._mention_only_chats:
             # Reply-to check: only match replies to THIS bot (not any bot)
             reply_from_id = msg.get("reply_to_message", {}).get("from", {}).get("id", 0)
@@ -1064,6 +1065,7 @@ Rules:
             if not is_mentioned and not is_reply_to_bot:
                 logger.debug("Mention-only: silently logged msg in chat=%d", chat_id)
                 return
+            addressed_bot = True
             # Strip @mention from text (case-insensitive) so agent doesn't see it
             if bot_lower and text:
                 text = re.sub(re.escape(f"@{self._bot_username}"), "", text, flags=re.IGNORECASE).strip()
@@ -1101,6 +1103,21 @@ Rules:
             except Exception as e:
                 logger.warning("Voice download/transcription error: %s", e)
                 content = "[Voice message — transcription failed]" + ("\n" + content if content else "")
+
+        if not content.strip():
+            # Photo/sticker/document without caption, or bare @mention.
+            # Nothing to feed the LLM — skip instead of erroring in the provider.
+            logger.info("Empty content chat=%d user=%d — skipping LLM call", chat_id, telegram_id)
+            if addressed_bot:
+                try:
+                    await self._api.send_message(
+                        chat_id,
+                        "Leere Nachricht — schreib dazu, was du brauchst.",
+                        reply_to_message_id=incoming.telegram_message_id,
+                    )
+                except Exception:
+                    pass
+            return
 
         urls = _URL_RE.findall(content)
         if urls:
