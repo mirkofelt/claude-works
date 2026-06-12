@@ -2524,7 +2524,7 @@ Rules:
         depth_user, depth = self._exchange_depth.get(chat_id, (0, 0))
         self._exchange_depth[chat_id] = (user_id, depth + 1 if depth_user == user_id else 1)
 
-    async def _load_chat_history(self, chat_id: int, limit: int = 30) -> list[dict]:
+    async def _load_chat_history(self, chat_id: int, limit: int = 50) -> list[dict]:
         """Load recent conversation from DB as {role, content} pairs, chronological order.
 
         Only includes bot messages from direct-chat tasks (agent_id='chat') to prevent
@@ -2601,8 +2601,32 @@ Rules:
             # agent shows no life sign for idle_timeout; reply_timeout stays the
             # hard cap for the whole inline run (incl. tool loop) — then offload.
             deadline = run_started + reply_timeout
+            # Auto-inject relevant KB entries as context prefix before running agent
+            enriched_content = content
+            try:
+                _kb_conn = await db.get_conn()
+                _trust = await trust_mod.chat_trust(_kb_conn, chat_id, user_id)
+                _kb_hits = await knowledge_store.search(_kb_conn, content, limit=5, trust=_trust)
+                await _kb_conn.close()
+                if _kb_hits:
+                    _kb_lines = []
+                    for _e in _kb_hits:
+                        _tags = ", ".join(_e.get("tags") or [])
+                        _tag_str = f" [{_tags}]" if _tags else ""
+                        _body = _e["content"][:500]
+                        _kb_lines.append(f"- [{_e['type']}]{_tag_str} **{_e['title']}**: {_body}")
+                    enriched_content = (
+                        "## Relevant Knowledge Base Entries\n"
+                        + "\n".join(_kb_lines)
+                        + "\n\n---\n\n"
+                        + content
+                    )
+                    logger.debug("Chat %d: injected %d KB entries as context", chat_id, len(_kb_hits))
+            except Exception as _kb_err:
+                logger.debug("Chat %d: KB auto-inject failed: %s", chat_id, _kb_err)
+
             result = await run_with_heartbeat(
-                agent.run(content), agent.heartbeat, idle_timeout, deadline=deadline
+                agent.run(enriched_content), agent.heartbeat, idle_timeout, deadline=deadline
             )
             preliminary_msg_id: int | None = None
             for _ in range(5):
