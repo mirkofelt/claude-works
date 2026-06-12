@@ -36,6 +36,7 @@ from .agents.specialist.generalist import GeneralistAgent
 from .auth.users import upsert_user, is_allowed, is_admin, set_role, set_trust
 from .auth import trust as trust_mod
 from .security import SecuritySupervisor
+from .security import whitelist as _whitelist
 from .web.app import app as web_app, set_daemon as _set_web_daemon, set_setup_token as _set_web_setup_token
 from .logging_setup import setup as _setup_logging, uvicorn_log_config as _uvicorn_log_config
 
@@ -2024,9 +2025,13 @@ Rules:
 
             for to, subject, body in all_send_emails:
                 email_content = f"To: {to}\nSubject: {subject}\n\n{body}"
-                email_allowed = await self._security.check_action(
-                    "email_send", email_content, task_id=task.id, chat_id=task.chat_id, user_id=task.user_id
-                )
+                if self._security.whitelisted("send_email", _whitelist.email_context(to)):
+                    logger.info("Email to %s pre-approved by whitelist for task=%d", to, task.id)
+                    email_allowed = True
+                else:
+                    email_allowed = await self._security.check_action(
+                        "email_send", email_content, task_id=task.id, chat_id=task.chat_id, user_id=task.user_id
+                    )
                 if not email_allowed:
                     logger.info("Email send blocked by security officer for task=%d", task.id)
                     await self._api.send_message(task.chat_id, "Email blocked by security officer — possible data leak detected.")
@@ -2046,14 +2051,20 @@ Rules:
                 is_write = method in ("POST", "PUT", "PATCH", "DELETE")
                 do_exec = True
                 if is_write:
-                    gh_content = f"{method} {endpoint}\n\n{body or ''}"
-                    gh_allowed = await self._security.check_action(
-                        "github_write", gh_content, task_id=task.id, chat_id=task.chat_id, user_id=task.user_id
-                    )
-                    if not gh_allowed:
-                        logger.info("GitHub write blocked by security officer for task=%d", task.id)
-                        await self._api.send_message(task.chat_id, "GitHub write blocked by security officer — possible data leak detected.")
-                        do_exec = False
+                    wl_type = _whitelist.classify_github(method, endpoint)
+                    wl_ctx = _whitelist.github_context(method, endpoint, body)
+                    if self._security.whitelisted(wl_type, wl_ctx):
+                        logger.info("GitHub %s %s pre-approved by whitelist (%s) for task=%d",
+                                    method, endpoint, wl_type, task.id)
+                    else:
+                        gh_content = f"{method} {endpoint}\n\n{body or ''}"
+                        gh_allowed = await self._security.check_action(
+                            "github_write", gh_content, task_id=task.id, chat_id=task.chat_id, user_id=task.user_id
+                        )
+                        if not gh_allowed:
+                            logger.info("GitHub write blocked by security officer for task=%d", task.id)
+                            await self._api.send_message(task.chat_id, "GitHub write blocked by security officer — possible data leak detected.")
+                            do_exec = False
                 if do_exec:
                     try:
                         github_cfg = config.section("github")
@@ -2138,6 +2149,18 @@ Rules:
                     logger.warning("CONFIG_UPDATE: blocked sensitive path '%s' for task=%d", cfg_path, task.id)
                     await self._api.send_message(task.chat_id, f"⚠ CONFIG_UPDATE blocked: '{cfg_path}' is a protected key.")
                     continue
+                # config_put write gate — whitelist (key-prefix) bypasses review.
+                if self._security.whitelisted("config_put", _whitelist.config_context(cfg_path)):
+                    logger.info("CONFIG_UPDATE '%s' pre-approved by whitelist for task=%d", cfg_path, task.id)
+                else:
+                    cfg_allowed = await self._security.check_action(
+                        "config_put", f"{cfg_path} = {cfg_value_json}",
+                        task_id=task.id, chat_id=task.chat_id, user_id=task.user_id,
+                    )
+                    if not cfg_allowed:
+                        logger.info("CONFIG_UPDATE '%s' blocked by security officer for task=%d", cfg_path, task.id)
+                        await self._api.send_message(task.chat_id, f"⚠ CONFIG_UPDATE '{cfg_path}' blocked by security officer.")
+                        continue
                 try:
                     import json as _json
                     new_val = _json.loads(cfg_value_json)

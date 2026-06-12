@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .rules import Rule, build_rules, check_content
+from . import whitelist as _whitelist
 from ..config import section, get_agent_model
 from ..prompts import load as _load_prompt
 
@@ -31,6 +32,7 @@ class PendingApproval:
     decided_by: int | None = None
     specific_key: str | None = None   # e.g. "email_send:x@y.de"
     specific_label: str | None = None  # e.g. "an x@y.de"
+    meta: bool = False  # meta-protected approval (e.g. whitelist change) — no "always" shortcut
 
 
 class SecuritySupervisor:
@@ -138,6 +140,28 @@ class SecuritySupervisor:
         self._save_allowlist()
         logger.info("Security: specific key '%s' permanently allowed", specific_key)
 
+    # -- Whitelist (pre-approval rules) --------------------------------------
+    # Rules live in daemon_config under the "whitelist" key and are read live so
+    # that API changes take effect without reconfiguring the supervisor.
+
+    @staticmethod
+    def _whitelist_rules() -> list[dict]:
+        rules = section("whitelist").get("rules")
+        return rules if isinstance(rules, list) else []
+
+    def whitelisted(self, write_type: str, context: dict) -> bool:
+        """True if a pre-approval rule grants this specific write op.
+
+        A match means the op skips BOTH the human approval gate and the
+        Security-Officer review — i.e. direct execute. Never applies to the
+        meta action type used for whitelist changes themselves.
+        """
+        if not self.enabled:
+            return True
+        if write_type not in _whitelist.WRITE_TYPES:
+            return False
+        return _whitelist.matches(write_type, context, self._whitelist_rules())
+
     async def _run_so_check(self, action_type: str, content: str, task_id: int | None) -> bool:
         """LLM content review — always runs when security is enabled, regardless of allowlist."""
         try:
@@ -196,11 +220,19 @@ class SecuritySupervisor:
         # Stage 1: user approval — skipped if pre-approved (action-type OR specific key)
         if not self._skip_all:
             need_approval = []
+            whitelisted_any = False
+            whitelist_rules = self._whitelist_rules()
             for t in triggered:
                 if t in self._always_allowed_actions:
                     continue
                 specific = self._extract_specific(t, content)
                 if specific and specific[0] in self._always_allowed_actions:
+                    continue
+                # Pre-approval whitelist: skip human approval only when EVERY
+                # occurrence of this write type in the response is covered.
+                if _whitelist.all_whitelisted(t, content, whitelist_rules):
+                    logger.info("Security: action '%s' pre-approved by whitelist", t)
+                    whitelisted_any = True
                     continue
                 need_approval.append(t)
             if need_approval:
@@ -209,9 +241,33 @@ class SecuritySupervisor:
                     return False
                 # User explicitly approved — trust the decision, skip SO review
                 return True
+            # All triggers cleared and at least one was whitelist-granted →
+            # direct execute: skip the Security-Officer review too.
+            if whitelisted_any:
+                return True
 
         # Stage 2: SO content review — only when no explicit user approval was required
         return await self._run_so_check("response", content, task_id)
+
+    async def require_approval(
+        self,
+        action_types: list[str],
+        content: str,
+        task_id: int | None = None,
+        chat_id: int = 0,
+        user_id: int = 0,
+    ) -> bool:
+        """Unconditional human approval — bypasses allowlist/whitelist/skip_all.
+
+        Used for meta-protected operations (e.g. changing the whitelist itself):
+        these must ALWAYS be confirmed by a supervisor and can never be
+        pre-approved away. Returns False if security is disabled? No — meta
+        approval is enforced even when the general gate is off, because the very
+        act it guards is a security-policy change.
+        """
+        return await self._request_approval(
+            action_types, content, task_id, chat_id, user_id, meta=True
+        )
 
     async def _request_approval(
         self,
@@ -220,15 +276,17 @@ class SecuritySupervisor:
         task_id: int | None = None,
         chat_id: int = 0,
         user_id: int = 0,
+        meta: bool = False,
     ) -> bool:
         approval_id = self._next_id
         self._next_id += 1
 
         specific_key, specific_label = None, None
-        primary_type = action_types[0] if action_types else ""
-        specific = self._extract_specific(primary_type, content)
-        if specific:
-            specific_key, specific_label = specific
+        if not meta:
+            primary_type = action_types[0] if action_types else ""
+            specific = self._extract_specific(primary_type, content)
+            if specific:
+                specific_key, specific_label = specific
 
         approval = PendingApproval(
             id=approval_id,
@@ -240,6 +298,7 @@ class SecuritySupervisor:
             requested_at=time.time(),
             specific_key=specific_key,
             specific_label=specific_label,
+            meta=meta,
         )
         self._pending[approval_id] = approval
 
@@ -293,16 +352,21 @@ class SecuritySupervisor:
             f"Vorschau: {preview}"
         )
         primary_type = approval.action_types[0] if approval.action_types else ""
-        row1 = [
-            {"text": "✅ Einmalig", "callback_data": f"sec_once:{approval.id}"},
-            {"text": self._action_label(primary_type), "callback_data": f"sec_always_action:{approval.id}"},
-        ]
-        row2 = [{"text": "❌ Ablehnen", "callback_data": f"sec_deny:{approval.id}"}]
-        if approval.specific_key and approval.specific_label:
-            row2.insert(0, {
-                "text": f"🔁 Immer {approval.specific_label}",
-                "callback_data": f"sec_always_specific:{approval.id}",
-            })
+        if approval.meta:
+            # Meta-protected: only one-shot approve or deny — never "always".
+            row1 = [{"text": "✅ Einmalig", "callback_data": f"sec_once:{approval.id}"}]
+            row2 = [{"text": "❌ Ablehnen", "callback_data": f"sec_deny:{approval.id}"}]
+        else:
+            row1 = [
+                {"text": "✅ Einmalig", "callback_data": f"sec_once:{approval.id}"},
+                {"text": self._action_label(primary_type), "callback_data": f"sec_always_action:{approval.id}"},
+            ]
+            row2 = [{"text": "❌ Ablehnen", "callback_data": f"sec_deny:{approval.id}"}]
+            if approval.specific_key and approval.specific_label:
+                row2.insert(0, {
+                    "text": f"🔁 Immer {approval.specific_label}",
+                    "callback_data": f"sec_always_specific:{approval.id}",
+                })
         keyboard = {"inline_keyboard": [row1, row2]}
         for admin_id in self._admin_ids:
             try:
