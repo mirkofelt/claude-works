@@ -108,13 +108,13 @@ openssl rand -hex 32
 DEPLOY_TOKEN=&lt;your-token&gt;
 </code></pre>
 
-<p><strong>3. Start deploy-guard</strong></p>
+<p><strong>3. Start claude-guard</strong></p>
 
 <pre><code class="language-bash">
-docker-compose up -d deploy-guard
+docker-compose up -d claude-guard
 </code></pre>
 
-<p>The <code>deploy-guard</code> service is defined in <code>docker-compose.yml</code>. It mounts:</p>
+<p>The <code>claude-guard</code> service is defined in <code>docker-compose.yml</code>. It mounts:</p>
 <ul>
 <li><code>/var/run/docker.sock</code> — to control Docker</li>
 <li><code>./docker-compose.yml:/compose/docker-compose.yml:ro</code> — to recreate the service</li>
@@ -124,7 +124,7 @@ docker-compose up -d deploy-guard
 
 <p>Settings → Developer Mode → Deploy Guard:</p>
 <ul>
-<li>Guard URL: <code>http://deploy-guard:9876</code> (Docker internal network)</li>
+<li>Guard URL: <code>http://claude-guard:9876</code> (Docker internal network)</li>
 <li>Deploy Token: paste the token from Step 1</li>
 <li>Click <strong>Test Connection</strong> to verify</li>
 </ul>
@@ -137,7 +137,7 @@ docker-compose up -d deploy-guard
 
 <p>Add two secrets to the GitHub repository:</p>
 <ul>
-<li><code>DEPLOY_WEBHOOK_URL</code> — the deploy-guard URL reachable from CI (e.g. via Cloudflare Tunnel or home VPN)</li>
+<li><code>DEPLOY_WEBHOOK_URL</code> — the claude-guard URL reachable from CI (e.g. via Cloudflare Tunnel or home VPN)</li>
 <li><code>DEPLOY_TOKEN</code> — the same token as above</li>
 </ul>
 
@@ -163,7 +163,7 @@ curl -sf -X POST "http://localhost:9876/rollback?token=YOUR_TOKEN"
 
 <ul>
 <li><code>dev</code> — active development; CI builds <code>:dev</code> tag; no auto-deploy</li>
-<li><code>main</code> — production-ready; CI builds <code>:latest</code> and <code>:v{sha}</code> tags; optional auto-deploy via deploy-guard</li>
+<li><code>main</code> — production-ready; CI builds <code>:latest</code> and <code>:v{sha}</code> tags; optional auto-deploy via claude-guard</li>
 </ul>
 
 </div>
