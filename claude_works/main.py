@@ -2087,9 +2087,17 @@ Rules:
                 if title and content:
                     try:
                         conn = await db.get_conn()
-                        # Trust-Gate (Schreibseite): nicht vertraute Chats → Quarantäne
                         trust = await trust_mod.chat_trust(conn, task.chat_id, task.user_id)
+                        # Hard-Gate: Gruppenchats schreiben NIE ins KB — auch keine Quarantäne.
+                        if task.chat_id is not None and task.chat_id < 0:
+                            await conn.close()
+                            logger.warning(
+                                "KB_SAVE blocked: group chat=%s trust=%d task=%d — unverified source",
+                                task.chat_id, trust, task.id,
+                            )
+                            continue
                         if _kb_write_allowed(trust):
+                            # Direkt-Chat, Owner/Vertraut → direkt ins KB
                             entry_id = await knowledge_store.add(
                                 conn, title=title, content=content,
                                 type=entry_type, tags=tags, source=f"chat:{task.chat_id}",
@@ -2100,6 +2108,7 @@ Rules:
                             await conn.close()
                             logger.info("KB_SAVE: created entry %d by agent for task=%d", entry_id, task.id)
                         else:
+                            # Direkt-Chat, nicht ausreichend vertraut → Quarantäne, Admin-Review
                             entry_id = await knowledge_store.add(
                                 conn, title=title, content=content,
                                 type=entry_type, tags=tags, source=f"chat:{task.chat_id}",
@@ -2120,13 +2129,21 @@ Rules:
             for entry_id, title, entry_type, tags, content in all_kb_updates:
                 try:
                     conn = await db.get_conn()
-                    # Trust-Gate: Eintrag nur änderbar, wenn für diesen Chat sichtbar
                     trust = await trust_mod.chat_trust(conn, task.chat_id, task.user_id)
+                    # Hard-Gate: Gruppenchats dürfen KB nie ändern.
+                    if task.chat_id is not None and task.chat_id < 0:
+                        await conn.close()
+                        logger.warning(
+                            "KB_UPDATE blocked: group chat=%s entry=%d trust=%d task=%d — unverified source",
+                            task.chat_id, entry_id, trust, task.id,
+                        )
+                        continue
                     # Schreibseite: Updates nur für Owner/Vertraut (trust <= 1)
                     if not _kb_write_allowed(trust):
                         await conn.close()
                         logger.warning("KB_UPDATE blocked: trust=%d (entry=%d, task=%d)", trust, entry_id, task.id)
                         continue
+                    # Trust-Gate: Eintrag nur änderbar, wenn für diesen Chat sichtbar
                     entry = await knowledge_store.get(conn, entry_id)
                     if entry is not None and not trust_mod.can_see({"trust_level": trust}, entry):
                         await conn.close()
