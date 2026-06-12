@@ -970,8 +970,8 @@ Rules:
 
 """
 
-    async def web_admin_chat(self, message: str) -> str:
-        """Process admin message from web UI, return reply. Maintains multi-turn context."""
+    async def web_admin_chat(self, message: str) -> dict:
+        """Process admin message from web UI. Returns {reply, buttons} where buttons is a flat list of {label, data}."""
         if self._web_admin_agent is None:
             from .prompts import load as _load_prompt
             uplink_persona = self._UPLINK_PERSONA_PREFIX + _load_prompt("generalist")
@@ -990,12 +990,15 @@ Rules:
         snapshot = await self._build_status_snapshot()
         enriched = f"{snapshot}\n\n---\n\n{message}"
         reply = await self._web_admin_agent.run(enriched)
+        clean_reply, keyboard = _parse_buttons(reply)
+        buttons = [btn for row in (keyboard or []) for btn in row]
+        flat_buttons = [{"label": b["text"], "data": b["callback_data"]} for b in buttons]
         await self._conn.execute(
             "INSERT INTO admin_chat_messages (role, content, sent_at) VALUES (?, ?, ?)",
-            ("assistant", reply, int(time.time())),
+            ("assistant", clean_reply, int(time.time())),
         )
         await self._conn.commit()
-        return reply
+        return {"reply": clean_reply, "buttons": flat_buttons}
 
     async def web_admin_history(self, limit: int = 100) -> list[dict]:
         """Return last N admin chat messages in chronological order."""

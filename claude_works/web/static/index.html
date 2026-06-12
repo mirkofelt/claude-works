@@ -2114,6 +2114,25 @@ async function sendAdminChat() {
     clearInterval(_elapsedTimer);
     pending.remove();
     _appendChatBubble(history, 'assistant', d ? d.reply : '(no response)');
+    if (d && d.buttons && d.buttons.length > 0) {
+      const btnRow = document.createElement('div');
+      btnRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;padding:4px 0 4px 52px';
+      d.buttons.forEach(b => {
+        const chip = document.createElement('button');
+        chip.textContent = b.label;
+        chip.style.cssText = 'background:#1c2128;border:1px solid #30363d;color:#58a6ff;font-family:inherit;font-size:12px;padding:3px 10px;border-radius:4px;cursor:pointer;transition:background .15s';
+        chip.onmouseover = () => { chip.style.background = '#21262d'; };
+        chip.onmouseout = () => { chip.style.background = '#1c2128'; };
+        chip.onclick = () => {
+          btnRow.remove();
+          document.getElementById('chatInput').value = b.data;
+          sendAdminChat();
+        };
+        btnRow.appendChild(chip);
+      });
+      history.appendChild(btnRow);
+    }
+    history.scrollTop = history.scrollHeight;
   } catch (e) {
     clearTimeout(chatTimer);
     clearInterval(_elapsedTimer);

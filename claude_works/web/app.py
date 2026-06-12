@@ -479,8 +479,8 @@ async def admin_chat(body: dict):
     message = body.get("message", "").strip()
     if not message:
         raise HTTPException(status_code=400, detail="message required")
-    reply = await _daemon_ref.web_admin_chat(message)
-    return {"reply": reply}
+    result = await _daemon_ref.web_admin_chat(message)
+    return result
 
 
 @app.get("/api/repair/report", dependencies=[Depends(_verify_token)])
