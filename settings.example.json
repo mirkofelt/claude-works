@@ -76,6 +76,13 @@
     "default_role": "blocked",
     "admin_ids": [123456789]
   },
+  "groups": {
+    "-1001234567890": {
+      "persona": "",
+      "focus": "Nur Hausautomation und Termine — sonst kurz abwimmeln",
+      "communication_style": "Sachlich, knapp, Deutsch"
+    }
+  },
   "supervisor": {
     "health_check_interval": 60,
     "max_restart_attempts": 3,

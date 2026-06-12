@@ -90,6 +90,22 @@ def section(key: str) -> dict[str, Any]:
     return get().get(key, {})
 
 
+def group_config(chat_id: int | None) -> dict[str, Any]:
+    """Per-group overrides keyed by chat_id (negative).
+
+    Returns the group's override dict ({persona, focus, communication_style})
+    or {} for direct chats / unconfigured groups. JSON object keys are strings,
+    so we look the chat_id up both as str and int.
+    """
+    if chat_id is None or chat_id >= 0:
+        return {}
+    groups = section("groups")
+    entry = groups.get(str(chat_id))
+    if entry is None:
+        entry = groups.get(chat_id)
+    return entry if isinstance(entry, dict) else {}
+
+
 def agent_timeout(key: str) -> float:
     """Return agent timeout in seconds from config section "agent", with default fallback.
 

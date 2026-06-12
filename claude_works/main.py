@@ -79,6 +79,53 @@ def _strip_echoed_tool_results(text: str) -> str:
     return _ECHOED_TOOL_RE.sub("[tool output stripped]", text).strip()
 
 
+def _strip_echoed_payloads(text: str, payloads: "list[str]") -> str:
+    """Strip tool-output / fetched content the agent echoed verbatim into its reply.
+
+    Content-based, not format-based: we know the exact payloads handed to the agent
+    this turn (GitHub JSON, web-fetch text, KB results, …), so we remove their literal
+    occurrences. This catches raw JSON, HTML and web text that the GitHub-only
+    `_ECHOED_TOOL_RE` regex never matched. The regex still runs afterwards as a
+    backstop for the no-payloads-tracked case.
+    """
+    if not text or not payloads:
+        return _strip_echoed_tool_results(text)
+
+    echo_lines: set[str] = set()       # distinctive long lines
+    echo_lines_short: set[str] = set()  # short structural/JSON lines (only stripped if they look like data)
+    for p in payloads:
+        block = p.strip()
+        # Whole-payload echo: drop it outright before line filtering.
+        if len(block) >= _MIN_ECHO_LINE_CHARS and block in text:
+            text = text.replace(block, "")
+        for ln in p.splitlines():
+            s = ln.strip()
+            if not s:
+                continue
+            if len(s) >= _MIN_ECHO_LINE_CHARS:
+                echo_lines.add(s)
+            else:
+                echo_lines_short.add(s)
+
+    def _is_echo(line: str) -> bool:
+        s = line.strip()
+        if s in echo_lines:
+            return True
+        # Short lines only count as echoes when they're clearly serialized data
+        # (JSON braces/brackets or "key": value pairs) — never natural prose.
+        if s in echo_lines_short and _STRUCTURAL_LINE_RE.match(s):
+            return True
+        return False
+
+    if echo_lines or echo_lines_short:
+        kept = [ln for ln in text.splitlines() if not _is_echo(ln)]
+        text = "\n".join(kept)
+
+    # Collapse blank runs left by removed lines, then apply the regex backstop.
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return _strip_echoed_tool_results(text)
+
+
 def _extract_voice_tag(text: str) -> "tuple[str, str | None]":
     """Extract [VOICE: text] tag. Returns (clean_text, tts_text or None)."""
     m = re.search(r'\[VOICE:\s*([^\]]+)\]', text, re.DOTALL)
@@ -307,6 +354,17 @@ _PLUGINS_DIR = os.environ.get("PLUGINS_DIR", "/data/plugins")
 _URL_RE = re.compile(r'https?://[^\s<>"\']+')
 _MAX_FETCH_URLS = 3
 _MAX_FETCH_CHARS = 4000
+# Hard cap on any single tool-output block injected back into the agent prompt.
+# Keep in sync with _MAX_FETCH_CHARS so no source can blow past the context budget.
+_MAX_TOOL_OUTPUT_CHARS = 4000
+# Shortest verbatim line treated as an echoed tool-output line (below this we keep it,
+# to avoid nuking legitimate short prose that happens to match).
+_MIN_ECHO_LINE_CHARS = 24
+# Short echoed lines are only stripped when they look like serialized data, never prose:
+# JSON braces/brackets (`{`, `},`, `[`) or `"key": value` pairs.
+_STRUCTURAL_LINE_RE = re.compile(r'^(?:[{}\[\],]+|"[\w-]+":.*)$')
+# Cap on retained payloads per chat so the echo-filter accumulator can't grow unbounded.
+_MAX_TRACKED_PAYLOADS = 24
 _TOR_SOCKS_DEFAULT = "socks5://127.0.0.1:9050"
 
 
@@ -440,6 +498,13 @@ class Daemon:
         self._pending_direct_fetches: dict[str, dict] = {}
         self._pending_reauth: dict[int, asyncio.subprocess.Process] = {}  # chat_id → proc
         self._chat_agents: dict[int, GeneralistAgent] = {}  # chat_id → persistent chat agent
+        # chat_id → fingerprint of the config-derived inputs baked into that agent's
+        # system prompt. On config reload we drop only agents whose fingerprint changed,
+        # instead of nuking every warm conversation project-wide.
+        self._chat_agent_fingerprints: dict[int, tuple] = {}
+        # chat_id → tool-output / fetched payloads handed to the agent this turn.
+        # Used by _strip_echoed_payloads to remove verbatim echoes before sending.
+        self._recent_tool_payloads: dict[int, list[str]] = {}
         self._bot_username: str = ""  # loaded at startup via getMe
         self._bot_id: int = 0  # loaded at startup via getMe
         self._mention_only_chats: set[int] = set()  # chat_ids where bot only responds to @mention
@@ -1192,6 +1257,7 @@ Rules:
                 page_text = await _fetch_url_content(url, proxy=tor_proxy)
                 if page_text is not None:
                     fetched_sections.append(f"[Content of {url}]\n{page_text}")
+                    self._track_payloads(chat_id, [page_text])
                     logger.debug("Fetched URL via Tor: %s (%d chars)", url, len(page_text))
                 else:
                     urls_blocked.append(url)
@@ -1337,6 +1403,7 @@ Rules:
                     page_text = await _fetch_url_content(url)  # direct, no proxy
                     if page_text:
                         content = content + f"\n\n---\n\n[Content of {url}]\n{page_text}"
+                        self._track_payloads(chat_id, [page_text])
                         logger.info("Direct URL fetch approved by user: %s", url)
             task = KanbanTask(
                 id=None,
@@ -1591,7 +1658,11 @@ Rules:
                     config.set(cfg)
                     if row:
                         config._config_updated_at = row["updated_at"]
-                    await self._api.send_message(chat_id, "Config reloaded from DB.")
+                    dropped = self._invalidate_stale_chat_agents()
+                    await self._api.send_message(
+                        chat_id,
+                        f"Config reloaded from DB. {dropped} chat agent(s) refreshed.",
+                    )
                     logger.info("Config reloaded via /reload_config by user=%d", from_id)
                 else:
                     await self._api.send_message(chat_id, "No config found in DB.")
@@ -1790,6 +1861,11 @@ Rules:
 
         if task.parent_id is not None:
             return
+        # Top-level turn finished (success OR error): always release this chat's
+        # echo-payload bucket. A turn that errors before reaching the strip below
+        # must not leave stale payloads that filter legitimate text out of the
+        # NEXT turn's reply.
+        echoed_payloads = self._recent_tool_payloads.pop(task.chat_id, [])
         if result:
             allowed = await self._security.check(
                 result, task_id=task.id, chat_id=task.chat_id, user_id=task.user_id
@@ -1879,8 +1955,10 @@ Rules:
                 except Exception:
                     pass
 
-            # Strip raw tool-result blocks the agent may have echoed back
-            clean_result = _strip_echoed_tool_results(clean_result)
+            # Strip tool-output / fetched content the agent may have echoed back.
+            # Content-based: use the exact payloads handed to the agent this turn
+            # (popped above so both success and error paths release the bucket).
+            clean_result = _strip_echoed_payloads(clean_result, echoed_payloads)
 
             if clean_result.strip():
                 html_result = _md_to_telegram_html(clean_result)
@@ -2316,19 +2394,28 @@ Rules:
         try:
             agent = self._chat_agents.get(chat_id)
             if agent is None:
-                # Per-user persona overrides global chief persona
+                # Per-user persona overrides global chief persona;
+                # a per-group persona (if configured) wins inside that group.
                 persona = self._user_personas.get(user_id, "")
                 if not persona and self._coordinator and self._coordinator._chief:
                     persona = self._coordinator._chief.persona
+                grp = config.group_config(chat_id)
+                if grp.get("persona"):
+                    persona = grp["persona"]
+                user_context = {
+                    "user_id": user_id,
+                    "chat_id": chat_id,
+                    "background": self._user_backgrounds.get(user_id, ""),
+                    "is_group": chat_id < 0,
+                }
+                if grp.get("focus"):
+                    user_context["focus"] = grp["focus"]
+                if grp.get("communication_style"):
+                    user_context["communication_style"] = grp["communication_style"]
                 provider = self._coordinator._get_provider() if self._coordinator else None
                 agent = GeneralistAgent(
                     task_id=0,
-                    user_context={
-                        "user_id": user_id,
-                        "chat_id": chat_id,
-                        "background": self._user_backgrounds.get(user_id, ""),
-                        "is_group": chat_id < 0,
-                    },
+                    user_context=user_context,
                     provider=provider,
                     token_tracker=self._token_tracker,
                     persona=persona,
@@ -2339,6 +2426,7 @@ Rules:
                     agent._messages = history
                     logger.info("Chat %d: restored %d history messages from DB", chat_id, len(history))
                 self._chat_agents[chat_id] = agent
+                self._chat_agent_fingerprints[chat_id] = self._chat_config_fingerprint(chat_id)
             # Insert real kanban task so it's visible in Web UI
             if self._board:
                 proto = KanbanTask(id=None, chat_id=chat_id, user_id=user_id, content=content)
@@ -2478,6 +2566,49 @@ Rules:
             chat_id, "Dauert länger. Läuft jetzt im Hintergrund, melde mich mit Ergebnis."
         )
 
+    def _chat_config_fingerprint(self, chat_id: int) -> tuple:
+        """Config-derived inputs that determine a chat agent's system prompt.
+
+        Per-user persona is runtime state (not config) so it's excluded — a config
+        reload can't change it. Only the global chief persona and per-group
+        persona/focus/style come from config and can shift on reload.
+        """
+        chief_persona = ""
+        if self._coordinator and self._coordinator._chief:
+            chief_persona = self._coordinator._chief.persona
+        grp = config.group_config(chat_id)
+        return (
+            chief_persona,
+            grp.get("persona", ""),
+            grp.get("focus", ""),
+            grp.get("communication_style", ""),
+        )
+
+    def _invalidate_stale_chat_agents(self) -> int:
+        """Drop only chat agents whose config-derived prompt inputs changed.
+
+        Called after a config reload. Preserves warm in-memory context for every
+        chat the change didn't touch, instead of clearing the whole cache.
+        Returns the number of agents dropped.
+        """
+        dropped = 0
+        for chat_id in list(self._chat_agents.keys()):
+            current = self._chat_config_fingerprint(chat_id)
+            if self._chat_agent_fingerprints.get(chat_id) != current:
+                self._chat_agents.pop(chat_id, None)
+                self._chat_agent_fingerprints.pop(chat_id, None)
+                dropped += 1
+        return dropped
+
+    def _track_payloads(self, chat_id: "int | None", payloads: "list[str]") -> None:
+        """Record tool/fetch payloads for this chat so _on_agent_result can strip echoes."""
+        if chat_id is None or not payloads:
+            return
+        bucket = self._recent_tool_payloads.setdefault(chat_id, [])
+        bucket.extend(payloads)
+        if len(bucket) > _MAX_TRACKED_PAYLOADS:
+            del bucket[:-_MAX_TRACKED_PAYLOADS]
+
     async def _exec_tool_tags(self, result: str, user_id: int | None = None, chat_id: int | None = None) -> "tuple[str, str | None]":
         """Execute read-only tool tags in result, return (cleaned_result, tool_output_or_None).
 
@@ -2512,7 +2643,7 @@ Rules:
                 if resp.status_code == 200:
                     data = resp.json()
                     data_str = _json.dumps(data, ensure_ascii=False, indent=2)
-                    tool_results.append(f"GitHub GET {endpoint}:\n{data_str[:4000]}")
+                    tool_results.append(f"GitHub GET {endpoint}:\n{data_str[:_MAX_TOOL_OUTPUT_CHARS]}")
                 else:
                     tool_results.append(f"GitHub GET {endpoint}: HTTP {resp.status_code} — {resp.text[:200]}")
             except Exception as e:
@@ -2609,6 +2740,7 @@ Rules:
             deploy_result = await self._deploy_guard_action("trigger")
             tool_results.append(f"DEPLOY_TRIGGER: {deploy_result}")
 
+        self._track_payloads(chat_id, tool_results)
         return result, "\n\n".join(tool_results) if tool_results else None
 
     async def _deploy_guard_action(self, action: str) -> str:
@@ -2756,7 +2888,10 @@ Rules:
                         if cfg:
                             config.set(cfg)
                             config._config_updated_at = row["updated_at"]
-                            logger.info("Config reloaded from DB")
+                            # Rebuild only the chat agents whose group/persona/focus
+                            # overrides actually changed; leave warm conversations alone.
+                            dropped = self._invalidate_stale_chat_agents()
+                            logger.info("Config reloaded from DB (%d chat agent(s) refreshed)", dropped)
                     await conn.close()
                 except Exception as exc:
                     logger.debug("Config watcher error: %s", exc)

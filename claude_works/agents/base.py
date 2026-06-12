@@ -58,6 +58,12 @@ class BaseAgent(ABC):
         bg = self._user_context.get("background", "")
         if bg:
             parts.append(f"Background: {bg}")
+        focus = self._user_context.get("focus", "")
+        if focus:
+            parts.append(f"Focus — keep this chat on topic: {focus}")
+        style = self._user_context.get("communication_style", "")
+        if style:
+            parts.append(f"Communication style for this chat: {style}")
         if self._user_context.get("is_group"):
             sender = self._user_context.get("sender_name", "")
             sender_note = f" (sender: {sender})" if sender else ""
