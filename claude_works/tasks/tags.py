@@ -281,3 +281,17 @@ def extract_plugin_config_set(text: str) -> "tuple[str, tuple[str, dict] | None]
 def extract_tor_restart(text: str) -> "tuple[str, bool]":
     clean, n = _TOR_RESTART_RE.subn("", text)
     return clean.strip(), n > 0
+
+
+def extract_remind(text: str) -> "tuple[str, tuple[str, str] | None]":
+    """Extract [REMIND: datetime | message]. Returns (clean_text, (datetime_str, message) or None).
+
+    datetime_str formats accepted: ISO 8601, 'YYYY-MM-DD HH:MM', 'HH:MM' (today), '+Xm/h/d' (relative).
+    """
+    m = re.search(r'\[REMIND:\s*([^\]]+)\]', text, re.DOTALL)
+    if not m:
+        return text, None
+    parts = [p.strip() for p in m.group(1).split('|', 1)]
+    if len(parts) < 2 or not parts[0]:
+        return text, None
+    return _clean(text, m), (parts[0], parts[1])

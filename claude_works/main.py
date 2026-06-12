@@ -35,6 +35,13 @@ from .agents.mechanic import MechanicAgent, MechanicContext
 from .agents.specialist.generalist import GeneralistAgent
 from .tasks import tags as _tags
 from .telegram.renderer import md_to_html as _md_to_telegram_html
+from .tasks.reminders import (
+    parse_remind_at as _parse_remind_at,
+    add_reminder as _add_reminder,
+    list_reminders as _list_reminders,
+    delete_reminder as _delete_reminder,
+    fire_due_reminders as _fire_due_reminders,
+)
 from .auth.users import upsert_user, is_allowed, is_admin, set_role, set_trust
 from .auth import trust as trust_mod
 from .security import SecuritySupervisor
@@ -129,6 +136,7 @@ _extract_plugin_config_set_tag = _tags.extract_plugin_config_set
 _kb_write_allowed = _tags.kb_write_allowed
 _CONFIG_UPDATE_BLOCKED = _tags.CONFIG_UPDATE_BLOCKED
 _get_config_by_dotpath = _tags.get_config_by_dotpath
+_extract_remind_tag = _tags.extract_remind
 
 
 _LONG_RUN_NOTICE_SECONDS = 60.0  # one-shot "still working" notice for inline chat runs
@@ -466,6 +474,7 @@ class Daemon:
             default_enabled=False,  # opt-in via daemon_config cron.kb_watch.enabled
         ))
         asyncio.create_task(self._cron.run(), name="cron-scheduler")
+        asyncio.create_task(self._reminder_watcher(), name="reminder-watcher")
 
         self._running = True
         logger.info("claude-works daemon started in RUN mode")
@@ -1544,6 +1553,32 @@ Rules:
             await self._start_telegram_reauth(chat_id)
             return
 
+        elif cmd == "/reminders":
+            reminders = await _list_reminders(self._conn, from_id)
+            if not reminders:
+                await self._api.send_message(chat_id, "Keine ausstehenden Erinnerungen.")
+            else:
+                from datetime import datetime, timezone as _tz
+                lines = []
+                for r in reminders:
+                    dt = datetime.fromtimestamp(r["remind_at"], tz=_tz.utc).strftime("%d.%m.%Y %H:%M UTC")
+                    lines.append(f"#{r['id']} {dt} — {r['message'][:60]}")
+                await self._api.send_message(chat_id, "⏰ Erinnerungen:\n" + "\n".join(lines))
+            return
+
+        elif cmd == "/remind_cancel" and len(parts) >= 2:
+            try:
+                reminder_id = int(parts[1])
+            except ValueError:
+                await self._api.send_message(chat_id, "Usage: /remind_cancel <id>")
+                return
+            deleted = await _delete_reminder(self._conn, reminder_id, from_id)
+            if deleted:
+                await self._api.send_message(chat_id, f"✓ Erinnerung #{reminder_id} gelöscht.")
+            else:
+                await self._api.send_message(chat_id, f"Erinnerung #{reminder_id} nicht gefunden oder bereits ausgelöst.")
+            return
+
     async def _check_cli_auth_on_startup(self, admin_ids: list[int]) -> None:
         """Check CLI auth on startup and notify admins if not authenticated."""
         await asyncio.sleep(3.0)  # let poller settle first
@@ -1775,6 +1810,13 @@ Rules:
                 clean_result, v = _extract_orchestrate_tag(clean_result)
                 if not v: break
                 all_orchestrations.append(v)
+
+            # Reminders: schedule a future notification (no LLM at fire time)
+            all_reminders: list[tuple[str, str]] = []
+            while True:
+                clean_result, v = _extract_remind_tag(clean_result)
+                if not v: break
+                all_reminders.append(v)
 
             reply_markup = {"inline_keyboard": keyboard} if keyboard is not None else None
             initial_msg_id = self._pending_initial_msgs.pop(task.id, None) if task.id else None
@@ -2081,6 +2123,25 @@ Rules:
                 (sent["message_id"], task.chat_id, task.id, clean_result, int(time.time())),
             )
             await self._conn.commit()
+
+            # Reminders: parse datetime, store in DB — fired by watcher without LLM
+            for dt_str, message in all_reminders:
+                remind_at = _parse_remind_at(dt_str)
+                if remind_at is None:
+                    await self._api.send_message(
+                        task.chat_id,
+                        f"⚠️ Erinnerung konnte nicht gesetzt werden — Zeitangabe nicht erkannt: `{dt_str}`\n"
+                        "Formate: `YYYY-MM-DD HH:MM`, `HH:MM`, `+30m`, `+2h`, `+1d`",
+                    )
+                else:
+                    reminder_id = await _add_reminder(self._conn, task.user_id, task.chat_id, remind_at, message)
+                    from datetime import datetime, timezone as _tz
+                    dt_readable = datetime.fromtimestamp(remind_at, tz=_tz.utc).strftime("%d.%m.%Y %H:%M UTC")
+                    await self._api.send_message(
+                        task.chat_id,
+                        f"⏰ Erinnerung #{reminder_id} gesetzt für **{dt_readable}**:\n_{message}_",
+                    )
+                    logger.info("Reminder %d set for %s by user=%d", reminder_id, dt_readable, task.user_id)
 
             # Sub-task spawning: board agents may delegate BOARD_TASK → sub-tasks (no recursion; sub-agents lack the tag)
             for sub_desc in all_subtasks:
@@ -2932,6 +2993,28 @@ Rules:
                                 await self._api.send_message(chat_id, "⚠️ Vorheriger Request hat sich aufgehängt und wurde abgebrochen.")
                             except Exception:
                                 pass
+        except asyncio.CancelledError:
+            pass
+
+    async def _reminder_watcher(self) -> None:
+        """Fire due reminders every 30 seconds — no LLM, direct Telegram send."""
+        await asyncio.sleep(10.0)
+        try:
+            while self._running:
+                try:
+                    fired = await _fire_due_reminders(self._conn)
+                    for r in fired:
+                        try:
+                            await self._api.send_message(
+                                r["chat_id"],
+                                f"⏰ **Erinnerung #{r['id']}**\n{r['message']}",
+                            )
+                            logger.info("Reminder %d fired for chat=%d", r["id"], r["chat_id"])
+                        except Exception as e:
+                            logger.warning("Reminder %d send failed: %s", r["id"], e)
+                except Exception as e:
+                    logger.exception("Reminder watcher error: %s", e)
+                await asyncio.sleep(30.0)
         except asyncio.CancelledError:
             pass
 

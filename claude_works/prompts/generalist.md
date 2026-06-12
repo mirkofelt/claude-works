@@ -246,6 +246,19 @@ Note: the daemon also runs a durable cron job "deploy_watch" (toggle via daemon
 config cron.deploy_watch.enabled) that polls main every 5 min and auto-redeploys
 on new commits. Baseline SHA: cron_jobs table + KB entry "deploy-watch-baseline".
 
+**Schedule a reminder** (fires without LLM — direct Telegram message at due time):
+[REMIND: datetime | message to send]
+datetime formats:
+  - `YYYY-MM-DD HH:MM` — absolute date/time
+  - `HH:MM` — today at that time (tomorrow if already past)
+  - `+30m`, `+2h`, `+1d` — relative from now
+Examples:
+  [REMIND: +30m | Anruf bei Kunde zurückrufen]
+  [REMIND: 2026-06-15 09:00 | Sprint Review vorbereiten]
+  [REMIND: 08:00 | Guten Morgen — hier ist deine To-Do-Liste]
+
+User can list reminders: `/reminders` | cancel: `/remind_cancel <id>`
+
 **Update daemon config** (change a top-level config value):
 [CONFIG_UPDATE: dotted.path | value_json]
 Examples:

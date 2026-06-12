@@ -262,6 +262,17 @@ CREATE TABLE IF NOT EXISTS approval_log (
     decided_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_approval_log_time ON approval_log(decided_at DESC);
+
+CREATE TABLE IF NOT EXISTS reminders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    chat_id INTEGER NOT NULL,
+    remind_at INTEGER NOT NULL,
+    message TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    fired_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_reminders_pending ON reminders(remind_at) WHERE fired_at IS NULL;
 """
 
 CONFIG_TABLES = """
