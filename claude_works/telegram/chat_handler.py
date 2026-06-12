@@ -7,6 +7,7 @@ from .. import config, db
 from ..agents.heartbeat import run_with_heartbeat
 from ..agents.specialist.generalist import GeneralistAgent
 from ..auth import trust as trust_mod
+from ..kanban.board import build_offload_content, is_offloaded
 from ..kanban.models import KanbanTask
 from ..knowledge import store as knowledge_store
 from ..llm.errors import RateLimitError
@@ -39,6 +40,35 @@ async def long_run_notice(daemon: Any, chat_id: int) -> None:
         logger.info("Chat %d: long-run notice sent after %.0fs", chat_id, _LONG_RUN_NOTICE_SECONDS)
     except asyncio.CancelledError:
         raise
+
+
+async def offload_after_timeout(
+    daemon: Any, chat_id: int, user_id: int, content: str, task_id: int | None, elapsed: float
+) -> None:
+    """Inline run hit timeout: hand the job to the kanban board instead of killing it."""
+    if not daemon._board or is_offloaded(content):
+        if task_id and daemon._board:
+            await daemon._board.fail(task_id, f"timeout ({elapsed:.0f}s) — bereits offloaded, kein erneuter Versuch")
+        logger.warning("Chat %d: timeout after %.0fs, no offload (board=%s, marked=%s)",
+                       chat_id, elapsed, bool(daemon._board), is_offloaded(content))
+        await daemon._api.send_message(chat_id, "Timeout. Hat auch im zweiten Anlauf nicht geklappt.")
+        return
+
+    offload_content = build_offload_content(content, elapsed)
+    offloaded = False
+    if task_id:
+        offloaded = await daemon._board.offload(task_id, offload_content)
+    if not offloaded:
+        await daemon._board.push(
+            KanbanTask(id=None, chat_id=chat_id, user_id=user_id, content=offload_content)
+        )
+    logger.info(
+        "Chat %d: inline run timed out after %.0fs — offloaded to board (task=%s)",
+        chat_id, elapsed, task_id,
+    )
+    await daemon._api.send_message(
+        chat_id, "Dauert länger. Läuft jetzt im Hintergrund, melde mich mit Ergebnis."
+    )
 
 
 async def handle_chat(daemon: Any, chat_id: int, user_id: int, content: str, reply_to_msg_id: int | None = None) -> None:
@@ -154,8 +184,8 @@ async def handle_chat(daemon: Any, chat_id: int, user_id: int, content: str, rep
         real_task = KanbanTask(id=task_id, chat_id=chat_id, user_id=user_id, content=content)
         await daemon._on_agent_result(real_task, result, None)
     except asyncio.TimeoutError:
-        await daemon._offload_after_timeout(
-            chat_id, user_id, content, task_id, time.monotonic() - run_started
+        await offload_after_timeout(
+            daemon, chat_id, user_id, content, task_id, time.monotonic() - run_started
         )
     except RateLimitError as exc:
         wait = int(exc.retry_after or 30)
