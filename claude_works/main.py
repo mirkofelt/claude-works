@@ -33,6 +33,8 @@ from .agents.heartbeat import run_with_heartbeat
 from .llm.errors import RateLimitError
 from .agents.mechanic import MechanicAgent, MechanicContext
 from .agents.specialist.generalist import GeneralistAgent
+from .tasks import tags as _tags
+from .telegram.renderer import md_to_html as _md_to_telegram_html
 from .auth.users import upsert_user, is_allowed, is_admin, set_role, set_trust
 from .auth import trust as trust_mod
 from .security import SecuritySupervisor
@@ -45,29 +47,6 @@ logger = logging.getLogger(__name__)
 TYPING_INTERVAL = 4.0
 PID_FILE = "/data/claude-works.pid"
 
-
-def _md_to_telegram_html(text: str) -> str:
-    """Convert Markdown subset to Telegram HTML. Escapes & < > in text nodes."""
-    text = text.replace('\\n', '\n').replace('\\t', '\t')
-
-    def esc(s: str) -> str:
-        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-    parts = re.split(r"```(?:[^\n`]*)\n?([\s\S]*?)```", text)
-    result = []
-    for i, part in enumerate(parts):
-        if i % 2 == 1:
-            result.append(f"<pre>{esc(part.strip())}</pre>")
-        else:
-            segs = re.split(r"`([^`\n]+)`", part)
-            for j, seg in enumerate(segs):
-                if j % 2 == 1:
-                    result.append(f"<code>{esc(seg)}</code>")
-                else:
-                    s = esc(seg)
-                    s = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", s, flags=re.DOTALL)
-                    result.append(s)
-    return "".join(result)
 
 
 _ECHOED_TOOL_RE = re.compile(
@@ -127,335 +106,45 @@ def _strip_echoed_payloads(text: str, payloads: "list[str]") -> str:
     return _strip_echoed_tool_results(text)
 
 
-def _extract_voice_tag(text: str) -> "tuple[str, str | None]":
-    """Extract [VOICE: text] tag. Returns (clean_text, tts_text or None)."""
-    m = re.search(r'\[VOICE:\s*([^\]]+)\]', text, re.DOTALL)
-    if not m:
-        return text, None
-    clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
-    return clean, m.group(1).strip()
-
-
-def _extract_map_tag(text: str) -> "tuple[str, str | None]":
-    """Extract [MAP: query] tag. Returns (clean_text, map_query or None)."""
-    m = re.search(r'\[MAP:\s*([^\]]+)\]', text)
-    if not m:
-        return text, None
-    clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
-    return clean, m.group(1).strip()
-
-
-def _kb_write_allowed(trust: int) -> bool:
-    """Schreibzugriff auf die KB nur für Owner (0) und Vertraut (1).
-
-    Alles darüber (Kontakt/Unbekannt, insbesondere Gruppen mit nicht
-    vertrauten Mitgliedern) darf nicht direkt schreiben — Schutz gegen
-    Prompt-Injection aus fremden Chats."""
-    return trust <= 1
-
-
-def _parse_buttons(text: str) -> "tuple[str, list[list[dict]] | None]":
-    """Extract [BUTTONS: ...] tag from text. Returns (clean_text, inline_keyboard or None).
-    Format: [BUTTONS: label1|data1, label2|data2, ...]
-    Buttons are laid out in rows of max 3."""
-    m = re.search(r'\[BUTTONS:\s*([^\]]+)\]', text)
-    if not m:
-        return text, None
-    clean = text[:m.start()].rstrip() + text[m.end():]
-    specs = [s.strip() for s in m.group(1).split(',')]
-    buttons = []
-    for spec in specs:
-        parts = spec.split('|', 1)
-        label = parts[0].strip()
-        data = parts[1].strip() if len(parts) > 1 else label
-        buttons.append({"text": label, "callback_data": data[:64]})
-    rows = [buttons[i:i+3] for i in range(0, len(buttons), 3)]
-    return clean.strip(), rows
-
-
-def _extract_send_email_tag(text: str) -> "tuple[str, tuple[str, str, str] | None]":
-    """Extract [SEND_EMAIL: to | subject | body]. Returns (clean_text, (to, subject, body) or None)."""
-    m = re.search(r'\[SEND_EMAIL:\s*([^\]]+)\]', text, re.DOTALL)
-    if not m:
-        return text, None
-    clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
-    parts = [p.strip() for p in m.group(1).split('|', 2)]
-    if len(parts) < 2:
-        return text, None
-    to = parts[0]
-    subject = parts[1]
-    body = parts[2] if len(parts) > 2 else ""
-    return clean, (to, subject, body)
-
-
-def _extract_read_email_tag(text: str) -> "tuple[str, tuple[str, int] | None]":
-    """Extract [READ_EMAIL: folder | count]. Returns (clean_text, (folder, count) or None)."""
-    m = re.search(r'\[READ_EMAIL:\s*([^\]]+)\]', text)
-    if not m:
-        return text, None
-    clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
-    parts = [p.strip() for p in m.group(1).split('|', 1)]
-    folder = parts[0] or "INBOX"
-    try:
-        count = int(parts[1]) if len(parts) > 1 else 5
-    except ValueError:
-        count = 5
-    return clean, (folder, min(count, 20))
-
-
-def _extract_github_api_tag(text: str) -> "tuple[str, tuple[str, str, str] | None]":
-    """Extract [GITHUB_API: METHOD | /endpoint | body]. Returns (clean_text, (method, endpoint, body) or None)."""
-    m = re.search(r'\[GITHUB_API:\s*([^\]]+)\]', text, re.DOTALL)
-    if not m:
-        return text, None
-    clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
-    parts = [p.strip() for p in m.group(1).split('|', 2)]
-    if len(parts) < 2:
-        return text, None
-    method = parts[0].upper()
-    endpoint = parts[1]
-    body = parts[2] if len(parts) > 2 else ""
-    return clean, (method, endpoint, body)
-
-
-def _extract_git_clone_tag(text: str) -> "tuple[str, tuple[str, str] | None]":
-    """Extract [GIT_CLONE: repo_url | plugin_name]. Returns (clean_text, (url, name) or None)."""
-    m = re.search(r'\[GIT_CLONE:\s*([^\]|]+?)\s*\|\s*([^\]]+?)\s*\]', text)
-    if not m:
-        return text, None
-    clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
-    return clean, (m.group(1).strip(), m.group(2).strip())
-
-
-def _extract_mute_tag(text: str) -> "tuple[str, tuple[str, int] | None]":
-    """Extract [MUTE: name_or_id | minutes]. Returns (clean_text, (ident, minutes) or None). minutes 0 = indefinite."""
-    m = re.search(r'\[MUTE:\s*([^\]]+)\]', text)
-    if not m:
-        return text, None
-    clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
-    parts = [p.strip() for p in m.group(1).split('|', 1)]
-    ident = parts[0]
-    try:
-        minutes = int(parts[1]) if len(parts) > 1 else 0
-    except ValueError:
-        minutes = 0
-    return clean, (ident, minutes)
-
-
-def _extract_unmute_tag(text: str) -> "tuple[str, str | None]":
-    """Extract [UNMUTE: name_or_id]. Returns (clean_text, ident or None)."""
-    m = re.search(r'\[UNMUTE:\s*([^\]]+)\]', text)
-    if not m:
-        return text, None
-    clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
-    return clean, m.group(1).strip()
-
-
-def _extract_get_config_tag(text: str) -> "tuple[str, str | None]":
-    """Extract [GET_CONFIG: key]. Returns (clean_text, dot-notation key or None)."""
-    m = re.search(r'\[GET_CONFIG:\s*([^\]]+)\]', text)
-    if not m:
-        return text, None
-    clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
-    return clean, m.group(1).strip()
-
-
-def _extract_shell_tag(text: str) -> "tuple[str, str | None]":
-    """Extract [SHELL: command]. Returns (clean_text, command or None)."""
-    m = re.search(r'\[SHELL:\s*([^\]]+)\]', text, re.DOTALL)
-    if not m:
-        return text, None
-    clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
-    return clean, m.group(1).strip()
-
-
-_SHELL_WHITELIST = re.compile(
-    r'^('
-    r'git (status|branch|log|fetch|pull|push|diff|show|remote|tag|stash|clone|checkout|merge|rebase|reset|rev-parse|describe)(\s.*)?'
-    r'|docker (ps|images|logs|inspect|stats|version)(\s.*)?'
-    r'|ls(\s.*)?|pwd|whoami|uname(\s.*)?|df(\s.*)?|free(\s.*)?|uptime'
-    r'|cat /proc/version|hostname'
-    r')$',
-    re.IGNORECASE,
-)
-
-_SECRET_KEY_RE = re.compile(r'(key|token|password|secret|passwd|credential|auth)', re.IGNORECASE)
-
-
-def _redact_config_value(key: str, value: object) -> object:
-    if _SECRET_KEY_RE.search(key) and isinstance(value, str) and value:
-        return "<redacted>"
-    return value
-
-
-def _get_config_by_dotpath(key: str) -> str:
-    import json as _json
-    parts = key.split(".")
-    node: object = config.get()
-    for part in parts:
-        if not isinstance(node, dict):
-            return f"GET_CONFIG '{key}': path not found ('{part}' is not a dict)"
-        node = node.get(part)
-        if node is None:
-            return f"GET_CONFIG '{key}': not set"
-    display = _redact_config_value(parts[-1], node)
-    if isinstance(display, (dict, list)):
-        display = _json.dumps(display, ensure_ascii=False, indent=2)
-    return f"GET_CONFIG '{key}': {display}"
-
-
-def _extract_board_task_tag(text: str) -> "tuple[str, str | None]":
-    """Extract [BOARD_TASK: task description]. Returns (clean_text, task_description or None)."""
-    m = re.search(r'\[BOARD_TASK:\s*([^\]]+)\]', text, re.DOTALL)
-    if not m:
-        return text, None
-    clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
-    return clean, m.group(1).strip()
-
-
-def _extract_orchestrate_tag(text: str) -> "tuple[str, tuple[str, list[str]] | None]":
-    """Extract [ORCHESTRATE: project_name | task1\\ntask2\\n...].
-    Returns (clean_text, (project_name, [task_descs]) or None)."""
-    m = re.search(r'\[ORCHESTRATE:\s*([^\]]+)\]', text, re.DOTALL)
-    if not m:
-        return text, None
-    clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
-    parts = m.group(1).split('|', 1)
-    if len(parts) < 2:
-        return text, None
-    project_name = parts[0].strip()
-    raw_tasks = parts[1]
-    tasks = [t.strip() for t in re.split(r'\n|;', raw_tasks) if t.strip()]
-    if not tasks:
-        return text, None
-    return clean, (project_name, tasks)
-
-
-def _extract_kb_search_tag(text: str) -> "tuple[str, str | None]":
-    """Extract [KB_SEARCH: query]. Returns (clean_text, query or None)."""
-    m = re.search(r'\[KB_SEARCH:\s*([^\]]+)\]', text)
-    if not m:
-        return text, None
-    clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
-    return clean, m.group(1).strip()
-
-
-def _extract_kb_save_tag(text: str) -> "tuple[str, tuple[str, str, list, str] | None]":
-    """Extract [KB_SAVE: title | type | tags | content]. Returns (clean_text, (title, type, tags, content) or None)."""
-    m = re.search(r'\[KB_SAVE:\s*([^\]]+)\]', text, re.DOTALL)
-    if not m:
-        return text, None
-    clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
-    parts = [p.strip() for p in m.group(1).split('|', 3)]
-    if not parts[0]:
-        return text, None
-    title = parts[0]
-    entry_type = parts[1] if len(parts) > 1 and parts[1] else "note"
-    raw_tags = parts[2] if len(parts) > 2 else ""
-    content = parts[3] if len(parts) > 3 else ""
-    tags = [t.strip() for t in raw_tags.split(',') if t.strip()]
-    return clean, (title, entry_type, tags, content)
-
-
-def _extract_kb_update_tag(text: str) -> "tuple[str, tuple | None]":
-    """Extract [KB_UPDATE: id | title | type | tags | content]. Returns (clean_text, (id, title, type, tags, content) or None)."""
-    m = re.search(r'\[KB_UPDATE:\s*([^\]]+)\]', text, re.DOTALL)
-    if not m:
-        return text, None
-    clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
-    parts = [p.strip() for p in m.group(1).split('|', 4)]
-    try:
-        entry_id = int(parts[0])
-    except (ValueError, IndexError):
-        return text, None
-    title = parts[1] if len(parts) > 1 and parts[1] else None
-    entry_type = parts[2] if len(parts) > 2 and parts[2] else None
-    raw_tags = parts[3] if len(parts) > 3 else None
-    tags = [t.strip() for t in raw_tags.split(',') if t.strip()] if raw_tags else None
-    content = parts[4] if len(parts) > 4 and parts[4] else None
-    return clean, (entry_id, title, entry_type, tags, content)
-
-
-_CONFIG_UPDATE_BLOCKED = {"telegram.token", "web.auth_token", "llm.api_key"}
-
-
-def _extract_config_update_tag(text: str) -> "tuple[str, tuple[str, str] | None]":
-    """Extract [CONFIG_UPDATE: dotted.path | value_json]. Returns (clean_text, (path, value_json) or None)."""
-    m = re.search(r'\[CONFIG_UPDATE:\s*([^\]]+)\]', text, re.DOTALL)
-    if not m:
-        return text, None
-    clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
-    parts = [p.strip() for p in m.group(1).split('|', 1)]
-    if len(parts) < 2:
-        return text, None
-    return clean, (parts[0], parts[1])
-
-
-def _extract_plugin_config_get_tag(text: str) -> "tuple[str, str | None]":
-    """Extract [PLUGIN_CONFIG_GET: plugin_name]. Returns (clean_text, plugin_name or None)."""
-    m = re.search(r'\[PLUGIN_CONFIG_GET:\s*([^\]]+)\]', text)
-    if not m:
-        return text, None
-    clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
-    return clean, m.group(1).strip()
-
-
-def _extract_plugin_config_set_tag(text: str) -> "tuple[str, tuple[str, dict] | None]":
-    """Extract [PLUGIN_CONFIG_SET: plugin_name | {json}]. Returns (clean_text, (name, dict) or None)."""
-    m = re.search(r'\[PLUGIN_CONFIG_SET:\s*([^\]]+)\]', text, re.DOTALL)
-    if not m:
-        return text, None
-    clean = (text[:m.start()].rstrip() + "\n" + text[m.end():].lstrip()).strip()
-    parts = [p.strip() for p in m.group(1).split('|', 1)]
-    if len(parts) < 2:
-        return text, None
-    plugin_name = parts[0]
-    try:
-        import json as _json
-        cfg_dict = _json.loads(parts[1])
-        if not isinstance(cfg_dict, dict):
-            return text, None
-    except Exception:
-        return text, None
-    return clean, (plugin_name, cfg_dict)
+# TAG extractors — all logic lives in tasks/tags.py
+_extract_voice_tag = _tags.extract_voice
+_extract_map_tag = _tags.extract_map
+_parse_buttons = _tags.parse_buttons
+_extract_send_email_tag = _tags.extract_send_email
+_extract_read_email_tag = _tags.extract_read_email
+_extract_github_api_tag = _tags.extract_github_api
+_extract_git_clone_tag = _tags.extract_git_clone
+_extract_mute_tag = _tags.extract_mute
+_extract_unmute_tag = _tags.extract_unmute
+_extract_get_config_tag = _tags.extract_get_config
+_extract_shell_tag = _tags.extract_shell
+_extract_board_task_tag = _tags.extract_board_task
+_extract_orchestrate_tag = _tags.extract_orchestrate
+_extract_kb_search_tag = _tags.extract_kb_search
+_extract_kb_save_tag = _tags.extract_kb_save
+_extract_kb_update_tag = _tags.extract_kb_update
+_extract_config_update_tag = _tags.extract_config_update
+_extract_plugin_config_get_tag = _tags.extract_plugin_config_get
+_extract_plugin_config_set_tag = _tags.extract_plugin_config_set
+_kb_write_allowed = _tags.kb_write_allowed
+_CONFIG_UPDATE_BLOCKED = _tags.CONFIG_UPDATE_BLOCKED
+_get_config_by_dotpath = _tags.get_config_by_dotpath
 
 
 _LONG_RUN_NOTICE_SECONDS = 60.0  # one-shot "still working" notice for inline chat runs
 
-_PLUGINS_DIR = os.environ.get("PLUGINS_DIR", "/data/plugins")
+_PLUGINS_DIR = _tags.PLUGINS_DIR
 _URL_RE = re.compile(r'https?://[^\s<>"\']+')
 _MAX_FETCH_URLS = 3
 _MAX_FETCH_CHARS = 4000
-# Hard cap on any single tool-output block injected back into the agent prompt.
-# Keep in sync with _MAX_FETCH_CHARS so no source can blow past the context budget.
 _MAX_TOOL_OUTPUT_CHARS = 4000
-# Shortest verbatim line treated as an echoed tool-output line (below this we keep it,
-# to avoid nuking legitimate short prose that happens to match).
 _MIN_ECHO_LINE_CHARS = 24
-# Short echoed lines are only stripped when they look like serialized data, never prose:
-# JSON braces/brackets (`{`, `},`, `[`) or `"key": value` pairs.
 _STRUCTURAL_LINE_RE = re.compile(r'^(?:[{}\[\],]+|"[\w-]+":.*)$')
-# Cap on retained payloads per chat so the echo-filter accumulator can't grow unbounded.
 _MAX_TRACKED_PAYLOADS = 24
 _TOR_SOCKS_DEFAULT = "socks5://127.0.0.1:9050"
 
-
-def _build_git_clone_cmd(repo_url: str, target: str) -> list[str]:
-    """Build git clone command, optionally routed through Tor if tor_socks_proxy is configured."""
-    tor_proxy = config.section("security").get("tor_socks_proxy", "")
-    if tor_proxy:
-        # socks5h:// resolves DNS through proxy, not locally
-        git_proxy = tor_proxy.replace("socks5://", "socks5h://")
-        return ["git", "-c", f"http.proxy={git_proxy}", "clone", "--depth=1", repo_url, target]
-    return ["git", "clone", "--depth=1", repo_url, target]
-
-_TOR_RESTART_RE = re.compile(r'\[TOR_RESTART\]', re.IGNORECASE)
-
-
-def _extract_tor_restart_tag(text: str) -> "tuple[str, bool]":
-    """Remove [TOR_RESTART] from text. Returns (clean_text, found)."""
-    clean, n = _TOR_RESTART_RE.subn("", text)
-    return clean.strip(), n > 0
+_build_git_clone_cmd = _tags.build_git_clone_cmd
+_extract_tor_restart_tag = _tags.extract_tor_restart
 
 
 async def _restart_tor() -> str:
@@ -2928,10 +2617,7 @@ Rules:
             if not shell_cmd:
                 break
             result = clean
-            extra_patterns = config.section("shell").get("whitelist", [])
-            allowed = _SHELL_WHITELIST.match(shell_cmd) or any(
-                re.match(p, shell_cmd) for p in extra_patterns
-            )
+            allowed = _tags.shell_allowed(shell_cmd)
             if not allowed:
                 tool_results.append(f"SHELL '{shell_cmd}': blocked — not in whitelist")
                 continue
