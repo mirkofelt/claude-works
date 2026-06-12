@@ -36,8 +36,10 @@ from .llm.errors import RateLimitError
 from .agents.mechanic import MechanicAgent, MechanicContext
 from .agents.specialist.generalist import GeneralistAgent
 from .tasks import tags as _tags
-from .kanban.models import _Lane as _Lane
-from .llm.provider import _get_provider as _get_provider
+from .tasks.tor import restart_tor as _restart_tor
+from .tasks.executor import exec_tool_tags as _exec_tool_tags_fn
+from .kanban.models import Lane as _Lane
+from .llm.provider import get_provider as _get_provider
 from .telegram.renderer import md_to_html as _md_to_telegram_html
 from .tasks.reminders import (
     parse_remind_at as _parse_remind_at,
@@ -180,38 +182,7 @@ def _user_error(context: str, exc: Exception | None = None) -> str:
     return f"⚠️ {context}."
 
 
-async def _restart_tor() -> str:
-    """Start or restart Tor daemon inside container. Returns status string."""
-    try:
-        os.makedirs("/var/lib/tor", exist_ok=True)
-        os.makedirs("/run/tor", exist_ok=True)
-        proc = await asyncio.create_subprocess_exec(
-            "tor", "--RunAsDaemon", "1",
-            "--DataDirectory", "/var/lib/tor",
-            "--PidFile", "/run/tor/tor.pid",
-            "--Log", "warn stderr",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=10.0)
-        if proc.returncode != 0:
-            return f"tor start failed (exit {proc.returncode}): {stderr.decode(errors='replace')[:200]}"
-        # Wait for SOCKS port to open (max 60s)
-        for _ in range(60):
-            try:
-                reader, writer = await asyncio.wait_for(
-                    asyncio.open_connection("127.0.0.1", 9050), timeout=1.0
-                )
-                writer.close()
-                await writer.wait_closed()
-                return "Tor started successfully — SOCKS5 proxy ready on 127.0.0.1:9050"
-            except Exception:
-                await asyncio.sleep(1.0)
-        return "tor process started but port 9050 not ready after 60s — Tor may still be bootstrapping"
-    except asyncio.TimeoutError:
-        return "tor start timed out (10s)"
-    except Exception as e:
-        return f"tor restart error: {e}"
+# _restart_tor moved to tasks/tor.py; imported at top as _restart_tor
 
 
 _TASK_VERB_RE = re.compile(
@@ -2600,166 +2571,15 @@ Rules:
             del bucket[:-_MAX_TRACKED_PAYLOADS]
 
     async def _exec_tool_tags(self, result: str, user_id: int | None = None, chat_id: int | None = None) -> "tuple[str, str | None]":
-        """Execute read-only tool tags in result, return (cleaned_result, tool_output_or_None).
+        """Delegate to tasks.executor.exec_tool_tags — thin daemon wrapper."""
+        return await _exec_tool_tags_fn(
+            result,
+            user_id=user_id,
+            chat_id=chat_id,
+            deploy_guard_action=self._deploy_guard_action,
+            track_payloads=self._track_payloads,
+        )
 
-        Only GET GitHub calls and READ_EMAIL are auto-executed so the agent can process
-        the data. Write operations and output tags (VOICE, MAP, SEND_EMAIL, BUTTONS) are
-        left intact for _on_agent_result to handle after the tool loop ends.
-        """
-        tool_results: list[str] = []
-
-        while True:
-            clean, github_args = _extract_github_api_tag(result)
-            if not github_args:
-                break
-            method, endpoint, body = github_args
-            if method != "GET":
-                break  # leave write ops intact for _on_agent_result
-            result = clean
-            try:
-                # Use httpx directly for reads — avoids gh CLI dependency
-                github_cfg = config.section("github")
-                token = github_cfg.get("token", "")
-                url = f"https://api.github.com{endpoint}"
-                headers = {
-                    "Accept": "application/vnd.github+json",
-                    "X-GitHub-Api-Version": "2022-11-28",
-                }
-                if token:
-                    headers["Authorization"] = f"Bearer {token}"
-                async with httpx.AsyncClient(timeout=30.0) as hc:
-                    resp = await hc.get(url, headers=headers)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    data_str = json.dumps(data, ensure_ascii=False, indent=2)
-                    tool_results.append(f"GitHub GET {endpoint}:\n{data_str[:_MAX_TOOL_OUTPUT_CHARS]}")
-                else:
-                    tool_results.append(f"GitHub GET {endpoint}: HTTP {resp.status_code} — {resp.text[:200]}")
-            except Exception as e:
-                tool_results.append(f"GitHub GET {endpoint} failed: {e}")
-
-        while True:
-            clean, email_args = _extract_read_email_tag(result)
-            if not email_args:
-                break
-            result = clean
-            folder, count = email_args
-            try:
-                emails = await _read_emails(folder, count, config.section("email"))
-                lines = [
-                    f"{i+1}. From: {m['from']}\n   Subject: {m['subject']}\n   {m['date']}"
-                    for i, m in enumerate(emails)
-                ]
-                tool_results.append(f"READ_EMAIL {folder} ({len(emails)} emails):\n" + "\n".join(lines))
-            except Exception as e:
-                tool_results.append(f"READ_EMAIL {folder} failed: {e}")
-
-        clean, git_args = _extract_git_clone_tag(result)
-        if git_args:
-            repo_url, plugin_name = git_args
-            result = clean
-            safe_name = re.sub(r'[^a-zA-Z0-9._-]', '', plugin_name)[:64]
-            target = f"{_PLUGINS_DIR}/{safe_name}"
-            try:
-                os.makedirs(_PLUGINS_DIR, exist_ok=True)
-                proc = await asyncio.create_subprocess_exec(
-                    *_build_git_clone_cmd(repo_url, target),
-                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-                )
-                _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120.0)
-                if proc.returncode == 0:
-                    tool_results.append(f"GIT_CLONE {repo_url} → {target}: success")
-                else:
-                    tool_results.append(f"GIT_CLONE {repo_url} → {target}: failed: {stderr.decode(errors='replace')[:300]}")
-            except asyncio.TimeoutError:
-                tool_results.append(f"GIT_CLONE {repo_url}: timeout (120s)")
-            except Exception as e:
-                tool_results.append(f"GIT_CLONE {repo_url}: error: {e}")
-
-        while True:
-            clean, plugin_name = _extract_plugin_config_get_tag(result)
-            if not plugin_name:
-                break
-            result = clean
-            plugins = config.get().get("plugins") or {}
-            plugin_cfg = plugins.get(plugin_name) if isinstance(plugins, dict) else None
-            if plugin_cfg:
-                tool_results.append(f"PLUGIN_CONFIG_GET '{plugin_name}':\n{json.dumps(plugin_cfg, ensure_ascii=False, indent=2)}")
-            else:
-                tool_results.append(f"PLUGIN_CONFIG_GET '{plugin_name}': not configured (use PLUGIN_CONFIG_SET to initialize)")
-
-        while True:
-            clean, kb_query = _extract_kb_search_tag(result)
-            if not kb_query:
-                break
-            result = clean
-            try:
-                conn = await db.get_conn()
-                trust = await trust_mod.chat_trust(conn, chat_id, user_id)
-                entries = await knowledge_store.search(conn, kb_query, limit=10, trust=trust)
-                await conn.close()
-                if entries:
-                    lines = []
-                    for e in entries:
-                        tags = ", ".join(e.get("tags") or [])
-                        tag_str = f" [{tags}]" if tags else ""
-                        body = e["content"][:400]
-                        if len(e["content"]) > 400:
-                            body += "…"
-                        lines.append(f"- ID:{e['id']} [{e['type']}]{tag_str} **{e['title']}**: {body}")
-                    tool_results.append(f"KB_SEARCH '{kb_query}' ({len(entries)} results):\n" + "\n".join(lines))
-                else:
-                    tool_results.append(f"KB_SEARCH '{kb_query}': no results found")
-            except Exception as e:
-                tool_results.append(f"KB_SEARCH failed: {e}")
-
-        result, found_restart = _extract_tor_restart_tag(result)
-        if found_restart:
-            status = await _restart_tor()
-            tool_results.append(f"TOR_RESTART: {status}")
-
-        while True:
-            clean, cfg_key = _extract_get_config_tag(result)
-            if not cfg_key:
-                break
-            result = clean
-            tool_results.append(_get_config_by_dotpath(cfg_key))
-
-        while True:
-            clean, shell_cmd = _extract_shell_tag(result)
-            if not shell_cmd:
-                break
-            result = clean
-            allowed = _tags.shell_allowed(shell_cmd)
-            if not allowed:
-                tool_results.append(f"SHELL '{shell_cmd}': blocked — not in whitelist")
-                continue
-            try:
-                proc = await asyncio.create_subprocess_shell(
-                    shell_cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.STDOUT,
-                )
-                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30.0)
-                out = stdout.decode(errors="replace")[:3000]
-                tool_results.append(f"SHELL '{shell_cmd}' (rc={proc.returncode}):\n{out}")
-            except asyncio.TimeoutError:
-                tool_results.append(f"SHELL '{shell_cmd}': timeout (30s)")
-            except Exception as e:
-                tool_results.append(f"SHELL '{shell_cmd}': error: {e}")
-
-        # DEPLOY_STATUS / DEPLOY_TRIGGER tags
-        if "[DEPLOY_STATUS]" in result:
-            result = result.replace("[DEPLOY_STATUS]", "")
-            deploy_status = await self._deploy_guard_action("status")
-            tool_results.append(f"DEPLOY_STATUS: {deploy_status}")
-        if "[DEPLOY_TRIGGER]" in result:
-            result = result.replace("[DEPLOY_TRIGGER]", "")
-            deploy_result = await self._deploy_guard_action("trigger")
-            tool_results.append(f"DEPLOY_TRIGGER: {deploy_result}")
-
-        self._track_payloads(chat_id, tool_results)
-        return result, "\n\n".join(tool_results) if tool_results else None
 
     async def _deploy_guard_action(self, action: str) -> str:
         """Call deploy-guard for status/trigger. Returns result string."""
