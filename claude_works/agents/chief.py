@@ -1,9 +1,10 @@
 import asyncio
 import logging
 import os
+import time
 import uuid
 
-from ..config import section
+from ..config import agent_timeout, section
 from ..kanban.board import KanbanBoard
 from ..kanban.models import AgentClass
 from ..knowledge import store as knowledge_store
@@ -11,6 +12,7 @@ from ..llm.errors import RateLimitError
 from ..llm.provider import LLMProvider, get_provider
 from ..telemetry.tokens import TokenTracker
 from .concepts import get_system_prompt, get_caveman_addendum
+from .heartbeat import run_with_heartbeat
 
 logger = logging.getLogger(__name__)
 
@@ -87,19 +89,22 @@ class ChiefAgent:
             persona=self._system_prompt(user_context),
             agent_class="chief",
         )
-        cfg = section("agents")
-        timeout = cfg.get("task_timeout_seconds", 600)
+        idle_timeout = agent_timeout("idle_timeout_seconds")
+        max_runtime = agent_timeout("max_runtime_seconds")
         agent_id = f"chief-{self.id}"
         try:
             started = await self._board.start(task.id, agent_id)
             if not started:
                 logger.warning("Chief task %d already claimed — skipping", task.id)
                 return
-            result = await asyncio.wait_for(agent.run(task.content), timeout=timeout)
+            result = await run_with_heartbeat(
+                agent.run(task.content), agent.heartbeat, idle_timeout,
+                deadline=time.monotonic() + max_runtime,
+            )
             await self._board.complete(task.id, result)
             await on_result(task, result, None)
-        except asyncio.TimeoutError:
-            err = f"Task timed out after {timeout}s"
+        except asyncio.TimeoutError as exc:
+            err = f"Task aborted by supervisor: {exc or f'idle > {idle_timeout:.0f}s'}"
             await self._board.fail(task.id, err)
             await on_result(task, None, err)
         except RateLimitError as exc:

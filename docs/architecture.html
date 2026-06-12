@@ -389,8 +389,10 @@ class Lane(Enum):
 
 <p>Persists every LLM call to <code>token_usage</code> table. Calculates cost at insert time via <code>estimate_cost()</code>. Enforces spending limits before each API call.</p>
 
+<p><strong>Cost formula</strong> (per call): <code>input·in_rate + output·out_rate + cache_read·read_rate + cache_write·write_rate</code>, all in USD per MTok. Cache tokens are reported by the API separately from <code>input_tokens</code> and dominate cost in agent workloads — they must be priced. If a model entry lacks explicit cache rates, fallback multipliers apply: cache read = 0.1× input rate, 5m cache write = 1.25× input rate (Anthropic standard). Unknown models log a warning and book $0 — add new models to <code>spending.model_pricing</code> (daemon config) or <code>_MODEL_PRICING_DEFAULTS</code> (<code>config.py</code>). Defaults verified against platform.claude.com on 2026-06-12: Haiku 4.5 $1/$5, Sonnet 4.6 $3/$15, Opus 4.8 $5/$25, Fable 5 $10/$50 (in/out per MTok).</p>
+
 <ul>
-<li><code>log(...)</code> — insert row including <code>cost_usd</code> (calculated from model pricing)</li>
+<li><code>log(...)</code> — insert row including <code>cost_usd</code> (calculated from model pricing incl. cache tokens)</li>
 <li><code>get_allowed_model(requested_model)</code> → model to use or <code>None</code> (reject). Checks daily/monthly limits; returns cheaper model on <code>on_limit_exceeded=downgrade</code>, <code>None</code> on <code>reject</code>. Called by <code>BaseAgent.run()</code> before every API call.</li>
 <li><code>total_cost(since?)</code> → total USD spent in period</li>
 <li><code>stats(since?)</code> → per-class aggregates including <code>cost_usd</code></li>
@@ -661,6 +663,7 @@ class Lane(Enum):
       "mechanic":   "&lt;tier-or-model-id&gt;"
     }
   },
+  "agent":     { "reply_timeout_seconds", "idle_timeout_seconds", "max_runtime_seconds" },
   "web":       { "port", "host", "auth_token" },
   "users":     { "default_role", "admin_ids" },
   "supervisor":{ "health_check_interval", "max_restart_attempts", "restart_backoff_seconds" },
@@ -677,6 +680,15 @@ class Lane(Enum):
 </code></pre>
 
 <p><code>llm.provider</code>: <code>"api"</code> (default). Values: <code>"api"</code> | <code>"cli"</code>.</p>
+
+<p><strong>Agent timeouts</strong> (<code>agent</code> section, read via <code>config.agent_timeout(key)</code> in <code>config.py</code>):</p>
+<ul>
+<li><code>reply_timeout_seconds</code> (default 300) — hard cap for an inline chat run; on timeout the job is offloaded to the kanban board instead of being killed</li>
+<li><code>idle_timeout_seconds</code> (default 120) — inline run aborts early when no agent activity (LLM turn finished, tool round-trip) for this long</li>
+<li><code>max_runtime_seconds</code> (default 1800) — hard cap for background (board) specialist runs; legacy <code>agents.task_timeout_seconds</code> still wins when explicitly set</li>
+</ul>
+
+<p>All three are stored in <code>daemon_config</code> (SQLite) like every other key and are editable through the Web UI via the generic <code>/api/config</code> + <code>/api/config/save</code> endpoints — no dedicated UI needed.</p>
 
 <p><strong>Per-agent model selection</strong> (<code>agents.models</code> + <code>agents.model_tiers</code>): each agent class and CodeTeam stage resolves its model via <code>get_agent_model(agent_class, stage?)</code> in <code>config.py</code>.</p>
 
@@ -705,6 +717,168 @@ class Lane(Enum):
 <ul>
 <li>Telegram command <code>/reload_config</code> (admin only)</li>
 <li><code>POST /api/config/reload</code> (Web API)</li>
+</ul>
+
+<hr>
+
+<h2>Task Supervision, Timeouts, and Heartbeat</h2>
+
+<h3>Timeout Configuration</h3>
+
+<p>Long-running tasks are protected by heartbeat-based supervision (<code>agents/heartbeat.py</code>) instead of pure wall-clock kills:</p>
+
+<p><strong><code>agent.idle_timeout_seconds</code></strong> (default 120s):</p>
+<ul>
+<li>A run is cancelled only when the agent emits no life sign for this long</li>
+<li>Life signs (<code>Heartbeat.beat()</code>): provider call in flight (beat every 15s via <code>_beat_while_running</code>), LLM turn finished, tool round-trip, compaction</li>
+<li>Applies to chief, all specialists and the inline chat handler</li>
+</ul>
+
+<p><strong><code>agent.max_runtime_seconds</code></strong> (default 1800s):</p>
+<ul>
+<li>Hard wall-clock cap per board task (chief + specialists), spans the whole run incl. tool loop</li>
+<li>Legacy <code>agents.task_timeout_seconds</code> is honored as fallback when <code>agent.max_runtime_seconds</code> is unset</li>
+<li>On abort → task moved to FAILED lane (<code>HeartbeatTimeout</code>, subclass of <code>asyncio.TimeoutError</code>)</li>
+</ul>
+
+<p><strong><code>agent.reply_timeout_seconds</code></strong> (default 300s):</p>
+<ul>
+<li>Hard cap for inline Telegram chat runs (<code>main.py:_handle_chat</code>)</li>
+<li>On timeout the job is <strong>not</strong> killed silently: it is offloaded to the kanban board (<code>board.offload()</code>) with a context note and re-run by a background specialist; the user gets a short notice and the result later</li>
+<li>The offload marker (<code>kanban/board.py:OFFLOAD_MARKER</code>) prevents re-offload loops; board-worker timeouts go to FAILED (bounded controller recovery), never back onto the board</li>
+<li>Inline runs &gt; 60s additionally trigger a one-shot "⏳ Dauert noch" notice (<code>_LONG_RUN_NOTICE_SECONDS</code>)</li>
+</ul>
+
+<p><strong><code>agents.po_timeout_seconds</code></strong> (default 3600s / 1 hour):</p>
+<ul>
+<li>Applies to ProductOwnerAgent project decomposition, synthesis, and child await cycles</li>
+<li>Prevents hung project decompositions from blocking the PO loop forever</li>
+<li>Configurable the same way; independent from the heartbeat supervisor</li>
+</ul>
+
+<p>All values live in <code>daemon_config</code> (hot-reloadable, no restart required).</p>
+
+<p>Example configuration:</p>
+<pre><code class="language-json">
+{
+  "agent": {
+    "reply_timeout_seconds": 300,   // inline chat cap before background offload
+    "idle_timeout_seconds": 120,    // no-life-sign abort
+    "max_runtime_seconds": 1800     // hard cap for board tasks
+  },
+  "agents": {
+    "po_timeout_seconds": 1800,     // 30 minutes for PO decomposition cycles
+    ...
+  }
+}
+</code></pre>
+
+<h3>Background Task Execution</h3>
+
+<p>All long-running work executes as background tasks via the KanbanBoard queue system:</p>
+
+<ul>
+<li><strong>Task Queue Lifecycle</strong> (kanban/board.py):</li>
+<li>BACKLOG → ControllerAgent assigns to specialist class → ASSIGNED</li>
+<li>ASSIGNED → AgentCoordinator specialist loop picks up task → IN_PROGRESS</li>
+<li>IN_PROGRESS → agent.run() executes with timeout → DONE (success) / FAILED (timeout, error, budget exceeded)</li>
+<li>Terminal states (DONE, FAILED, BLOCKED) → _on_agent_result() for post-processing</li>
+</ul>
+
+<ul>
+<li><strong>Non-Blocking Execution</strong> (agents/coordinator.py):</li>
+<li>Each specialist runs as <code>asyncio.create_task()</code> (fire-and-forget)</li>
+<li>Specialist loops don't block on task completion</li>
+<li>Multiple tasks of the same class run in parallel, respecting <code>agents.max_parallel</code> limit</li>
+<li>Active tasks tracked in <code>self._active[key]</code> dict with done callbacks for cleanup</li>
+</ul>
+
+<ul>
+<li><strong>Long-Running Task Examples</strong>:</li>
+<li><strong>Knowledge Base audit/quarantine</strong>: Ingesting group chat entries triggers KB trust-level checks; on untrusted source → entry quarantined, admin notified</li>
+<li><strong>Project decomposition (PO)</strong>: Complex multi-step goals decomposed into 2-8 subtasks, executed in parallel, results synthesized</li>
+<li><strong>Rate-limit recovery</strong>: Tasks requeued to ASSIGNED on RateLimitError with exponential backoff (no immediate retry, prevents thundering herd)</li>
+</ul>
+
+<ul>
+<li><strong>Preventing Long-Task Timeout</strong>:</li>
+<li>Increase <code>agent.max_runtime_seconds</code> in daemon_config for slow agents</li>
+<li>Decompose complex tasks into simpler subtasks assigned to different specialist classes</li>
+<li>Use ProductOwnerAgent (PO class) for multi-step projects — decomposes automatically</li>
+</ul>
+
+<h3>Heartbeat and Supervision Mechanisms</h3>
+
+<p>The daemon includes multiple layers of heartbeat and supervision to detect and recover from stuck tasks:</p>
+
+<p><strong>0. Heartbeat Supervisor</strong> (agents/heartbeat.py):</p>
+<ul>
+<li>Each <code>BaseAgent</code> owns a <code>Heartbeat</code>; <code>run_with_heartbeat(coro, heartbeat, idle_timeout, deadline)</code> cancels a run only on missing life signs or hard deadline — raises <code>HeartbeatTimeout</code> (an <code>asyncio.TimeoutError</code>)</li>
+<li>Providers emit beats every 15s while a call is in flight, so slow-but-alive LLM calls are never killed by the idle timer</li>
+<li>Inline chat timeouts → background offload (see above); board task timeouts → FAILED lane</li>
+</ul>
+
+<p><strong>1. Stuck Chat Watchdog</strong> (main.py:_stuck_chat_watchdog):</p>
+<ul>
+<li>Monitors Telegram chat handler tasks for age &gt; 600 seconds (10 minutes)</li>
+<li>Runs every 60 seconds</li>
+<li>On stuck chat detected → cancels handler task, notifies user <code>"⚠️ Vorheriger Request hat sich aufgehängt"</code></li>
+<li>Prevents chat handlers from silently blocking forever (separate from background specialist timeout)</li>
+</ul>
+
+<p><strong>2. Health Endpoint</strong> (GET <code>/health</code>):</p>
+<ul>
+<li>Returns daemon status: <code>{status, mode, poller, active_agents, security_pending, rate_limited_until?, llm_usage?}</code></li>
+<li>Shows: active specialist count, rate-limit state, LLM token usage, mechanic status</li>
+<li>Always available (all daemon modes)</li>
+<li>Used by supervisor.py watchdog every 60 seconds (configurable via <code>supervisor.health_check_interval</code>)</li>
+</ul>
+
+<p><strong>3. Supervisor Process</strong> (supervisor/supervisor.py):</p>
+<ul>
+<li>Separate watchdog process (runs outside the main daemon container)</li>
+<li>Polls <code>/health</code> endpoint every N seconds (HEALTH_INTERVAL env var, default 60s)</li>
+<li>Heartbeat timeout: 5 seconds per HTTP call</li>
+<li>On health check failure (timeout, non-200 response) → counts restart attempt</li>
+<li>Exponential backoff on restart: [5, 15, 60] seconds (configurable via <code>supervisor.restart_backoff_seconds</code>)</li>
+<li>Max restart attempts before giving up: 3 (configurable via <code>supervisor.max_restart_attempts</code>)</li>
+<li>After max attempts → sends Telegram alert to admins: <code>"⛔ claude-works daemon failed N times. Manual intervention required."</code></li>
+<li>On daemon exit (any code) → captured and restarted immediately (if under restart cap)</li>
+</ul>
+
+<p><strong>4. Config Watcher</strong> (main.py:_config_watcher_loop):</p>
+<ul>
+<li>Polls config.db every 5 seconds for changes (timestamp-based detection)</li>
+<li>Hot-reloads daemon_config into memory on change</li>
+<li>No restart required for config changes (except Telegram token, DB paths, port)</li>
+<li>Allows updating task_timeout_seconds without stopping active work</li>
+</ul>
+
+<p><strong>5. Task Reset on Startup</strong> (main.py:__init__ or boot sequence):</p>
+<ul>
+<li>On daemon start, scans <code>kanban_tasks</code> for stale tasks in IN_PROGRESS / ASSIGNED / REVIEW lanes</li>
+<li>Moves stale tasks back to BACKLOG (gives them a second chance)</li>
+<li>Clears orphaned hourglass reactions from previous sessions</li>
+<li>Updates stale bot message reactions with restart notice</li>
+<li>Prevents hung tasks from persisting across restarts</li>
+</ul>
+
+<p><strong>6. Rate-Limit Cooldown</strong> (agents/coordinator.py:_specialist_loop):</p>
+<ul>
+<li>On RateLimitError → exponential backoff: <code>cooldown = min(retry_after * 2^(count-1), 900s)</code></li>
+<li>All specialist loops pause until cooldown expires (checks every 30s max)</li>
+<li>Any successful LLM call resets backoff counter (prevents permanent growth)</li>
+<li>Max cooldown: 900s (15 minutes) regardless of retry count</li>
+<li>Rate limits do NOT trigger REPAIR mode — treated as expected operational state</li>
+</ul>
+
+<p><strong>Supervision Gaps and Future Work</strong>:</p>
+<ul>
+<li>No process-level CPU/memory limits per task (would require cgroup/ulimit)</li>
+<li>No inter-task deadlock detection (e.g., if PO awaits children indefinitely)</li>
+<li>No auto-retry policy on N consecutive failures (failed tasks stay in FAILED state)</li>
+<li>Mechanic agent is blocking during REPAIR mode (no fallback if mechanic fails)</li>
+<li>Heartbeat granularity: an in-flight provider call always counts as alive (providers are non-streaming, no token-level signal) — a truly hung HTTP call is only bounded by the SDK/CLI timeout and <code>max_runtime_seconds</code></li>
 </ul>
 
 <hr>

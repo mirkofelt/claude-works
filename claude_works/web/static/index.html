@@ -437,9 +437,9 @@
   <div class="card">
     <table>
       <thead><tr>
-        <th>#</th><th>Telegram ID</th><th>Name</th><th>Role</th><th>Last Seen</th><th>Persona</th><th></th>
+        <th>#</th><th>Telegram ID</th><th>Name</th><th>Role</th><th>Trust</th><th>Last Seen</th><th>Persona</th><th></th>
       </tr></thead>
-      <tbody id="userBody"><tr><td colspan="7" class="empty">Loading…</td></tr></tbody>
+      <tbody id="userBody"><tr><td colspan="8" class="empty">Loading…</td></tr></tbody>
     </table>
   </div>
 </div>
@@ -477,6 +477,12 @@
         <option value="procedure">procedure</option>
         <option value="context">context</option>
       </select>
+      <select id="kbVisibility" style="padding:.5rem;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px;margin-left:.5rem">
+        <option value="0" selected>0 — privat</option>
+        <option value="1">1 — vertraut</option>
+        <option value="2">2 — Kontakte</option>
+        <option value="3">3 — öffentlich</option>
+      </select>
     </div>
     <textarea id="kbContent" placeholder="Content…" rows="4" style="width:100%;padding:.5rem;margin-bottom:.5rem;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px;resize:vertical"></textarea>
     <div style="display:flex;gap:.5rem">
@@ -487,9 +493,9 @@
   <div class="card">
     <table id="kbTable">
       <thead><tr>
-        <th style="width:80px">Type</th><th>Title</th><th>Tags</th><th>Content</th><th style="width:110px">Updated</th><th style="width:36px"></th>
+        <th style="width:80px">Type</th><th>Title</th><th>Tags</th><th>Content</th><th style="width:100px">Visibility</th><th style="width:110px">Updated</th><th style="width:36px"></th>
       </tr></thead>
-      <tbody id="kbBody"><tr><td colspan="6" class="empty">Loading…</td></tr></tbody>
+      <tbody id="kbBody"><tr><td colspan="7" class="empty">Loading…</td></tr></tbody>
     </table>
   </div>
 </div>
@@ -720,9 +726,12 @@
       <summary>Agents</summary>
       <div class="cfg-body">
         <div class="field"><label>Max Parallel</label><input type="number" id="s_ag_parallel"></div>
-        <div class="field"><label>Task Timeout (s)</label><input type="number" id="s_ag_task_timeout"></div>
+        <div class="field"><label>Task Timeout (s, legacy)</label><input type="number" id="s_ag_task_timeout"></div>
         <div class="field"><label>PO Timeout (s)</label><input type="number" id="s_ag_po_timeout"></div>
         <div class="field"><label>Max Retries</label><input type="number" id="s_ag_retries"></div>
+        <div class="field"><label>Reply Timeout (s)</label><input type="number" id="s_agt_reply" placeholder="300"></div>
+        <div class="field"><label>Idle/Heartbeat Timeout (s)</label><input type="number" id="s_agt_idle" placeholder="120"></div>
+        <div class="field"><label>Max Runtime (s)</label><input type="number" id="s_agt_max_runtime" placeholder="1800"></div>
         <div class="field wide"><label>Model Tiers (JSON)</label><textarea id="s_ag_tiers" rows="3"></textarea><div class="hint">{"fast":"claude-haiku-4-5-20251001", "balanced":"claude-sonnet-4-6", "best":"claude-opus-4-8"}</div></div>
         <div class="field wide"><label>Per-Agent Models (JSON)</label><textarea id="s_ag_models" rows="6"></textarea></div>
       </div>
@@ -1241,7 +1250,7 @@ async function loadMessages() {
 async function loadUsers() {
   const rows = await api('/api/users');
   const b = document.getElementById('userBody');
-  if (!rows?.length) { b.innerHTML = '<tr><td colspan="6" class="empty">No users</td></tr>'; return; }
+  if (!rows?.length) { b.innerHTML = '<tr><td colspan="8" class="empty">No users</td></tr>'; return; }
   b.innerHTML = rows.map(u => `
     <tr>
       <td class="mono">${u.id}</td>
@@ -1254,6 +1263,14 @@ async function loadUsers() {
           <option value="admin"   ${u.role==='admin'   ?'selected':''}>admin</option>
           <option value="user"    ${u.role==='user'    ?'selected':''}>user</option>
           <option value="blocked" ${u.role==='blocked' ?'selected':''}>blocked</option>
+        </select>
+      </td>
+      <td>
+        <select class="role-sel" data-id="${u.telegram_id}" onchange="setTrust(this)" title="${u.role==='admin'?'Admins sind effektiv immer Stufe 0':'Vertrauensstufe'}">
+          <option value="0" ${u.trust_level===0?'selected':''}>0 Owner</option>
+          <option value="1" ${u.trust_level===1?'selected':''}>1 Vertraut</option>
+          <option value="2" ${(u.trust_level===2||u.trust_level==null)?'selected':''}>2 Kontakt</option>
+          <option value="3" ${u.trust_level===3?'selected':''}>3 Unbekannt</option>
         </select>
       </td>
       <td style="color:var(--muted);font-size:12px">${ts(u.last_seen)}</td>
@@ -1270,6 +1287,13 @@ async function setRole(sel) {
   await api('/api/users/' + sel.dataset.id + '/role', {
     method: 'POST',
     body: JSON.stringify({ role: sel.value })
+  });
+}
+
+async function setTrust(sel) {
+  await api('/api/users/' + sel.dataset.id, {
+    method: 'PUT',
+    body: JSON.stringify({ trust_level: parseInt(sel.value) })
   });
 }
 
@@ -2195,10 +2219,10 @@ async function loadKnowledge() {
   const data = await api('/api/knowledge?' + params.join('&'));
   const b = document.getElementById('kbBody');
   const pager = document.getElementById('kbPager');
-  if (!data || !data.items) { _kbItems = []; b.innerHTML = '<tr><td colspan="6" class="empty">No entries</td></tr>'; pager.innerHTML=''; return; }
+  if (!data || !data.items) { _kbItems = []; b.innerHTML = '<tr><td colspan="7" class="empty">No entries</td></tr>'; pager.innerHTML=''; return; }
   const {items, total, page, pages} = data;
   _kbItems = items;
-  if (!items.length) { b.innerHTML = '<tr><td colspan="6" class="empty">No entries</td></tr>'; pager.innerHTML=''; return; }
+  if (!items.length) { b.innerHTML = '<tr><td colspan="7" class="empty">No entries</td></tr>'; pager.innerHTML=''; return; }
   b.innerHTML = items.map(e => {
     const preview = e.content.length > 100 ? esc(e.content.slice(0,100)) + '…' : esc(e.content);
     const tags = (e.tags||[]).map(t => `<span style="font-size:.7rem;background:var(--bg);padding:.1rem .35rem;border-radius:3px;color:var(--accent);margin-right:.2rem">${esc(t)}</span>`).join('');
@@ -2208,6 +2232,14 @@ async function loadKnowledge() {
       <td style="max-width:140px">${tags}</td>
       <td style="font-size:.8rem;color:var(--muted);max-width:280px;cursor:pointer" onclick="openKbEntry(${e.id})">
         <span style="cursor:pointer">${preview}</span>
+      </td>
+      <td>
+        <select class="role-sel" onchange="setKbVisibility(${e.id}, this)" title="Sichtbarkeit (0=privat … 3=öffentlich)">
+          <option value="0" ${(e.visibility===0||e.visibility==null)?'selected':''}>0 privat</option>
+          <option value="1" ${e.visibility===1?'selected':''}>1 vertraut</option>
+          <option value="2" ${e.visibility===2?'selected':''}>2 Kontakte</option>
+          <option value="3" ${e.visibility===3?'selected':''}>3 öffentlich</option>
+        </select>
       </td>
       <td style="color:var(--muted);font-size:.75rem;white-space:nowrap">${new Date(e.updated_at*1000).toLocaleDateString()}</td>
       <td style="display:flex;gap:3px">
@@ -2234,8 +2266,9 @@ async function addKnowledge() {
   const type = document.getElementById('kbEntryType').value;
   const raw = document.getElementById('kbTags').value.trim();
   const tags = raw ? raw.split(',').map(t => t.trim()).filter(Boolean) : [];
+  const visibility = parseInt(document.getElementById('kbVisibility').value);
   if (!title || !content) return;
-  const ok = await api('/api/knowledge', { method: 'POST', body: JSON.stringify({ title, content, type, tags }) });
+  const ok = await api('/api/knowledge', { method: 'POST', body: JSON.stringify({ title, content, type, tags, visibility }) });
   if (ok) {
     document.getElementById('kbTitle').value = '';
     document.getElementById('kbContent').value = '';
@@ -2250,6 +2283,10 @@ async function deleteKnowledge(id) {
   if (!confirm('Delete this entry?')) return;
   await api('/api/knowledge/' + id, { method: 'DELETE' });
   loadKnowledge();
+}
+
+async function setKbVisibility(id, sel) {
+  await api('/api/knowledge/' + id, { method: 'PUT', body: JSON.stringify({ visibility: parseInt(sel.value) }) });
 }
 
 function toggleKanbanClear(e) {
@@ -2410,11 +2447,14 @@ async function testDeployGuard() {
   btn.disabled = false; btn.textContent = 'Test Connection';
 }
 
+let _rawConfig = {};  // last loaded config — preserved on save so unknown sections (cron, agent extras, …) survive
+
 async function loadSettings() {
   const msg = document.getElementById('settingsMsg');
   try {
     const data = await api('/api/config');
     const c = data.config;
+    _rawConfig = c;
     const tg = c.telegram || {}, llm = c.llm || {}, ag = c.agents || {};
     const web = c.web || {}, sec = c.security || {}, sp = c.spending || {};
     const tts = c.tts || {}, em = c.email || {}, gh = c.github || {};
@@ -2428,6 +2468,9 @@ async function loadSettings() {
     _set('s_llm_ctx_warn', llm.context_warn_threshold); _set('s_llm_ctx_compact', llm.context_compact_threshold);
     _set('s_ag_parallel', ag.max_parallel); _set('s_ag_task_timeout', ag.task_timeout_seconds);
     _set('s_ag_po_timeout', ag.po_timeout_seconds); _set('s_ag_retries', ag.max_retries);
+    const agt = c.agent || {};
+    _set('s_agt_reply', agt.reply_timeout_seconds); _set('s_agt_idle', agt.idle_timeout_seconds);
+    _set('s_agt_max_runtime', agt.max_runtime_seconds);
     _setj('s_ag_tiers', ag.model_tiers); _setj('s_ag_models', ag.models);
     _set('s_web_token', web.auth_token); _set('s_web_port', web.port); _set('s_web_host', web.host);
     _setb('s_web_proxy', web.trusted_proxy);
@@ -2520,7 +2563,13 @@ async function saveSettings() {
     const reactionMap = reactionMapRead(), mcpServers = _sj('s_mcp_servers');
     const backoff = _sj('s_sv_backoff');
     const adminIds = _sa('s_tg_admin_ids');
+    const agentTimeouts = {};
+    if (_sn('s_agt_reply') !== null) agentTimeouts.reply_timeout_seconds = _sn('s_agt_reply');
+    if (_sn('s_agt_idle') !== null) agentTimeouts.idle_timeout_seconds = _sn('s_agt_idle');
+    if (_sn('s_agt_max_runtime') !== null) agentTimeouts.max_runtime_seconds = _sn('s_agt_max_runtime');
     cfg = {
+      ..._rawConfig,  // preserve sections this form doesn't know (cron, …)
+      agent: agentTimeouts,
       telegram: { token: _sv('s_tg_token'), admin_chat_ids: adminIds, allowed_updates: ['message','edited_message','message_reaction'], reaction_map: reactionMap || {} },
       llm: { provider: _sv('s_llm_provider'), api_key: _sv('s_llm_api_key'), cli_binary: _sv('s_llm_cli_binary'), model: _sv('s_llm_model'), max_tokens: _sn('s_llm_max_tokens'), max_context_tokens: _sn('s_llm_max_ctx'), context_warn_threshold: _sn('s_llm_ctx_warn'), context_compact_threshold: _sn('s_llm_ctx_compact') },
       agents: { max_parallel: _sn('s_ag_parallel'), task_timeout_seconds: _sn('s_ag_task_timeout'), po_timeout_seconds: _sn('s_ag_po_timeout'), max_retries: _sn('s_ag_retries'), model_tiers: tiers, models: models },
@@ -2583,6 +2632,7 @@ function editKbEntry() {
   document.getElementById('kbModalEditTitle').value = e.title;
   document.getElementById('kbModalEditTags').value = (e.tags || []).join(', ');
   document.getElementById('kbModalEditType').value = e.type;
+  document.getElementById('kbModalEditVisibility').value = String(e.visibility ?? 0);
   document.getElementById('kbModalEditContent').value = e.content;
   document.getElementById('kbModalView').style.display = 'none';
   document.getElementById('kbModalEditBtn').style.display = 'none';
@@ -2603,8 +2653,9 @@ async function saveKbEntry() {
   const type = document.getElementById('kbModalEditType').value;
   const rawTags = document.getElementById('kbModalEditTags').value.trim();
   const tags = rawTags ? rawTags.split(',').map(t => t.trim()).filter(Boolean) : [];
+  const visibility = parseInt(document.getElementById('kbModalEditVisibility').value);
   if (!title || !content) return;
-  const ok = await api('/api/knowledge/' + id, { method: 'PUT', body: JSON.stringify({ title, content, type, tags }) });
+  const ok = await api('/api/knowledge/' + id, { method: 'PUT', body: JSON.stringify({ title, content, type, tags, visibility }) });
   if (ok) {
     closeKbModal();
     loadKnowledge();
@@ -2633,13 +2684,21 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeKbModal
         <input type="text" id="kbModalEditTitle" placeholder="Title" style="padding:.5rem;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px">
         <input type="text" id="kbModalEditTags" placeholder="Tags (comma-separated)" style="padding:.5rem;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px">
       </div>
-      <select id="kbModalEditType" style="padding:.5rem;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px;align-self:start;width:auto">
-        <option value="note">note</option>
-        <option value="fact">fact</option>
-        <option value="procedure">procedure</option>
-        <option value="context">context</option>
-        <option value="document">document</option>
-      </select>
+      <div style="display:flex;gap:.5rem">
+        <select id="kbModalEditType" style="padding:.5rem;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px;width:auto">
+          <option value="note">note</option>
+          <option value="fact">fact</option>
+          <option value="procedure">procedure</option>
+          <option value="context">context</option>
+          <option value="document">document</option>
+        </select>
+        <select id="kbModalEditVisibility" style="padding:.5rem;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px;width:auto">
+          <option value="0">0 — privat</option>
+          <option value="1">1 — vertraut</option>
+          <option value="2">2 — Kontakte</option>
+          <option value="3">3 — öffentlich</option>
+        </select>
+      </div>
       <textarea id="kbModalEditContent" rows="12"></textarea>
       <div style="display:flex;gap:.5rem">
         <button class="btn btn-primary" onclick="saveKbEntry()">Save</button>

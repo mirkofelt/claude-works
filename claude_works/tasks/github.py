@@ -6,6 +6,30 @@ import os
 logger = logging.getLogger(__name__)
 
 
+def _fix_json_newlines(s: str) -> str:
+    """Escape unescaped newlines/carriage-returns inside JSON string literals."""
+    result = []
+    in_string = False
+    escape_next = False
+    for ch in s:
+        if escape_next:
+            result.append(ch)
+            escape_next = False
+        elif ch == '\\' and in_string:
+            result.append(ch)
+            escape_next = True
+        elif ch == '"':
+            result.append(ch)
+            in_string = not in_string
+        elif ch == '\n' and in_string:
+            result.append('\\n')
+        elif ch == '\r' and in_string:
+            result.append('\\r')
+        else:
+            result.append(ch)
+    return ''.join(result)
+
+
 async def github_api(method: str, endpoint: str, body: str | None, cfg: dict) -> dict:
     """Execute a GitHub API call via the gh CLI. Requires gh binary in PATH or cfg.gh_binary."""
     binary = cfg.get("gh_binary", "gh")
@@ -14,9 +38,13 @@ async def github_api(method: str, endpoint: str, body: str | None, cfg: dict) ->
     cmd = [binary, "api", "--method", method.upper(), endpoint]
     if body:
         try:
-            json.loads(body)  # validate JSON before passing
-        except json.JSONDecodeError as e:
-            raise ValueError(f"GitHub API body is not valid JSON: {e}") from e
+            json.loads(body)
+        except json.JSONDecodeError:
+            body = _fix_json_newlines(body)
+            try:
+                json.loads(body)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"GitHub API body is not valid JSON: {e}") from e
         cmd += ["--input", "-"]
 
     env = os.environ.copy()

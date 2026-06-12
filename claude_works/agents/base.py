@@ -7,6 +7,7 @@ from ..config import get_agent_model, section
 from ..llm.provider import LLMProvider, get_provider
 from ..telemetry import task_log as _tlog
 from ..telemetry.tokens import BudgetExceededError, TokenTracker
+from .heartbeat import Heartbeat
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,9 @@ class BaseAgent(ABC):
         self._messages: list[dict] = []
         self._context_tokens = 0
         self._owns_provider = provider is None
+        # Life-sign tracker for the heartbeat supervisor (agents/heartbeat.py).
+        # Beaten on every LLM round-trip / in-flight provider heartbeat.
+        self.heartbeat = Heartbeat()
 
     @abstractmethod
     def _system_prompt(self) -> str:
@@ -54,6 +58,12 @@ class BaseAgent(ABC):
         bg = self._user_context.get("background", "")
         if bg:
             parts.append(f"Background: {bg}")
+        focus = self._user_context.get("focus", "")
+        if focus:
+            parts.append(f"Focus — keep this chat on topic: {focus}")
+        style = self._user_context.get("communication_style", "")
+        if style:
+            parts.append(f"Communication style for this chat: {style}")
         if self._user_context.get("is_group"):
             sender = self._user_context.get("sender_name", "")
             sender_note = f" (sender: {sender})" if sender else ""
@@ -98,13 +108,16 @@ class BaseAgent(ABC):
         )
         _tlog.info(self.task_id, f"→ {self.agent_class} calling {model}")
 
+        self.heartbeat.beat()
         response = await self._get_provider().complete(
             self._messages,
             system=self._system_prompt(),
             model=model,
             max_tokens=max_tokens,
             mcp_servers=self._get_mcp_servers(),
+            on_heartbeat=self.heartbeat.beat,
         )
+        self.heartbeat.beat()
 
         self._messages.append({"role": "assistant", "content": response.text})
         self._context_tokens = response.usage.input_tokens + response.usage.output_tokens
@@ -171,6 +184,7 @@ class BaseAgent(ABC):
             system="You are a concise summarizer.",
             model=get_agent_model("compactor"),
             max_tokens=1024,
+            on_heartbeat=self.heartbeat.beat,
         )
         self._messages = [
             {"role": "user", "content": f"[Context summary: {response.text}]"},

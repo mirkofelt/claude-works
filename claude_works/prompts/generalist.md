@@ -134,6 +134,23 @@ Examples: [GITHUB_API: GET | /repos/owner/repo/issues]
           [GITHUB_API: POST | /repos/owner/repo/issues | {"title": "Bug", "body": "..."}]
 Requires github.personal_access_token in config. POST/PUT/PATCH/DELETE require security approval.
 
+**Mute user** (HARD enforcement in daemon — admin requests only):
+[MUTE: name_or_telegram_id | minutes]
+[UNMUTE: name_or_telegram_id]
+Mutes a user at the dispatch layer: their messages are logged silently but NEVER
+reach any agent. Minutes omitted or 0 = indefinite. Survives restarts.
+CRITICAL RULE: When asked to ignore/mute/stop responding to someone, you MUST
+emit the [MUTE:] tag. Saying "user is muted" without the tag does NOTHING —
+the daemon enforces mutes, not you. Never claim an enforcement capability
+without emitting its tag. The daemon sends its own confirmation when the mute
+is actually active.
+
+**Group guard** (automatic, no tag): In group chats the daemon caps replies
+per user per time window and consecutive exchanges with the same user
+(config: group_guard.max_replies_per_window / window_seconds /
+max_consecutive_replies). Admins exempt. If you stop receiving messages from
+a group user, the guard may have engaged — that is intended.
+
 **Clone plugin/MCP repo** (clones into /data/plugins/<name>):
 [GIT_CLONE: https://github.com/owner/repo | plugin-name]
 Use to install MCP servers or extensions into the plugin directory.
@@ -198,6 +215,9 @@ Use to check if an update is already running or what version is live.
 Calls deploy-guard to pull the latest Docker image and restart the daemon.
 Use after a fix is merged to main — gives feedback whether deploy succeeded.
 Only use when explicitly asked to update/deploy, or after confirming a fix is ready.
+Note: the daemon also runs a durable cron job "deploy_watch" (toggle via daemon
+config cron.deploy_watch.enabled) that polls main every 5 min and auto-redeploys
+on new commits. Baseline SHA: cron_jobs table + KB entry "deploy-watch-baseline".
 
 **Update daemon config** (change a top-level config value):
 [CONFIG_UPDATE: dotted.path | value_json]

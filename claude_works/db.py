@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS users (
     telegram_id INTEGER UNIQUE NOT NULL,
     name TEXT,
     role TEXT NOT NULL DEFAULT 'blocked',
+    trust_level INTEGER NOT NULL DEFAULT 2,
     created_at INTEGER NOT NULL,
     last_seen INTEGER
 );
@@ -129,6 +130,9 @@ CREATE TABLE IF NOT EXISTS knowledge (
     tags TEXT,
     source TEXT,
     user_id INTEGER,
+    visibility INTEGER NOT NULL DEFAULT 0,
+    origin_chat_id INTEGER,
+    quarantined INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );
@@ -231,6 +235,17 @@ CREATE TABLE IF NOT EXISTS task_logs (
 );
 CREATE INDEX IF NOT EXISTS idx_task_logs_task ON task_logs(task_id, ts);
 
+CREATE TABLE IF NOT EXISTS cron_jobs (
+    name TEXT PRIMARY KEY,
+    interval_seconds INTEGER NOT NULL,
+    state_json TEXT NOT NULL DEFAULT '{}',
+    last_run_at INTEGER,
+    last_status TEXT,
+    last_error TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS approval_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     action_types TEXT NOT NULL,
@@ -273,6 +288,19 @@ _MIGRATIONS = [
     "ALTER TABLE usage_snapshots ADD COLUMN session_reset_at INTEGER",
     "ALTER TABLE usage_snapshots ADD COLUMN weekly_reset_at INTEGER",
     "ALTER TABLE usage_snapshots ADD COLUMN weekly_models_json TEXT",
+    # Trust levels: users.trust_level (0=owner/admin, 2=contact, 3=unknown),
+    # knowledge.visibility (0=private/admin-only, 2=contacts, 3=public).
+    "ALTER TABLE users ADD COLUMN trust_level INTEGER NOT NULL DEFAULT 2",
+    "ALTER TABLE knowledge ADD COLUMN visibility INTEGER NOT NULL DEFAULT 0",
+    # Backfill: lock down all pre-existing KB entries (defensive; ALTER default covers new col)
+    "UPDATE knowledge SET visibility = 0 WHERE visibility IS NULL",
+    # Admins are always effective level 0 (effective_trust maps role='admin' → 0);
+    # backfill the column too so Web UI / raw queries show the truth. Idempotent.
+    "UPDATE users SET trust_level = 0 WHERE role = 'admin' AND trust_level != 0",
+    # Write-side trust gating: knowledge.origin_chat_id (woher kam der Eintrag),
+    # knowledge.quarantined (1 = aus nicht vertrautem Chat, wartet auf Admin-Freigabe).
+    "ALTER TABLE knowledge ADD COLUMN origin_chat_id INTEGER",
+    "ALTER TABLE knowledge ADD COLUMN quarantined INTEGER NOT NULL DEFAULT 0",
 ]
 
 

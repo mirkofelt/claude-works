@@ -31,6 +31,52 @@ async def test_estimate_cost(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_estimate_cost_includes_cache_tokens(monkeypatch):
+    monkeypatch.setattr(cfg, "_settings", {})
+    # sonnet: 3.00 in + 15.00 out + 0.30 cache-read + 3.75 cache-write per MTok
+    cost = cfg.estimate_cost(
+        "claude-sonnet-4-6", 1_000_000, 1_000_000,
+        cache_read_tokens=1_000_000, cache_write_tokens=1_000_000,
+    )
+    assert abs(cost - 22.05) < 0.001
+
+
+@pytest.mark.asyncio
+async def test_estimate_cost_cache_fallback_multipliers(monkeypatch):
+    # custom pricing without explicit cache rates → 0.1x / 1.25x of input
+    monkeypatch.setattr(cfg, "_settings", {
+        "spending": {"model_pricing": {
+            "custom-model": {"input_per_mtok": 10.0, "output_per_mtok": 50.0}
+        }}
+    })
+    cost = cfg.estimate_cost(
+        "custom-model", 0, 0,
+        cache_read_tokens=1_000_000, cache_write_tokens=1_000_000,
+    )
+    assert abs(cost - (1.0 + 12.5)) < 0.001
+
+
+@pytest.mark.asyncio
+async def test_estimate_cost_unknown_model_zero(monkeypatch):
+    monkeypatch.setattr(cfg, "_settings", {})
+    assert cfg.estimate_cost("no-such-model", 1_000_000, 1_000_000) == 0.0
+
+
+@pytest.mark.asyncio
+async def test_tracker_logs_cache_cost(monkeypatch):
+    monkeypatch.setattr(cfg, "_settings", {})
+    tracker = await _make_tracker()
+    await tracker.log(
+        agent_id="test", agent_class="generalist", task_id=1,
+        user_id=1, chat_id=1, model="claude-sonnet-4-6",
+        input_tokens=0, output_tokens=0,
+        cache_read_tokens=1_000_000, cache_write_tokens=0,
+    )
+    cost = await tracker.total_cost()
+    assert abs(cost - 0.30) < 0.001
+
+
+@pytest.mark.asyncio
 async def test_no_limits_always_allowed(monkeypatch):
     monkeypatch.setattr(cfg, "_settings", {})
     tracker = await _make_tracker()

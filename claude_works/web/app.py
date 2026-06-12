@@ -554,6 +554,13 @@ async def trigger_deploy():
         raise HTTPException(status_code=502, detail=str(e))
 
 
+@app.get("/api/cron", dependencies=[Depends(_verify_token)])
+async def get_cron_status():
+    if not _daemon_ref or not getattr(_daemon_ref, "_cron", None):
+        return {"jobs": []}
+    return {"jobs": await _daemon_ref._cron.status()}
+
+
 @app.post("/api/deploy/rollback", dependencies=[Depends(_verify_token)])
 async def trigger_rollback():
     import httpx
@@ -597,13 +604,14 @@ async def get_knowledge(q: str | None = None, type: str | None = None, page: int
     page_size = max(1, min(page_size, 200))
     page = max(1, page)
     conn = await _get_conn()
+    # Admin-UI: quarantänierte Einträge mit anzeigen (markiert via 'quarantined'-Flag im JSON)
     if q:
-        items = await knowledge_store.search(conn, q, limit=page_size)
+        items = await knowledge_store.search(conn, q, limit=page_size, include_quarantined=True)
         total = len(items)
     else:
-        total = await knowledge_store.count(conn, type=type)
+        total = await knowledge_store.count(conn, type=type, include_quarantined=True)
         offset = (page - 1) * page_size
-        items = await knowledge_store.list_all(conn, type=type, limit=page_size, offset=offset)
+        items = await knowledge_store.list_all(conn, type=type, limit=page_size, offset=offset, include_quarantined=True)
     await conn.close()
     pages = max(1, (total + page_size - 1) // page_size)
     return {"items": items, "total": total, "page": page, "page_size": page_size, "pages": pages}
@@ -616,6 +624,10 @@ async def add_knowledge(body: dict):
     if not title or not content:
         raise HTTPException(status_code=400, detail="title and content required")
     conn = await _get_conn()
+    visibility = body.get("visibility", 0)
+    if visibility not in (0, 1, 2, 3):
+        await conn.close()
+        raise HTTPException(status_code=400, detail="Invalid visibility (0-3)")
     entry_id = await knowledge_store.add(
         conn,
         title=title,
@@ -623,6 +635,7 @@ async def add_knowledge(body: dict):
         type=body.get("type", "note"),
         tags=body.get("tags"),
         source="admin",
+        visibility=visibility,
     )
     await conn.close()
     return {"id": entry_id}
@@ -635,6 +648,10 @@ async def update_knowledge(entry_id: int, body: dict):
     tags = raw_tags if isinstance(raw_tags, list) else (
         [t.strip() for t in raw_tags.split(",") if t.strip()] if isinstance(raw_tags, str) else None
     )
+    visibility = body.get("visibility")
+    if visibility is not None and visibility not in (0, 1, 2, 3):
+        await conn.close()
+        raise HTTPException(status_code=400, detail="Invalid visibility (0-3)")
     ok = await knowledge_store.update(
         conn,
         entry_id,
@@ -642,6 +659,7 @@ async def update_knowledge(entry_id: int, body: dict):
         content=body.get("content") or None,
         type=body.get("type") or None,
         tags=tags,
+        visibility=visibility,
     )
     await conn.close()
     if not ok:
@@ -709,6 +727,13 @@ async def update_user(telegram_id: int, body: dict):
             await conn.close()
             raise HTTPException(status_code=400, detail="Invalid role")
         await set_role(conn, telegram_id, role)
+    trust_level = body.get("trust_level")
+    if trust_level is not None:
+        if trust_level not in (0, 1, 2, 3):
+            await conn.close()
+            raise HTTPException(status_code=400, detail="Invalid trust_level (0-3)")
+        from ..auth.users import set_trust
+        await set_trust(conn, telegram_id, trust_level)
     if "persona" in body:
         persona = body["persona"] or None
         await conn.execute("UPDATE users SET persona = ? WHERE telegram_id = ?", (persona, telegram_id))

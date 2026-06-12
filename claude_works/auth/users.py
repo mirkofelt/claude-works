@@ -50,6 +50,20 @@ async def set_role(conn: aiosqlite.Connection, telegram_id: int, role: str) -> N
     logger.info("User %d role set to %s", telegram_id, role)
 
 
+async def set_trust(conn: aiosqlite.Connection, telegram_id: int, level: int) -> bool:
+    """Set trust_level (0=Owner, 1=Vertraut, 2=Kontakt, 3=Unbekannt). Returns False if user unknown."""
+    if level not in (0, 1, 2, 3):
+        raise ValueError(f"Invalid trust level: {level}")
+    async with conn.execute(
+        "UPDATE users SET trust_level = ? WHERE telegram_id = ?", (level, telegram_id)
+    ) as cur:
+        updated = cur.rowcount
+    await conn.commit()
+    if updated:
+        logger.info("User %d trust_level set to %d", telegram_id, level)
+    return updated > 0
+
+
 async def is_allowed(conn: aiosqlite.Connection, telegram_id: int) -> bool:
     user = await get_user(conn, telegram_id)
     allowed = user is not None and user["role"] in ("admin", "user")

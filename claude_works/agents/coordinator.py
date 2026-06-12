@@ -2,8 +2,9 @@ import asyncio
 import logging
 import time
 
-from ..config import section, get as _get_config
+from ..config import agent_timeout, section, get as _get_config
 from .. import db
+from ..auth import trust as trust_mod
 from ..knowledge import store as knowledge_store
 from ..kanban.board import KanbanBoard
 from ..kanban.models import AgentClass, KanbanTask
@@ -13,6 +14,7 @@ from ..telemetry.task_log import TaskLogger
 from ..telemetry.tokens import BudgetExceededError, TokenTracker
 from .chief import ChiefAgent
 from .controller import ControllerAgent
+from .heartbeat import run_with_heartbeat
 from .po import ProductOwnerAgent
 from .specialist.generalist import GeneralistAgent
 from .specialist.researcher import ResearchAgent
@@ -28,13 +30,17 @@ _KB_ENTRY_MAX_CHARS = 400
 _CODETEAM_PREVIEW_LEN = 100
 
 
-async def _inject_knowledge(content: str, user_id: int | None) -> str:
-    """Prepend relevant knowledge base entries to task content for agent context."""
+async def _inject_knowledge(content: str, user_id: int | None, chat_id: int | None = None) -> str:
+    """Prepend relevant knowledge base entries to task content for agent context.
+
+    Filtert nach Vertrauensstufe: nur Einträge mit visibility >= effektiver
+    Stufe des Chats (Gruppen: lockerste Stufe aller Mitglieder)."""
     if len(content.split()) < _KB_MIN_WORDS:
         return content
     try:
         conn = await db.get_conn()
-        entries = await knowledge_store.search(conn, content, user_id=user_id, limit=5)
+        trust = await trust_mod.chat_trust(conn, chat_id, user_id)
+        entries = await knowledge_store.search(conn, content, user_id=user_id, limit=5, trust=trust)
         await conn.close()
     except Exception:
         return content
@@ -206,8 +212,8 @@ class AgentCoordinator:
             active_task.add_done_callback(lambda _, k=key: self._active.pop(k, None))
 
     async def _run_specialist(self, task: KanbanTask, agent_class: AgentClass) -> None:
-        cfg = section("agents")
-        timeout = cfg.get("task_timeout_seconds", 600)
+        idle_timeout = agent_timeout("idle_timeout_seconds")
+        max_runtime = agent_timeout("max_runtime_seconds")
         AgentCls = _SPECIALIST_MAP[agent_class]
         persona = self._chief.persona if self._chief else ""
 
@@ -238,26 +244,32 @@ class AgentCoordinator:
                 await self._board.fail(task.id, "Empty task content")
                 return
 
-            content = await _inject_knowledge(task.content, task.user_id)
+            content = await _inject_knowledge(task.content, task.user_id, task.chat_id)
             sys_mode = _get_config().get("system", {}).get("mode", "run")
             if sys_mode != "run":
                 content = f"[SYSTEM MODE: {sys_mode.upper()}]\n\n{content}"
-            result = await asyncio.wait_for(agent.run(content), timeout=timeout)
+            # Hard cap spans the whole task incl. tool loop; idle timeout only
+            # kills a run with no LLM/tool activity (heartbeat supervision).
+            deadline = time.monotonic() + max_runtime
+            result = await run_with_heartbeat(
+                agent.run(content), agent.heartbeat, idle_timeout, deadline=deadline,
+            )
             # Tool loop — feed read-tool results back so agent can continue processing
             if self._exec_tools:
                 for _ in range(5):
-                    clean, tool_feedback = await self._exec_tools(result)
+                    clean, tool_feedback = await self._exec_tools(result, user_id=task.user_id, chat_id=task.chat_id)
+                    agent.heartbeat.beat()  # tool execution is progress
                     if not tool_feedback:
                         result = clean
                         break
                     logger.info("Specialist %s task %d: tool results fed back, continuing", agent_class.value, task.id)
-                    result = await asyncio.wait_for(
+                    result = await run_with_heartbeat(
                         agent.run(
                             f"[Tool results]\n{tool_feedback}\n\n"
                             "Process the tool results above and continue with the task. "
                             "Do NOT echo or repeat raw tool output — summarise in plain language only."
                         ),
-                        timeout=timeout,
+                        agent.heartbeat, idle_timeout, deadline=deadline,
                     )
             self._rate_limit_count = 0  # reset on success
             elapsed = time.time() - started
@@ -265,10 +277,10 @@ class AgentCoordinator:
             tlog.info(f"task {task.id} done in {elapsed:.1f}s")
             await self._board.complete(task.id, result)
             await self._on_result(task, result, None)
-        except asyncio.TimeoutError:
-            err = f"Task timed out after {timeout}s"
-            logger.error("Specialist %s task %d timed out", agent_class.value, task.id)
-            tlog.error(f"timeout after {timeout}s")
+        except asyncio.TimeoutError as exc:
+            err = f"Task aborted by supervisor: {exc or f'idle > {idle_timeout:.0f}s'}"
+            logger.error("Specialist %s task %d timed out: %s", agent_class.value, task.id, exc)
+            tlog.error(err)
             await self._board.fail(task.id, err)
             await self._on_result(task, None, err)
         except RateLimitError as exc:

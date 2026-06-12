@@ -3,9 +3,40 @@ import json
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Awaitable, Callable, TypeVar
 
 from .errors import RateLimitError
 from .usage import UsageStats, parse_usage_text
+
+_T = TypeVar("_T")
+
+_HEARTBEAT_INTERVAL = 15.0
+
+
+async def _beat_while_running(
+    coro: "Awaitable[_T]", on_heartbeat: "Callable[[], None] | None"
+) -> "_T":
+    """Await coro, emitting a heartbeat every few seconds while it is in flight.
+
+    An LLM call / CLI subprocess that is still running counts as a life sign;
+    true hangs are bounded by the SDK HTTP timeout resp. the task runtime cap.
+    """
+    if on_heartbeat is None:
+        return await coro
+    task = asyncio.ensure_future(coro)
+    try:
+        while True:
+            done, _ = await asyncio.wait({task}, timeout=_HEARTBEAT_INTERVAL)
+            on_heartbeat()
+            if done:
+                return task.result()
+    finally:
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except BaseException:  # noqa: BLE001 — propagating original error
+                pass
 
 
 @dataclass
@@ -35,6 +66,7 @@ class LLMProvider(ABC):
         model: str,
         max_tokens: int,
         mcp_servers: list[dict] | None = None,
+        on_heartbeat: "Callable[[], None] | None" = None,
     ) -> LLMResponse:
         ...
 
@@ -59,28 +91,35 @@ class APIProvider(LLMProvider):
         model: str,
         max_tokens: int,
         mcp_servers: list[dict] | None = None,
+        on_heartbeat: "Callable[[], None] | None" = None,
     ) -> LLMResponse:
         import anthropic as _anthropic
 
         try:
             if mcp_servers:
-                response = await self._client.beta.messages.create(
-                    model=model,
-                    max_tokens=max_tokens,
-                    system=system,
-                    messages=messages,
-                    mcp_servers=mcp_servers,
-                    betas=["mcp-client-2025-04-04"],
+                response = await _beat_while_running(
+                    self._client.beta.messages.create(
+                        model=model,
+                        max_tokens=max_tokens,
+                        system=system,
+                        messages=messages,
+                        mcp_servers=mcp_servers,
+                        betas=["mcp-client-2025-04-04"],
+                    ),
+                    on_heartbeat,
                 )
                 text = "\n".join(
                     block.text for block in response.content if hasattr(block, "text")
                 )
             else:
-                response = await self._client.messages.create(
-                    model=model,
-                    max_tokens=max_tokens,
-                    system=system,
-                    messages=messages,
+                response = await _beat_while_running(
+                    self._client.messages.create(
+                        model=model,
+                        max_tokens=max_tokens,
+                        system=system,
+                        messages=messages,
+                    ),
+                    on_heartbeat,
                 )
                 text = response.content[0].text
         except _anthropic.RateLimitError as exc:
@@ -94,6 +133,10 @@ class APIProvider(LLMProvider):
                     except ValueError:
                         pass
             raise RateLimitError(str(exc), retry_after=retry_after) from exc
+        except _anthropic.APIStatusError as exc:
+            if exc.status_code == 529:
+                raise RateLimitError(f"Anthropic API overloaded (529)", retry_after=30.0) from exc
+            raise
 
         usage = response.usage
         return LLMResponse(
@@ -131,6 +174,7 @@ class CliProvider(LLMProvider):
         model: str,
         max_tokens: int,
         mcp_servers: list[dict] | None = None,
+        on_heartbeat: "Callable[[], None] | None" = None,
     ) -> LLMResponse:
         full_system = system
         if len(messages) > 1:
@@ -185,7 +229,18 @@ class CliProvider(LLMProvider):
                 stderr=asyncio.subprocess.PIPE,
                 cwd=projects_dir,
             )
-            stdout, stderr = await proc.communicate(input=user_msg.encode())
+            # Running subprocess counts as a life sign — the CLI may legitimately
+            # work for many minutes (tool use). Hard cap lives at the task layer.
+            try:
+                stdout, stderr = await _beat_while_running(
+                    proc.communicate(input=user_msg.encode()), on_heartbeat
+                )
+            except asyncio.CancelledError:
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+                raise
         finally:
             if mcp_config_path:
                 try:
