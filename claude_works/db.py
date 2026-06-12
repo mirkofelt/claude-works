@@ -345,6 +345,34 @@ async def init(db_path: str | None = None) -> aiosqlite.Connection:
     return conn
 
 
+_CONFIG_MIGRATIONS = [
+    # Rename system.deploy_guard → system.claude_guard (service renamed).
+    # json_set with json() embeds the value as a JSON object (not a string);
+    # json_remove then drops the old key. Guard ensures idempotency.
+    """UPDATE daemon_config
+       SET settings_json = json_remove(
+           json_set(
+               settings_json,
+               '$.system.claude_guard',
+               json(json_extract(settings_json, '$.system.deploy_guard'))
+           ),
+           '$.system.deploy_guard'
+       )
+       WHERE id = 1
+         AND json_extract(settings_json, '$.system.deploy_guard') IS NOT NULL
+         AND json_extract(settings_json, '$.system.claude_guard') IS NULL""",
+]
+
+
+async def _apply_config_migrations(conn: aiosqlite.Connection) -> None:
+    for sql in _CONFIG_MIGRATIONS:
+        try:
+            await conn.execute(sql)
+            await conn.commit()
+        except Exception:
+            pass
+
+
 async def init_config(db_path: str | None = None) -> aiosqlite.Connection:
     path = db_path or _config_db_path()
     Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -352,6 +380,7 @@ async def init_config(db_path: str | None = None) -> aiosqlite.Connection:
     conn.row_factory = aiosqlite.Row
     await conn.executescript(CONFIG_TABLES)
     await conn.commit()
+    await _apply_config_migrations(conn)
     return conn
 
 
