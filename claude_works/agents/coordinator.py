@@ -230,6 +230,11 @@ class AgentCoordinator:
             token_tracker=self._token_tracker,
             persona=persona,
         )
+        # Token attribution: CodeTeam keeps its own 'coderteam' source; every other
+        # board-spawned specialist is a 'background' job. run_id stays the agent id so
+        # all API calls of this run (incl. tool-loop iterations) group together.
+        if agent_class != AgentClass.CODER:
+            agent.source = "background"
         agent_run_id = f"{agent_class.value}-{agent.id}"
         started = time.time()
 

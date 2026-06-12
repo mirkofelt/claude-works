@@ -116,11 +116,15 @@ CREATE TABLE IF NOT EXISTS token_usage (
     cache_read_tokens INTEGER NOT NULL DEFAULT 0,
     cache_write_tokens INTEGER NOT NULL DEFAULT 0,
     cost_usd REAL NOT NULL DEFAULT 0,
+    source TEXT NOT NULL DEFAULT 'main_loop',
+    run_id TEXT,
     timestamp INTEGER NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_token_usage_time ON token_usage(timestamp);
 CREATE INDEX IF NOT EXISTS idx_token_usage_class ON token_usage(agent_class, timestamp);
+CREATE INDEX IF NOT EXISTS idx_token_usage_run ON token_usage(run_id);
+CREATE INDEX IF NOT EXISTS idx_token_usage_source ON token_usage(source, timestamp);
 
 CREATE TABLE IF NOT EXISTS knowledge (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -281,6 +285,12 @@ CREATE TABLE IF NOT EXISTS security_allowlist (
 _MIGRATIONS = [
     "ALTER TABLE users ADD COLUMN persona TEXT",
     "ALTER TABLE token_usage ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0",
+    # Sub-agent attribution: source labels the subsystem (main_loop/coderteam/background),
+    # run_id groups all API calls of one logical run. Existing rows default to main_loop.
+    "ALTER TABLE token_usage ADD COLUMN source TEXT NOT NULL DEFAULT 'main_loop'",
+    "ALTER TABLE token_usage ADD COLUMN run_id TEXT",
+    "CREATE INDEX IF NOT EXISTS idx_token_usage_run ON token_usage(run_id)",
+    "CREATE INDEX IF NOT EXISTS idx_token_usage_source ON token_usage(source, timestamp)",
     "ALTER TABLE usage_snapshots ADD COLUMN usage_pct REAL",
     "ALTER TABLE usage_snapshots ADD COLUMN session_pct REAL",
     "ALTER TABLE usage_snapshots ADD COLUMN weekly_all_pct REAL",

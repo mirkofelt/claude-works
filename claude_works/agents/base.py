@@ -31,6 +31,10 @@ class BaseAgent(ABC):
         self.id = str(uuid.uuid4())[:8]
         self.task_id = task_id
         self.agent_class = agent_class
+        # Token-attribution context. Overridden by orchestrators (coordinator/CodeTeam)
+        # to label sub-agent calls. run_id groups all API calls of one logical run.
+        self.source = "main_loop"
+        self.run_id = self.id
         self._user_context = user_context or {}
         self._provider = provider
         self._token_tracker = token_tracker
@@ -139,6 +143,8 @@ class BaseAgent(ABC):
                 output_tokens=response.usage.output_tokens,
                 cache_read_tokens=response.usage.cache_read_tokens,
                 cache_write_tokens=response.usage.cache_write_tokens,
+                source=self.source,
+                run_id=self.run_id,
             )
 
         logger.info(
