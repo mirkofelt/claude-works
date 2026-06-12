@@ -118,3 +118,135 @@ async def test_delete_removes_legacy_int_key(client):
     await conn.close()
     assert r.status_code == 200
     assert cfg_mod.section("groups") == {}
+
+
+@pytest.mark.asyncio
+async def test_upsert_with_echo_filter(client):
+    """Test that echo_filter boolean field is saved correctly."""
+    body = {
+        "chat_id": -100,
+        "persona": "test",
+        "echo_filter": True,
+    }
+    r = await _patched_post(client, body)
+    assert r.status_code == 200
+    entry = cfg_mod.section("groups")["-100"]
+    assert entry["echo_filter"] is True
+    assert entry["persona"] == "test"
+
+
+@pytest.mark.asyncio
+async def test_upsert_with_echo_filter_false(client):
+    """Test that echo_filter false is not stored (treat as None)."""
+    body = {
+        "chat_id": -100,
+        "persona": "test",
+        "echo_filter": False,
+    }
+    r = await _patched_post(client, body)
+    assert r.status_code == 200
+    entry = cfg_mod.section("groups")["-100"]
+    assert "echo_filter" not in entry
+
+
+@pytest.mark.asyncio
+async def test_upsert_with_truncation_limit(client):
+    """Test that truncation_limit numeric field is saved correctly."""
+    body = {
+        "chat_id": -100,
+        "persona": "test",
+        "truncation_limit": 2000,
+    }
+    r = await _patched_post(client, body)
+    assert r.status_code == 200
+    entry = cfg_mod.section("groups")["-100"]
+    assert entry["truncation_limit"] == 2000
+
+
+@pytest.mark.asyncio
+async def test_upsert_with_truncation_limit_zero(client):
+    """Test that truncation_limit of 0 is not stored (disabled)."""
+    body = {
+        "chat_id": -100,
+        "persona": "test",
+        "truncation_limit": 0,
+    }
+    r = await _patched_post(client, body)
+    assert r.status_code == 200
+    entry = cfg_mod.section("groups")["-100"]
+    assert "truncation_limit" not in entry
+
+
+@pytest.mark.asyncio
+async def test_upsert_rejects_negative_truncation_limit(client):
+    """Test that negative truncation_limit is rejected."""
+    body = {
+        "chat_id": -100,
+        "truncation_limit": -100,
+    }
+    r = await _patched_post(client, body)
+    assert r.status_code == 400
+    assert "non-negative" in r.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_upsert_with_model_override(client):
+    """Test that model_override is saved correctly."""
+    body = {
+        "chat_id": -100,
+        "persona": "test",
+        "model_override": "claude-opus-4-8",
+    }
+    r = await _patched_post(client, body)
+    assert r.status_code == 200
+    entry = cfg_mod.section("groups")["-100"]
+    assert entry["model_override"] == "claude-opus-4-8"
+
+
+@pytest.mark.asyncio
+async def test_upsert_all_settings_together(client):
+    """Test that all settings can be saved together."""
+    body = {
+        "chat_id": -1001234567890,
+        "persona": "Assistant",
+        "focus": "Tech support",
+        "communication_style": "Professional",
+        "echo_filter": True,
+        "truncation_limit": 3000,
+        "model_override": "claude-sonnet-4-6",
+    }
+    r = await _patched_post(client, body)
+    assert r.status_code == 200
+    entry = cfg_mod.section("groups")["-1001234567890"]
+    assert entry["persona"] == "Assistant"
+    assert entry["focus"] == "Tech support"
+    assert entry["communication_style"] == "Professional"
+    assert entry["echo_filter"] is True
+    assert entry["truncation_limit"] == 3000
+    assert entry["model_override"] == "claude-sonnet-4-6"
+
+
+@pytest.mark.asyncio
+async def test_upsert_echo_filter_string_true(client):
+    """Test that echo_filter accepts string 'true'."""
+    body = {
+        "chat_id": -100,
+        "echo_filter": "true",
+    }
+    r = await _patched_post(client, body)
+    assert r.status_code == 200
+    entry = cfg_mod.section("groups")["-100"]
+    assert entry["echo_filter"] is True
+
+
+@pytest.mark.asyncio
+async def test_upsert_truncation_limit_string_number(client):
+    """Test that truncation_limit accepts string numbers."""
+    body = {
+        "chat_id": -100,
+        "truncation_limit": "2500",
+    }
+    r = await _patched_post(client, body)
+    assert r.status_code == 200
+    entry = cfg_mod.section("groups")["-100"]
+    assert entry["truncation_limit"] == 2500

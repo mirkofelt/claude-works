@@ -468,6 +468,19 @@
         <label style="font-size:.75rem;color:var(--muted);display:block;margin-bottom:.25rem">Focus</label>
         <input type="text" id="gfFocus" placeholder="Nur Hausautomation" style="padding:.5rem;width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px">
       </div>
+      <div>
+        <label style="font-size:.75rem;color:var(--muted);display:block;margin-bottom:.25rem">Echo Filter</label>
+        <input type="checkbox" id="gfEchoFilter" style="width:1rem;height:1rem;cursor:pointer;accent-color:var(--accent)">
+        <span style="font-size:.7rem;color:var(--muted);margin-left:.25rem">Enable echo filtering</span>
+      </div>
+      <div>
+        <label style="font-size:.75rem;color:var(--muted);display:block;margin-bottom:.25rem">Truncation Limit (chars)</label>
+        <input type="number" id="gfTruncationLimit" placeholder="0 (disabled)" min="0" style="padding:.5rem;width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px">
+      </div>
+      <div style="grid-column:span 1">
+        <label style="font-size:.75rem;color:var(--muted);display:block;margin-bottom:.25rem">Model Override</label>
+        <input type="text" id="gfModelOverride" placeholder="e.g., claude-opus-4-8" style="padding:.5rem;width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:4px">
+      </div>
     </div>
     <div style="display:flex;gap:.5rem;margin-top:.75rem">
       <button class="btn btn-primary" onclick="saveGroup()">Save</button>
@@ -477,9 +490,9 @@
   <div class="card">
     <table>
       <thead><tr>
-        <th>Chat ID</th><th>Persona</th><th>Focus</th><th>Communication Style</th><th></th>
+        <th>Chat ID</th><th>Persona</th><th>Focus</th><th>Comm. Style</th><th>Echo Filter</th><th>Truncation</th><th>Model Override</th><th></th>
       </tr></thead>
-      <tbody id="groupBody"><tr><td colspan="5" class="empty">Loading…</td></tr></tbody>
+      <tbody id="groupBody"><tr><td colspan="8" class="empty">Loading…</td></tr></tbody>
     </table>
   </div>
 </div>
@@ -1381,7 +1394,7 @@ async function loadGroups() {
   const b = document.getElementById('groupBody');
   const groups = data?.groups || {};
   const ids = Object.keys(groups);
-  if (!ids.length) { b.innerHTML = '<tr><td colspan="5" class="empty">No groups configured</td></tr>'; return; }
+  if (!ids.length) { b.innerHTML = '<tr><td colspan="8" class="empty">No groups configured</td></tr>'; return; }
   b.innerHTML = ids.map(cid => {
     const g = groups[cid] || {};
     return `
@@ -1390,6 +1403,9 @@ async function loadGroups() {
       <td>${esc(g.persona || '–')}</td>
       <td>${esc(g.focus || '–')}</td>
       <td>${esc(g.communication_style || '–')}</td>
+      <td style="text-align:center">${g.echo_filter ? '✓' : '–'}</td>
+      <td style="text-align:center">${g.truncation_limit || '–'}</td>
+      <td><span class="trunc" title="${esc(g.model_override||'')}">${esc(g.model_override || '–')}</span></td>
       <td style="white-space:nowrap">
         <button class="btn btn-ghost" style="padding:.15rem .4rem;font-size:.75rem" onclick='editGroup(${JSON.stringify(cid)}, ${JSON.stringify(g)})'>Edit</button>
         <button class="btn btn-ghost" style="padding:.15rem .4rem;font-size:.75rem;color:#ef4444" onclick="deleteGroup(${JSON.stringify(cid)})">✕</button>
@@ -1408,6 +1424,9 @@ function editGroup(cid, g) {
   document.getElementById('gfPersona').value = g.persona || '';
   document.getElementById('gfFocus').value = g.focus || '';
   document.getElementById('gfStyle').value = g.communication_style || '';
+  document.getElementById('gfEchoFilter').checked = g.echo_filter || false;
+  document.getElementById('gfTruncationLimit').value = g.truncation_limit || '';
+  document.getElementById('gfModelOverride').value = g.model_override || '';
   const f = document.getElementById('groupForm');
   f.style.display = 'block';
 }
@@ -1415,15 +1434,23 @@ function editGroup(cid, g) {
 async function saveGroup() {
   const id = parseInt(document.getElementById('gfId').value);
   if (!id || isNaN(id) || id >= 0) { alert('Valid negative chat_id required'); return; }
+  const truncLimit = document.getElementById('gfTruncationLimit').value.trim();
   const body = {
     chat_id: id,
     persona: document.getElementById('gfPersona').value.trim(),
     focus: document.getElementById('gfFocus').value.trim(),
     communication_style: document.getElementById('gfStyle').value.trim(),
+    echo_filter: document.getElementById('gfEchoFilter').checked,
+    truncation_limit: truncLimit ? parseInt(truncLimit) : null,
+    model_override: document.getElementById('gfModelOverride').value.trim() || null,
   };
   const ok = await api('/api/groups', { method: 'POST', body: JSON.stringify(body) });
   if (ok) {
-    ['gfId','gfPersona','gfFocus','gfStyle'].forEach(i => document.getElementById(i).value = '');
+    ['gfId','gfPersona','gfFocus','gfStyle','gfTruncationLimit','gfModelOverride'].forEach(i => {
+      const el = document.getElementById(i);
+      if (el.type === 'checkbox') el.checked = false;
+      else el.value = '';
+    });
     document.getElementById('groupForm').style.display = 'none';
     loadGroups();
   }

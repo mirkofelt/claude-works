@@ -927,7 +927,13 @@ async def save_config_endpoint(body: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-_GROUP_FIELDS = ("persona", "focus", "communication_style")
+_GROUP_FIELDS = ("persona", "focus", "communication_style", "echo_filter", "truncation_limit", "model_override")
+# Fields that are text/string values
+_GROUP_TEXT_FIELDS = ("persona", "focus", "communication_style", "model_override")
+# Fields that are numeric values
+_GROUP_NUMERIC_FIELDS = ("truncation_limit",)
+# Fields that are boolean values
+_GROUP_BOOL_FIELDS = ("echo_filter",)
 
 
 def _parse_group_id(raw: Any) -> int:
@@ -939,6 +945,39 @@ def _parse_group_id(raw: Any) -> int:
     if cid >= 0:
         raise HTTPException(status_code=400, detail="chat_id must be negative (a group)")
     return cid
+
+
+def _validate_group_field(name: str, value: Any) -> Any | None:
+    """Validate and normalize a group field value. Returns None if empty/invalid/default."""
+    if value is None:
+        return None
+
+    if name in _GROUP_TEXT_FIELDS:
+        v = str(value).strip()
+        return v if v else None
+
+    if name in _GROUP_BOOL_FIELDS:
+        result: bool
+        if isinstance(value, bool):
+            result = value
+        elif isinstance(value, str):
+            result = value.lower() in ('true', '1', 'yes', 'on')
+        else:
+            result = bool(value)
+        # Only store True; False is the default
+        return result if result else None
+
+    if name in _GROUP_NUMERIC_FIELDS:
+        try:
+            v = int(value)
+            if v < 0:
+                raise HTTPException(status_code=400, detail=f"{name} must be a non-negative integer")
+            # Only store non-zero values; 0 is the default (disabled)
+            return v if v > 0 else None
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail=f"{name} must be a non-negative integer")
+
+    return None
 
 
 async def _save_groups(groups: dict) -> None:
@@ -960,9 +999,9 @@ async def upsert_group(body: dict):
     cid = _parse_group_id(body.get("chat_id"))
     entry = {}
     for f in _GROUP_FIELDS:
-        v = body.get(f)
-        if v is not None and str(v).strip():
-            entry[f] = str(v).strip()
+        validated = _validate_group_field(f, body.get(f))
+        if validated is not None:
+            entry[f] = validated
     groups = dict(config.section("groups"))
     groups[str(cid)] = entry
     # Drop any stale int-keyed duplicate from legacy configs.
