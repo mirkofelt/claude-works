@@ -621,12 +621,24 @@ class Daemon:
             action = action.removeprefix("imgwatch_")
 
             if action == "deploy":
+                # Edit message (remove buttons) BEFORE triggering deploy.
+                # The deploy restarts this container — if we edited after, it would never run.
+                iw_reply = f"🚀 Redeploy gestartet ({short}) — warte auf Neustart…"
+                if iw_orig_id and iw_orig_text:
+                    try:
+                        await self._api.edit_message(
+                            chat_id, iw_orig_id,
+                            f"{iw_orig_text}\n\n→ {iw_reply}",
+                            remove_keyboard=True,
+                            entities=iw_entities,
+                        )
+                    except Exception:
+                        await self._api.send_message(chat_id, iw_reply)
+                else:
+                    await self._api.send_message(chat_id, iw_reply)
                 from .tasks.deploy_watch import _trigger_deploy
-                iw_reply = f"🚀 Redeploy gestartet ({short})."
-                try:
-                    await _trigger_deploy()
-                except Exception as e:
-                    iw_reply = f"⚠️ Redeploy fehlgeschlagen: {e}"
+                await _trigger_deploy()
+                return  # process may be killed by restart before reaching here
             elif action in ("mute_1h", "mute_today"):
                 import json as _json
                 now = time.time()
@@ -694,11 +706,13 @@ class Daemon:
                 )
             except Exception:
                 pass
+        # Route button selection to AI using the human-readable label, not raw callback data.
+        # Raw data (e.g. "opt_a", UUIDs) would confuse the agent; the label is what the user saw.
         fake_msg = {
             "message_id": orig_msg_id,
             "chat": {"id": chat_id},
             "from": from_user,
-            "text": data,
+            "text": btn_label,
             "date": int(time.time()),
         }
         await self._handle_message(fake_msg)
