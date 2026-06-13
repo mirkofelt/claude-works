@@ -223,6 +223,15 @@ async def handle_message(daemon: Any, msg: dict, is_edited: bool = False) -> Non
 
     del daemon._pending_messages[chat_id]
     content = incoming.text or ""
+
+    # Prepend quoted message text so the agent has context for replies
+    replied = msg.get("reply_to_message") or {}
+    replied_text = (replied.get("text") or replied.get("caption") or "").strip()
+    if replied_text:
+        replied_from = replied.get("from") or {}
+        sender = replied_from.get("first_name") or replied_from.get("username") or "Bot"
+        content = f"[Antwort auf Nachricht von {sender}]:\n{replied_text[:800]}\n\n---\n\n{content}"
+
     if incoming.voice_file_id:
         content = await daemon._enrich_voice(incoming.voice_file_id, content)
 
