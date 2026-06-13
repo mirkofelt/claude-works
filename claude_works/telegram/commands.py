@@ -407,7 +407,8 @@ async def handle_command(daemon: Any, text: str, from_id: int, chat_id: int) -> 
             return
         await daemon._api.send_message(chat_id, "🚀 Redeploy gestartet…")
         try:
-            from ..tasks.deploy_watch import _trigger_deploy
+            from ..tasks.deploy_watch import _trigger_deploy, sync_baseline
+            await sync_baseline(daemon._conn)
             await _trigger_deploy()
         except Exception as e:
             await daemon._api.send_message(chat_id, f"⚠️ Redeploy fehlgeschlagen: {e}")

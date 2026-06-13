@@ -669,7 +669,8 @@ class Daemon:
                         await self._api.send_message(chat_id, iw_reply)
                 else:
                     await self._api.send_message(chat_id, iw_reply)
-                from .tasks.deploy_watch import _trigger_deploy
+                from .tasks.deploy_watch import _trigger_deploy, sync_baseline
+                await sync_baseline(self._conn)
                 await _trigger_deploy()
                 return  # process may be killed by restart before reaching here
             elif action in ("mute_1h", "mute_today"):

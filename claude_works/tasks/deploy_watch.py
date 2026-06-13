@@ -64,6 +64,37 @@ async def deploy_watch(ctx: CronContext, state: dict) -> dict:
     return state
 
 
+async def sync_baseline(conn, repo: str = DEFAULT_REPO, branch: str = DEFAULT_BRANCH) -> None:
+    """Update deploy_watch baseline to current GitHub HEAD.
+
+    Call before any external deploy trigger (e.g. image_watch) so that
+    deploy_watch doesn't re-trigger on the same commit after restart.
+    """
+    import json
+    gh_cfg = config.section("github")
+    try:
+        data = await github_api("GET", f"/repos/{repo}/commits/{branch}", None, gh_cfg)
+        sha = data.get("sha", "")
+        if not sha:
+            return
+        async with conn.execute(
+            "SELECT state_json FROM cron_jobs WHERE name = ?", (JOB_NAME,)
+        ) as cur:
+            row = await cur.fetchone()
+        state = json.loads((row["state_json"] if row else None) or "{}")
+        if state.get("baseline_sha") == sha:
+            return  # already up to date
+        state["baseline_sha"] = sha
+        await conn.execute(
+            "UPDATE cron_jobs SET state_json = ?, updated_at = ? WHERE name = ?",
+            (json.dumps(state), int(time.time()), JOB_NAME),
+        )
+        await conn.commit()
+        logger.info("deploy_watch baseline synced to %s", sha[:7])
+    except Exception as e:
+        logger.warning("deploy_watch baseline sync failed: %s", e)
+
+
 async def _trigger_deploy() -> None:
     """Trigger redeploy via claude-guard — same path as the manual deploy trigger."""
     import httpx
