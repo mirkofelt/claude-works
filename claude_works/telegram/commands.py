@@ -315,17 +315,22 @@ async def handle_command(daemon: Any, text: str, from_id: int, chat_id: int) -> 
                 "Beispiel: /remind +1h Anruf zurückrufen",
             )
             return
-        # Try single-token time first, then two-token (e.g. "13.06.2026 15:00")
-        remind_at = _parse_remind_at(parts[1])
+        # Try 1, 2, then 3 leading tokens as time expression.
+        # Stops at the first successful parse, rest is the message.
+        remind_at = None
         msg_start = 2
-        if remind_at is None and len(parts) >= 4:
-            remind_at = _parse_remind_at(parts[1] + " " + parts[2])
-            msg_start = 3
-        if remind_at is None:
+        for n_tokens in range(1, min(4, len(parts))):
+            candidate = " ".join(parts[1:1 + n_tokens])
+            ts = _parse_remind_at(candidate)
+            if ts is not None:
+                remind_at = ts
+                msg_start = 1 + n_tokens
+                break
+        if remind_at is None or msg_start >= len(parts):
             await daemon._api.send_message(
                 chat_id,
-                f"Zeitformat nicht erkannt: {' '.join(parts[1:3])!r}\n"
-                "Beispiele: +30m, +2h, 14:30, 13.06.2026 15:00, 2026-06-13 15:00",
+                "Zeitformat nicht erkannt oder fehlende Nachricht.\n"
+                "Beispiele: /remind +30m Text · /remind morgen 15:00 Text · /remind 13.06.2026 15:00 Text",
             )
             return
         message = " ".join(parts[msg_start:])

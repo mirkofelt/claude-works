@@ -97,6 +97,25 @@ def parse_remind_at(dt_str: str) -> int | None:
         except ValueError:
             continue
 
+    # Fallback: dateparser handles arbitrary formats + German natural language
+    # ("morgen 15 Uhr", "nächsten Montag", "15 Juni", "in 3 Stunden", ...)
+    try:
+        import dateparser
+        parsed = dateparser.parse(
+            dt_str,
+            languages=["de", "en"],
+            settings={
+                "TIMEZONE": "Europe/Berlin",
+                "RETURN_AS_TIMEZONE_AWARE": True,
+                "PREFER_DATES_FROM": "future",
+                "PREFER_DAY_OF_MONTH": "first",
+            },
+        )
+        if parsed:
+            return int(parsed.timestamp())
+    except Exception:
+        pass
+
     return None
 
 
