@@ -36,7 +36,7 @@ def _user_error(context: str, exc: Exception | None = None) -> str:
     if exc is not None:
         logger.warning("%s: %s", context, exc)
     _FRIENDLY: dict[type, str] = {
-        asyncio.TimeoutError: "Zeitüberschreitung.",
+        asyncio.TimeoutError: "Timed out.",
     }
     if exc is not None:
         for exc_type, msg in _FRIENDLY.items():
@@ -115,7 +115,7 @@ async def handle_message(daemon: Any, msg: dict, is_edited: bool = False) -> Non
             if proc.returncode == 0:
                 await daemon._api.send_message(chat_id, "✓ Claude CLI authenticated.")
             else:
-                await daemon._api.send_message(chat_id, _user_error("Authentifizierung fehlgeschlagen"))
+                await daemon._api.send_message(chat_id, _user_error("Authentication failed"))
         except asyncio.TimeoutError:
             try:
                 proc.kill()
@@ -230,7 +230,7 @@ async def handle_message(daemon: Any, msg: dict, is_edited: bool = False) -> Non
     if replied_text:
         replied_from = replied.get("from") or {}
         sender = replied_from.get("first_name") or replied_from.get("username") or "Bot"
-        content = f"[Antwort auf Nachricht von {sender}]:\n{replied_text[:800]}\n\n---\n\n{content}"
+        content = f"[Reply to message from {sender}]:\n{replied_text[:800]}\n\n---\n\n{content}"
 
     if incoming.voice_file_id:
         content = await daemon._enrich_voice(incoming.voice_file_id, content)
@@ -241,7 +241,7 @@ async def handle_message(daemon: Any, msg: dict, is_edited: bool = False) -> Non
             try:
                 await daemon._api.send_message(
                     chat_id,
-                    "Leere Nachricht — schreib dazu, was du brauchst.",
+                    "Empty message — add what you need.",
                     reply_to_message_id=incoming.telegram_message_id,
                 )
             except Exception:

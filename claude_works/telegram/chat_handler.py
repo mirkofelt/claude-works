@@ -23,7 +23,7 @@ def _user_error(context: str, exc: Exception | None = None) -> str:
     if exc is not None:
         logger.warning("%s: %s", context, exc)
     _FRIENDLY: dict[type, str] = {
-        asyncio.TimeoutError: "Zeitüberschreitung.",
+        asyncio.TimeoutError: "Timed out.",
     }
     if exc is not None:
         for exc_type, msg in _FRIENDLY.items():
@@ -36,7 +36,7 @@ async def long_run_notice(daemon: Any, chat_id: int) -> None:
     """Send a single status message when an inline run exceeds the notice delay."""
     try:
         await asyncio.sleep(_LONG_RUN_NOTICE_SECONDS)
-        await daemon._api.send_message(chat_id, "⏳ Dauert noch. Bin dran.")
+        await daemon._api.send_message(chat_id, "⏳ Still working on it.")
         logger.info("Chat %d: long-run notice sent after %.0fs", chat_id, _LONG_RUN_NOTICE_SECONDS)
     except asyncio.CancelledError:
         raise
@@ -48,10 +48,10 @@ async def offload_after_timeout(
     """Inline run hit timeout: hand the job to the kanban board instead of killing it."""
     if not daemon._board or is_offloaded(content):
         if task_id and daemon._board:
-            await daemon._board.fail(task_id, f"timeout ({elapsed:.0f}s) — bereits offloaded, kein erneuter Versuch")
+            await daemon._board.fail(task_id, f"timeout ({elapsed:.0f}s) — already offloaded, no retry")
         logger.warning("Chat %d: timeout after %.0fs, no offload (board=%s, marked=%s)",
                        chat_id, elapsed, bool(daemon._board), is_offloaded(content))
-        await daemon._api.send_message(chat_id, "Timeout. Hat auch im zweiten Anlauf nicht geklappt.")
+        await daemon._api.send_message(chat_id, "Timed out. Retry also failed.")
         return
 
     offload_content = build_offload_content(content, elapsed)
@@ -67,7 +67,7 @@ async def offload_after_timeout(
         chat_id, elapsed, task_id,
     )
     await daemon._api.send_message(
-        chat_id, "Dauert länger. Läuft jetzt im Hintergrund, melde mich mit Ergebnis."
+        chat_id, "Taking longer. Running in the background — will notify when done."
     )
 
 
@@ -203,7 +203,7 @@ async def handle_chat(daemon: Any, chat_id: int, user_id: int, content: str, rep
             except Exception:
                 pass
         logger.exception("Chat handler error for chat=%d", chat_id)
-        await daemon._api.send_message(chat_id, _user_error("Fehler bei der Verarbeitung", exc))
+        await daemon._api.send_message(chat_id, _user_error("Processing error", exc))
         daemon._chat_exception_count += 1
         if daemon._chat_exception_count >= 3:
             daemon._chat_exception_count = 0

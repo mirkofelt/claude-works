@@ -39,7 +39,7 @@ def _user_error(context: str, exc: Exception | None = None) -> str:
     if exc is not None:
         logger.warning("%s: %s", context, exc)
     _FRIENDLY: dict[type, str] = {
-        asyncio.TimeoutError: "Zeitüberschreitung.",
+        asyncio.TimeoutError: "Timed out.",
     }
     if exc is not None:
         for exc_type, msg in _FRIENDLY.items():
@@ -81,7 +81,7 @@ async def execute_output_tags(
                     await daemon._api.send_voice(task.chat_id, audio)
                 elif tts_error:
                     logger.warning("TTS failed for task=%d: %s", task.id, tts_error)
-                    await daemon._api.send_message(task.chat_id, _user_error("Sprachausgabe fehlgeschlagen"))
+                    await daemon._api.send_message(task.chat_id, _user_error("TTS failed"))
             except Exception as e:
                 logger.warning("TTS failed for task=%d: %s", task.id, e)
         else:
@@ -128,7 +128,7 @@ async def execute_output_tags(
                 await daemon._api.send_message(task.chat_id, "Email not sent: email configuration missing.")
             except Exception as e:
                 logger.warning("Email send failed for task=%d: %s", task.id, e)
-                await daemon._api.send_message(task.chat_id, _user_error("E-Mail konnte nicht gesendet werden", e))
+                await daemon._api.send_message(task.chat_id, _user_error("Email send failed", e))
 
     for method, endpoint, body in all_github:
         is_write = method in ("POST", "PUT", "PATCH", "DELETE")
@@ -163,7 +163,7 @@ async def execute_output_tags(
                 await daemon._api.send_message(task.chat_id, "GitHub access failed: token missing.")
             except Exception as e:
                 logger.warning("GitHub API failed for task=%d: %s", task.id, e)
-                await daemon._api.send_message(task.chat_id, _user_error("GitHub-Aktion fehlgeschlagen", e))
+                await daemon._api.send_message(task.chat_id, _user_error("GitHub action failed", e))
 
     for title, entry_type, tags, content in all_kb_saves:
         if title and content:
@@ -272,7 +272,7 @@ async def execute_output_tags(
             logger.info("CONFIG_UPDATE: set '%s' by agent for task=%d", cfg_path, task.id)
         except Exception as e:
             logger.warning("CONFIG_UPDATE failed for task=%d: %s", task.id, e)
-            await daemon._api.send_message(task.chat_id, _user_error(f"Konfiguration '{cfg_path}' konnte nicht aktualisiert werden", e))
+            await daemon._api.send_message(task.chat_id, _user_error(f"Config update failed: '{cfg_path}'", e))
 
     for ident, minutes in all_mutes:
         if not await is_admin(daemon._conn, task.user_id):
@@ -280,16 +280,16 @@ async def execute_output_tags(
             continue
         target = await daemon._resolve_user(ident)
         if not target:
-            await daemon._api.send_message(task.chat_id, f"⚠ Mute fehlgeschlagen: User '{ident}' nicht gefunden.")
+            await daemon._api.send_message(task.chat_id, f"⚠ Mute failed: user '{ident}' not found.")
             continue
         if await is_admin(daemon._conn, target["telegram_id"]):
-            await daemon._api.send_message(task.chat_id, "⚠ Admins können nicht gemutet werden.")
+            await daemon._api.send_message(task.chat_id, "⚠ Admins cannot be muted.")
             continue
         until = await daemon._set_mute(target["telegram_id"], minutes)
-        dur = f"für {minutes} min" if until else "unbegrenzt"
+        dur = f"for {minutes} min" if until else "indefinitely"
         await daemon._api.send_message(
             task.chat_id,
-            f"🔇 Daemon-Mute aktiv: {target.get('name') or target['telegram_id']} {dur} (hart erzwungen, kein LLM-Versprechen).",
+            f"🔇 Muted: {target.get('name') or target['telegram_id']} {dur}.",
         )
 
     for ident in all_unmutes:
@@ -299,7 +299,7 @@ async def execute_output_tags(
         target = await daemon._resolve_user(ident)
         if target and await daemon._clear_mute(target["telegram_id"]):
             await daemon._api.send_message(
-                task.chat_id, f"🔊 {target.get('name') or target['telegram_id']} wieder freigegeben."
+                task.chat_id, f"🔊 {target.get('name') or target['telegram_id']} unmuted."
             )
 
     for plugin_name, plugin_cfg in all_plugin_config_sets:
@@ -328,15 +328,15 @@ async def execute_output_tags(
         if remind_at is None:
             await daemon._api.send_message(
                 task.chat_id,
-                f"⚠️ Erinnerung konnte nicht gesetzt werden — Zeitangabe nicht erkannt: `{dt_str}`\n"
-                "Formate: `YYYY-MM-DD HH:MM`, `HH:MM`, `+30m`, `+2h`, `+1d`",
+                f"⚠️ Reminder could not be set — time not recognised: `{dt_str}`\n"
+                "Formats: `YYYY-MM-DD HH:MM`, `HH:MM`, `+30m`, `+2h`, `+1d`",
             )
         else:
             reminder_id = await _add_reminder(daemon._conn, task.user_id, task.chat_id, remind_at, message)
             dt_readable = datetime.fromtimestamp(remind_at, tz=_UTC.utc).strftime("%d.%m.%Y %H:%M UTC")
             await daemon._api.send_message(
                 task.chat_id,
-                f"⏰ Erinnerung #{reminder_id} gesetzt für **{dt_readable}**:\n_{message}_",
+                f"⏰ Reminder #{reminder_id} set for **{dt_readable}**:\n_{message}_",
             )
             logger.info("Reminder %d set for %s by user=%d", reminder_id, dt_readable, task.user_id)
 

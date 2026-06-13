@@ -588,10 +588,10 @@ class Daemon:
             conn = await db.get_conn()
             if data.startswith("kb_approve:"):
                 ok = await knowledge_store.approve(conn, entry_id)
-                reply = f"✅ KB-Eintrag {entry_id} freigegeben." if ok else f"⚠ KB-Eintrag {entry_id} nicht gefunden."
+                reply = f"✅ KB entry {entry_id} approved." if ok else f"⚠ KB entry {entry_id} not found."
             else:
                 ok = await knowledge_store.delete(conn, entry_id)
-                reply = f"🗑 KB-Eintrag {entry_id} gelöscht." if ok else f"⚠ KB-Eintrag {entry_id} nicht gefunden."
+                reply = f"🗑 KB entry {entry_id} deleted." if ok else f"⚠ KB entry {entry_id} not found."
             await conn.close()
             kb_orig_msg = cq.get("message") or {}
             kb_orig_id = kb_orig_msg.get("message_id", 0)
@@ -678,13 +678,13 @@ class Daemon:
                 now = time.time()
                 if action == "mute_1h":
                     mute_until = int(now + 3600)
-                    iw_reply = f"🔕 Image-Watch für 1h stumm ({short})."
+                    iw_reply = f"🔕 Image-watch muted for 1h ({short})."
                 else:
                     from datetime import datetime, timezone, timedelta
                     berlin_now = datetime.now(timezone(timedelta(hours=2)))
                     midnight = (berlin_now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
                     mute_until = int(midnight.timestamp())
-                    iw_reply = f"🔇 Image-Watch heute stumm ({short})."
+                    iw_reply = f"🔇 Image-watch muted for today ({short})."
                 try:
                     async with self._conn.execute(
                         "SELECT state_json FROM cron_jobs WHERE name = ?", ("image_watch",)
@@ -815,7 +815,7 @@ class Daemon:
                     url = m.group().rstrip('.')
                     break
         except Exception as exc:
-            await self._api.send_message(chat_id, _user_error("Authentifizierung konnte nicht gestartet werden", exc))
+            await self._api.send_message(chat_id, _user_error("Auth start failed", exc))
             return
         if not url:
             await self._api.send_message(chat_id, f"No auth URL found. Output: {buf[:300]}")
@@ -1096,7 +1096,7 @@ class Daemon:
             await self._api.send_message(chat_id, "Git clone timed out (120s).")
         except Exception as e:
             logger.warning("Git clone error for %s: %s", repo_url, e)
-            await self._api.send_message(chat_id, _user_error("Repository konnte nicht geklont werden", e))
+            await self._api.send_message(chat_id, _user_error("Git clone failed", e))
 
     async def _notify_admin_new_user(self, telegram_id: int, name: str | None) -> None:
         cfg = config.section("users")

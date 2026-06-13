@@ -124,7 +124,7 @@ async def stuck_chat_watchdog(daemon: Any) -> None:
                         daemon._flush_chat_queue(chat_id)
                         daemon._chat_task_start_times.pop(chat_id, None)
                         try:
-                            await daemon._api.send_message(chat_id, "⚠️ Vorheriger Request hat sich aufgehängt und wurde abgebrochen.")
+                            await daemon._api.send_message(chat_id, "⚠️ Previous request hung and was cancelled.")
                         except Exception:
                             pass
     except asyncio.CancelledError:
@@ -148,7 +148,7 @@ async def reminder_watcher(daemon: Any) -> None:
                         }
                         await daemon._api.send_message(
                             r["chat_id"],
-                            f"⏰ <b>Erinnerung #{r['id']}</b>\n{r['message']}",
+                            f"⏰ <b>Reminder #{r['id']}</b>\n{r['message']}",
                             parse_mode="HTML",
                             reply_markup=markup,
                         )

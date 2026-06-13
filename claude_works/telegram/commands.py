@@ -30,7 +30,7 @@ def _user_error(context: str, exc: Exception | None = None) -> str:
     if exc is not None:
         logger.warning("%s: %s", context, exc)
     _FRIENDLY: dict[type, str] = {
-        asyncio.TimeoutError: "Zeitüberschreitung.",
+        asyncio.TimeoutError: "Timed out.",
     }
     if exc is not None:
         for exc_type, msg in _FRIENDLY.items():
@@ -55,7 +55,7 @@ async def handle_command(daemon: Any, text: str, from_id: int, chat_id: int) -> 
             await set_role(daemon._conn, target_id, "user")
             await daemon._api.send_message(chat_id, f"User {target_id} approved.")
         except Exception as e:
-            await daemon._api.send_message(chat_id, _user_error("Aktion fehlgeschlagen", e))
+            await daemon._api.send_message(chat_id, _user_error("Action failed", e))
 
     elif cmd == "/block" and len(parts) >= 2:
         if not await is_admin(daemon._conn, from_id):
@@ -65,7 +65,7 @@ async def handle_command(daemon: Any, text: str, from_id: int, chat_id: int) -> 
             await set_role(daemon._conn, target_id, "blocked")
             await daemon._api.send_message(chat_id, f"User {target_id} blocked.")
         except Exception as e:
-            await daemon._api.send_message(chat_id, _user_error("Aktion fehlgeschlagen", e))
+            await daemon._api.send_message(chat_id, _user_error("Action failed", e))
 
     elif cmd == "/approve" and len(parts) >= 2:
         if not await is_admin(daemon._conn, from_id):
@@ -74,7 +74,7 @@ async def handle_command(daemon: Any, text: str, from_id: int, chat_id: int) -> 
             ok = daemon._security.approve(int(parts[1]), from_id)
             await daemon._api.send_message(chat_id, f"✓ Approved #{parts[1]}" if ok else f"No pending approval #{parts[1]}")
         except Exception as e:
-            await daemon._api.send_message(chat_id, _user_error("Aktion fehlgeschlagen", e))
+            await daemon._api.send_message(chat_id, _user_error("Action failed", e))
 
     elif cmd == "/deny" and len(parts) >= 2:
         if not await is_admin(daemon._conn, from_id):
@@ -83,16 +83,16 @@ async def handle_command(daemon: Any, text: str, from_id: int, chat_id: int) -> 
             ok = daemon._security.deny(int(parts[1]), from_id)
             await daemon._api.send_message(chat_id, f"✗ Denied #{parts[1]}" if ok else f"No pending approval #{parts[1]}")
         except Exception as e:
-            await daemon._api.send_message(chat_id, _user_error("Aktion fehlgeschlagen", e))
+            await daemon._api.send_message(chat_id, _user_error("Action failed", e))
 
     elif cmd == "/trust":
         if not await is_admin(daemon._conn, from_id):
-            await daemon._api.send_message(chat_id, "Nur für Admins.")
+            await daemon._api.send_message(chat_id, "Admins only.")
             return
         if len(parts) < 3:
             await daemon._api.send_message(
                 chat_id,
-                "Usage: /trust <telegram_id> <stufe>\n0=Owner 1=Vertraut 2=Kontakt 3=Unbekannt",
+                "Usage: /trust <id> <level>\n0=Owner 1=Trusted 2=Contact 3=Unknown",
             )
             return
         try:
@@ -101,38 +101,38 @@ async def handle_command(daemon: Any, text: str, from_id: int, chat_id: int) -> 
             ok = await set_trust(daemon._conn, target_id, level)
             if ok:
                 label = trust_mod.TRUST_LABELS.get(level, str(level))
-                await daemon._api.send_message(chat_id, f"User {target_id} → Stufe {level} ({label}).")
+                await daemon._api.send_message(chat_id, f"User {target_id} → level {level} ({label}).")
             else:
-                await daemon._api.send_message(chat_id, f"User {target_id} unbekannt.")
+                await daemon._api.send_message(chat_id, f"User {target_id} not found.")
         except Exception as e:
-            await daemon._api.send_message(chat_id, _user_error("Aktion fehlgeschlagen", e))
+            await daemon._api.send_message(chat_id, _user_error("Action failed", e))
 
     elif cmd == "/kb-level":
         if not await is_admin(daemon._conn, from_id):
-            await daemon._api.send_message(chat_id, "Nur für Admins.")
+            await daemon._api.send_message(chat_id, "Admins only.")
             return
         if len(parts) < 3:
             await daemon._api.send_message(
                 chat_id,
-                "Usage: /kb-level <eintrag_id> <stufe>\n0=privat 1=vertraut 2=Kontakte 3=öffentlich",
+                "Usage: /kb-level <entry_id> <level>\n0=private 1=trusted 2=contacts 3=public",
             )
             return
         try:
             entry_id = int(parts[1])
             level = int(parts[2])
             if level not in (0, 1, 2, 3):
-                await daemon._api.send_message(chat_id, "Stufe muss 0–3 sein.")
+                await daemon._api.send_message(chat_id, "Level must be 0–3.")
                 return
             conn = await db.get_conn()
             ok = await knowledge_store.update(conn, entry_id, visibility=level)
             await conn.close()
             if ok:
                 label = trust_mod.VISIBILITY_LABELS.get(level, str(level))
-                await daemon._api.send_message(chat_id, f"KB-Eintrag {entry_id} → {label} ({level}).")
+                await daemon._api.send_message(chat_id, f"KB entry {entry_id} → {label} ({level}).")
             else:
-                await daemon._api.send_message(chat_id, f"KB-Eintrag {entry_id} nicht gefunden.")
+                await daemon._api.send_message(chat_id, f"KB entry {entry_id} not found.")
         except Exception as e:
-            await daemon._api.send_message(chat_id, _user_error("Aktion fehlgeschlagen", e))
+            await daemon._api.send_message(chat_id, _user_error("Action failed", e))
 
     elif cmd == "/status":
         h = daemon.health()
@@ -186,7 +186,7 @@ async def handle_command(daemon: Any, text: str, from_id: int, chat_id: int) -> 
             else:
                 await daemon._api.send_message(chat_id, "No config found in DB.")
         except Exception as e:
-            await daemon._api.send_message(chat_id, _user_error("Reload fehlgeschlagen", e))
+            await daemon._api.send_message(chat_id, _user_error("Reload failed", e))
 
     elif cmd == "/mention":
         if not await is_allowed(daemon._conn, from_id):
@@ -206,60 +206,60 @@ async def handle_command(daemon: Any, text: str, from_id: int, chat_id: int) -> 
 
     elif cmd == "/mute":
         if not await is_admin(daemon._conn, from_id):
-            await daemon._api.send_message(chat_id, "Nur für Admins.")
+            await daemon._api.send_message(chat_id, "Admins only.")
             return
         if len(parts) < 2:
-            await daemon._api.send_message(chat_id, "Usage: /mute <name|telegram_id> [minuten]\nOhne Minuten: unbegrenzt.")
+            await daemon._api.send_message(chat_id, "Usage: /mute <name|id> [minutes]\nOmit minutes for indefinite.")
             return
         target = await daemon._resolve_user(parts[1])
         if not target:
-            await daemon._api.send_message(chat_id, f"User '{parts[1]}' nicht gefunden.")
+            await daemon._api.send_message(chat_id, f"User '{parts[1]}' not found.")
             return
         if await is_admin(daemon._conn, target["telegram_id"]):
-            await daemon._api.send_message(chat_id, "Admins können nicht gemutet werden.")
+            await daemon._api.send_message(chat_id, "Admins cannot be muted.")
             return
         try:
             minutes = int(parts[2]) if len(parts) >= 3 else 0
         except ValueError:
             minutes = 0
         until = await daemon._set_mute(target["telegram_id"], minutes)
-        dur = f"für {minutes} min" if until else "unbegrenzt"
+        dur = f"for {minutes} min" if until else "indefinitely"
         await daemon._api.send_message(
             chat_id,
-            f"🔇 {target.get('name') or target['telegram_id']} stumm {dur}. Nachrichten werden still mitgelesen.\nAufheben: /unmute {parts[1]}",
+            f"🔇 {target.get('name') or target['telegram_id']} muted {dur}. Messages logged silently.\nUnmute: /unmute {parts[1]}",
         )
 
     elif cmd == "/unmute":
         if not await is_admin(daemon._conn, from_id):
-            await daemon._api.send_message(chat_id, "Nur für Admins.")
+            await daemon._api.send_message(chat_id, "Admins only.")
             return
         if len(parts) < 2:
             await daemon._api.send_message(chat_id, "Usage: /unmute <name|telegram_id>")
             return
         target = await daemon._resolve_user(parts[1])
         if not target:
-            await daemon._api.send_message(chat_id, f"User '{parts[1]}' nicht gefunden.")
+            await daemon._api.send_message(chat_id, f"User '{parts[1]}' not found.")
             return
         if await daemon._clear_mute(target["telegram_id"]):
-            await daemon._api.send_message(chat_id, f"🔊 {target.get('name') or target['telegram_id']} wieder freigegeben.")
+            await daemon._api.send_message(chat_id, f"🔊 {target.get('name') or target['telegram_id']} unmuted.")
         else:
-            await daemon._api.send_message(chat_id, f"{target.get('name') or target['telegram_id']} war nicht gemutet.")
+            await daemon._api.send_message(chat_id, f"{target.get('name') or target['telegram_id']} was not muted.")
 
     elif cmd == "/muted":
         if not await is_admin(daemon._conn, from_id):
             return
         if not daemon._muted_users:
-            await daemon._api.send_message(chat_id, "Niemand gemutet.")
+            await daemon._api.send_message(chat_id, "No one muted.")
             return
         lines = []
         for tid, until in daemon._muted_users.items():
             u = await daemon._resolve_user(str(tid))
             name = (u.get("name") if u else None) or str(tid)
             if until == 0:
-                lines.append(f"🔇 {name} — unbegrenzt")
+                lines.append(f"🔇 {name} — indefinite")
             else:
                 remaining = max(0, until - int(time.time())) // 60
-                lines.append(f"🔇 {name} — noch ~{remaining} min")
+                lines.append(f"🔇 {name} — ~{remaining} min left")
         await daemon._api.send_message(chat_id, "\n".join(lines))
 
     elif cmd == "/repair" and len(parts) >= 2:
@@ -280,7 +280,7 @@ async def handle_command(daemon: Any, text: str, from_id: int, chat_id: int) -> 
 
     elif cmd == "/reauth":
         if not await is_admin(daemon._conn, from_id):
-            await daemon._api.send_message(chat_id, "Nur für Admins.")
+            await daemon._api.send_message(chat_id, "Admins only.")
             return
         await daemon._start_telegram_reauth(chat_id)
         return
@@ -288,7 +288,7 @@ async def handle_command(daemon: Any, text: str, from_id: int, chat_id: int) -> 
     elif cmd == "/reminders":
         reminders = await _list_reminders(daemon._conn, from_id)
         if not reminders:
-            await daemon._api.send_message(chat_id, "⏰ Keine ausstehenden Erinnerungen.")
+            await daemon._api.send_message(chat_id, "⏰ No pending reminders.")
         else:
             lines = []
             for r in reminders:
@@ -296,7 +296,7 @@ async def handle_command(daemon: Any, text: str, from_id: int, chat_id: int) -> 
                 lines.append(f"<b>#{r['id']}</b> {dt} — {r['message'][:60]}")
             await daemon._api.send_message(
                 chat_id,
-                "⏰ <b>Erinnerungen:</b>\n" + "\n".join(lines),
+                "⏰ <b>Reminders:</b>\n" + "\n".join(lines),
                 parse_mode="HTML",
             )
         return
@@ -309,9 +309,9 @@ async def handle_command(daemon: Any, text: str, from_id: int, chat_id: int) -> 
             return
         deleted = await _delete_reminder(daemon._conn, reminder_id, from_id)
         if deleted:
-            await daemon._api.send_message(chat_id, f"✓ Erinnerung #{reminder_id} gelöscht.")
+            await daemon._api.send_message(chat_id, f"✓ Reminder #{reminder_id} deleted.")
         else:
-            await daemon._api.send_message(chat_id, f"Erinnerung #{reminder_id} nicht gefunden oder bereits ausgelöst.")
+            await daemon._api.send_message(chat_id, f"Reminder #{reminder_id} not found or already fired.")
         return
 
     elif cmd == "/remind":
@@ -320,9 +320,9 @@ async def handle_command(daemon: Any, text: str, from_id: int, chat_id: int) -> 
         if len(parts) < 3:
             await daemon._api.send_message(
                 chat_id,
-                "Usage: /remind <zeit> <nachricht>\n"
-                "Zeit: +30m · +2h · +1d · 14:30 · 13.06.2026 15:00 · 2026-06-13 15:00\n"
-                "Beispiel: /remind +1h Anruf zurückrufen",
+                "Usage: /remind <time> <text>\n"
+                "Time: +30m · +2h · +1d · 14:30 · 13.06.2026 15:00\n"
+                "Example: /remind +1h Call back customer",
             )
             return
         # Try 1, 2, then 3 leading tokens as time expression.
@@ -339,14 +339,14 @@ async def handle_command(daemon: Any, text: str, from_id: int, chat_id: int) -> 
         if remind_at is None or msg_start >= len(parts):
             await daemon._api.send_message(
                 chat_id,
-                "Zeitformat nicht erkannt oder fehlende Nachricht.\n"
-                "Beispiele: /remind +30m Text · /remind morgen 15:00 Text · /remind 13.06.2026 15:00 Text",
+                "Time not recognised or message missing.\n"
+                "Examples: /remind +30m text · /remind morgen 15:00 text · /remind 13.06.2026 15:00 text",
             )
             return
         message = " ".join(parts[msg_start:])
         reminder_id = await _add_reminder(daemon._conn, from_id, chat_id, remind_at, message)
         dt = datetime.fromtimestamp(remind_at, tz=_UTC.utc).strftime("%d.%m. %H:%M UTC")
-        await daemon._api.send_message(chat_id, f"⏰ Erinnerung #{reminder_id} gesetzt für {dt}: {message[:60]}")
+        await daemon._api.send_message(chat_id, f"⏰ Reminder #{reminder_id} set for {dt}: {message[:60]}")
         return
 
     elif cmd in ("/todo", "/todos"):
@@ -357,10 +357,10 @@ async def handle_command(daemon: Any, text: str, from_id: int, chat_id: int) -> 
         if cmd == "/todos" or sub == "list" or (cmd == "/todo" and len(parts) == 1):
             todos = await _list_todos(daemon._conn, from_id)
             if not todos:
-                await daemon._api.send_message(chat_id, "📋 Keine offenen Todos.")
+                await daemon._api.send_message(chat_id, "📋 No open todos.")
             else:
                 lines = [f"#{t['id']} {t['text'][:80]}" for t in todos]
-                await daemon._api.send_message(chat_id, "📋 Offene Todos:\n" + "\n".join(lines))
+                await daemon._api.send_message(chat_id, "📋 Open todos:\n" + "\n".join(lines))
             return
 
         if sub == "done" and len(parts) >= 3:
@@ -372,7 +372,7 @@ async def handle_command(daemon: Any, text: str, from_id: int, chat_id: int) -> 
             ok = await _done_todo(daemon._conn, todo_id, from_id)
             await daemon._api.send_message(
                 chat_id,
-                f"✅ Todo #{todo_id} erledigt." if ok else f"Todo #{todo_id} nicht gefunden.",
+                f"✅ Todo #{todo_id} done." if ok else f"Todo #{todo_id} not found.",
             )
             return
 
@@ -385,7 +385,7 @@ async def handle_command(daemon: Any, text: str, from_id: int, chat_id: int) -> 
             ok = await _delete_todo(daemon._conn, todo_id, from_id)
             await daemon._api.send_message(
                 chat_id,
-                f"🗑 Todo #{todo_id} gelöscht." if ok else f"Todo #{todo_id} nicht gefunden.",
+                f"🗑 Todo #{todo_id} deleted." if ok else f"Todo #{todo_id} not found.",
             )
             return
 
@@ -393,67 +393,67 @@ async def handle_command(daemon: Any, text: str, from_id: int, chat_id: int) -> 
         if sub in ("done", "delete", "list", ""):
             await daemon._api.send_message(
                 chat_id,
-                "Usage:\n/todo <text> — hinzufügen\n/todos — Liste\n/todo done <id> — erledigt\n/todo delete <id> — löschen",
+                "Usage:\n/todo <text> — add\n/todos — list\n/todo done <id> — mark done\n/todo delete <id> — delete",
             )
             return
         text = " ".join(parts[1:])
         todo_id = await _add_todo(daemon._conn, from_id, chat_id, text)
-        await daemon._api.send_message(chat_id, f"📋 Todo #{todo_id} hinzugefügt: {text[:80]}")
+        await daemon._api.send_message(chat_id, f"📋 Todo #{todo_id} added: {text[:80]}")
         return
 
     elif cmd in ("/redeploy", "/deploy"):
         if not await is_admin(daemon._conn, from_id):
-            await daemon._api.send_message(chat_id, "Nur für Admins.")
+            await daemon._api.send_message(chat_id, "Admins only.")
             return
-        await daemon._api.send_message(chat_id, "🚀 Redeploy gestartet…")
+        await daemon._api.send_message(chat_id, "🚀 Deploying…")
         try:
             from ..tasks.deploy_watch import _trigger_deploy, sync_baseline
             await sync_baseline(daemon._conn)
             await _trigger_deploy()
         except Exception as e:
-            await daemon._api.send_message(chat_id, f"⚠️ Redeploy fehlgeschlagen: {e}")
+            await daemon._api.send_message(chat_id, f"⚠️ Deploy failed: {e}")
         return
 
     elif cmd == "/rollback":
         if not await is_admin(daemon._conn, from_id):
-            await daemon._api.send_message(chat_id, "Nur für Admins.")
+            await daemon._api.send_message(chat_id, "Admins only.")
             return
-        await daemon._api.send_message(chat_id, "⏪ Rollback gestartet…")
+        await daemon._api.send_message(chat_id, "⏪ Rolling back…")
         try:
             import httpx as _httpx
             dg = config.section("system").get("claude_guard", {})
             guard_url = dg.get("url", "").rstrip("/")
             token = dg.get("token", "")
             if not guard_url or not token:
-                raise RuntimeError("claude_guard.url/.token nicht konfiguriert")
+                raise RuntimeError("claude_guard.url/.token not configured")
             async with _httpx.AsyncClient(timeout=30.0) as hc:
                 r = await hc.post(f"{guard_url}/rollback?token={token}")
             if r.status_code != 200:
                 raise RuntimeError(f"HTTP {r.status_code}: {r.text[:200]}")
         except Exception as e:
-            await daemon._api.send_message(chat_id, f"⚠️ Rollback fehlgeschlagen: {e}")
+            await daemon._api.send_message(chat_id, f"⚠️ Rollback failed: {e}")
         return
 
     elif cmd == "/help":
         help_text = (
-            "<b>Verfügbare Befehle</b>\n\n"
-            "<b>Erinnerungen</b>\n"
-            "/remind +30m|14:30|13.06.2026 15:00 &lt;nachricht&gt; — Erinnerung setzen\n"
-            "/reminders — Ausstehende Erinnerungen\n"
-            "/remind_cancel &lt;id&gt; — Erinnerung löschen\n\n"
+            "<b>Available commands</b>\n\n"
+            "<b>Reminders</b>\n"
+            "/remind +30m|14:30|13.06.2026 15:00 &lt;text&gt; — set reminder\n"
+            "/reminders — list pending\n"
+            "/remind_cancel &lt;id&gt; — delete\n\n"
             "<b>Todos</b>\n"
-            "/todo &lt;text&gt; — Todo hinzufügen\n"
-            "/todos — Offene Todos\n"
-            "/todo done &lt;id&gt; — Erledigt markieren\n"
-            "/todo delete &lt;id&gt; — Löschen\n\n"
+            "/todo &lt;text&gt; — add todo\n"
+            "/todos — open todos\n"
+            "/todo done &lt;id&gt; — mark done\n"
+            "/todo delete &lt;id&gt; — delete\n\n"
             "<b>System</b>\n"
             "/status — Daemon-Status\n"
-            "/redeploy — Neuestes Image deployen\n"
-            "/rollback — Auf vorheriges Image zurück\n"
-            "/repair &lt;fehler&gt; — Repair-Modus aktivieren\n"
-            "/exit_repair — Repair-Modus beenden\n\n"
+            "/redeploy — deploy latest image\n"
+            "/rollback — revert to previous image\n"
+            "/repair &lt;error&gt; — activate repair mode\n"
+            "/exit_repair — exit repair mode\n\n"
             "<b>Chat</b>\n"
-            "/mention on|off — Nur auf @Mentions reagieren\n\n"
+            "/mention on|off — mention-only mode\n\n"
             "<b>Admin</b>\n"
             "/auth /block /trust /mute /unmute /muted\n"
             "/approve /deny /reload_config /reload_persona"
@@ -464,5 +464,5 @@ async def handle_command(daemon: Any, text: str, from_id: int, chat_id: int) -> 
     else:
         if await is_allowed(daemon._conn, from_id):
             await daemon._api.send_message(
-                chat_id, f"Unbekanntes Kommando: {cmd}\n/help für eine Liste."
+                chat_id, f"Unknown command: {cmd}\n/help for a list."
             )
