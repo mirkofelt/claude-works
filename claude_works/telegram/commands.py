@@ -16,6 +16,12 @@ from ..tasks.reminders import (
     list_reminders as _list_reminders,
     parse_remind_at as _parse_remind_at,
 )
+from ..tasks.todos import (
+    add_todo as _add_todo,
+    delete_todo as _delete_todo,
+    done_todo as _done_todo,
+    list_todos as _list_todos,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -282,13 +288,17 @@ async def handle_command(daemon: Any, text: str, from_id: int, chat_id: int) -> 
     elif cmd == "/reminders":
         reminders = await _list_reminders(daemon._conn, from_id)
         if not reminders:
-            await daemon._api.send_message(chat_id, "Keine ausstehenden Erinnerungen.")
+            await daemon._api.send_message(chat_id, "⏰ Keine ausstehenden Erinnerungen.")
         else:
             lines = []
             for r in reminders:
-                dt = datetime.fromtimestamp(r["remind_at"], tz=_UTC.utc).strftime("%d.%m.%Y %H:%M UTC")
-                lines.append(f"#{r['id']} {dt} — {r['message'][:60]}")
-            await daemon._api.send_message(chat_id, "⏰ Erinnerungen:\n" + "\n".join(lines))
+                dt = datetime.fromtimestamp(r["remind_at"], tz=_UTC.utc).strftime("%d.%m. %H:%M")
+                lines.append(f"<b>#{r['id']}</b> {dt} — {r['message'][:60]}")
+            await daemon._api.send_message(
+                chat_id,
+                "⏰ <b>Erinnerungen:</b>\n" + "\n".join(lines),
+                parse_mode="HTML",
+            )
         return
 
     elif cmd == "/remind_cancel" and len(parts) >= 2:
@@ -339,6 +349,58 @@ async def handle_command(daemon: Any, text: str, from_id: int, chat_id: int) -> 
         await daemon._api.send_message(chat_id, f"⏰ Erinnerung #{reminder_id} gesetzt für {dt}: {message[:60]}")
         return
 
+    elif cmd in ("/todo", "/todos"):
+        if not await is_allowed(daemon._conn, from_id):
+            return
+        sub = parts[1].lower() if len(parts) >= 2 else ""
+
+        if cmd == "/todos" or sub == "list" or (cmd == "/todo" and len(parts) == 1):
+            todos = await _list_todos(daemon._conn, from_id)
+            if not todos:
+                await daemon._api.send_message(chat_id, "📋 Keine offenen Todos.")
+            else:
+                lines = [f"#{t['id']} {t['text'][:80]}" for t in todos]
+                await daemon._api.send_message(chat_id, "📋 Offene Todos:\n" + "\n".join(lines))
+            return
+
+        if sub == "done" and len(parts) >= 3:
+            try:
+                todo_id = int(parts[2])
+            except ValueError:
+                await daemon._api.send_message(chat_id, "Usage: /todo done <id>")
+                return
+            ok = await _done_todo(daemon._conn, todo_id, from_id)
+            await daemon._api.send_message(
+                chat_id,
+                f"✅ Todo #{todo_id} erledigt." if ok else f"Todo #{todo_id} nicht gefunden.",
+            )
+            return
+
+        if sub == "delete" and len(parts) >= 3:
+            try:
+                todo_id = int(parts[2])
+            except ValueError:
+                await daemon._api.send_message(chat_id, "Usage: /todo delete <id>")
+                return
+            ok = await _delete_todo(daemon._conn, todo_id, from_id)
+            await daemon._api.send_message(
+                chat_id,
+                f"🗑 Todo #{todo_id} gelöscht." if ok else f"Todo #{todo_id} nicht gefunden.",
+            )
+            return
+
+        # /todo <text> — add new todo (anything that's not a subcommand)
+        if sub in ("done", "delete", "list", ""):
+            await daemon._api.send_message(
+                chat_id,
+                "Usage:\n/todo <text> — hinzufügen\n/todos — Liste\n/todo done <id> — erledigt\n/todo delete <id> — löschen",
+            )
+            return
+        text = " ".join(parts[1:])
+        todo_id = await _add_todo(daemon._conn, from_id, chat_id, text)
+        await daemon._api.send_message(chat_id, f"📋 Todo #{todo_id} hinzugefügt: {text[:80]}")
+        return
+
     elif cmd in ("/redeploy", "/deploy"):
         if not await is_admin(daemon._conn, from_id):
             await daemon._api.send_message(chat_id, "Nur für Admins.")
@@ -378,6 +440,11 @@ async def handle_command(daemon: Any, text: str, from_id: int, chat_id: int) -> 
             "/remind +30m|14:30|13.06.2026 15:00 &lt;nachricht&gt; — Erinnerung setzen\n"
             "/reminders — Ausstehende Erinnerungen\n"
             "/remind_cancel &lt;id&gt; — Erinnerung löschen\n\n"
+            "<b>Todos</b>\n"
+            "/todo &lt;text&gt; — Todo hinzufügen\n"
+            "/todos — Offene Todos\n"
+            "/todo done &lt;id&gt; — Erledigt markieren\n"
+            "/todo delete &lt;id&gt; — Löschen\n\n"
             "<b>System</b>\n"
             "/status — Daemon-Status\n"
             "/redeploy — Neuestes Image deployen\n"

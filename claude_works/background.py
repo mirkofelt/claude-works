@@ -140,9 +140,17 @@ async def reminder_watcher(daemon: Any) -> None:
                 fired = await _fire_due_reminders(daemon._conn)
                 for r in fired:
                     try:
+                        markup = {
+                            "inline_keyboard": [[
+                                {"text": "✅ Erledigt", "callback_data": f"reminder_done:{r['id']}"},
+                                {"text": "📋 Als Todo", "callback_data": f"reminder_todo:{r['id']}"},
+                            ]]
+                        }
                         await daemon._api.send_message(
                             r["chat_id"],
-                            f"⏰ **Erinnerung #{r['id']}**\n{r['message']}",
+                            f"⏰ <b>Erinnerung #{r['id']}</b>\n{r['message']}",
+                            parse_mode="HTML",
+                            reply_markup=markup,
                         )
                         logger.info("Reminder %d fired for chat=%d", r["id"], r["chat_id"])
                     except Exception as e:

@@ -611,6 +611,39 @@ class Daemon:
                 await self._api.send_message(chat_id, reply)
             return
 
+        if data.startswith("reminder_done:") or data.startswith("reminder_todo:"):
+            await self._api.answer_callback_query(callback_query_id)
+            action, _, rid_str = data.partition(":")
+            rm_orig = cq.get("message") or {}
+            rm_orig_id = rm_orig.get("message_id", 0)
+            rm_orig_text = rm_orig.get("text", "")
+            rm_entities = rm_orig.get("entities") or None
+            if action == "reminder_done":
+                rm_reply = "✅ Erledigt."
+            else:
+                # Create todo from reminder text
+                from .tasks.todos import add_todo as _add_todo_cb
+                reminder_text = rm_orig_text.split("\n", 1)[-1].strip() if "\n" in rm_orig_text else rm_orig_text
+                try:
+                    rid = int(rid_str)
+                except ValueError:
+                    rid = None
+                tid = await _add_todo_cb(self._conn, telegram_id, chat_id, reminder_text, reminder_id=rid)
+                rm_reply = f"📋 Todo #{tid} erstellt: {reminder_text[:60]}"
+            if rm_orig_id and rm_orig_text:
+                try:
+                    await self._api.edit_message(
+                        chat_id, rm_orig_id,
+                        f"{rm_orig_text}\n\n→ {rm_reply}",
+                        remove_keyboard=True,
+                        entities=rm_entities,
+                    )
+                except Exception:
+                    await self._api.send_message(chat_id, rm_reply)
+            else:
+                await self._api.send_message(chat_id, rm_reply)
+            return
+
         if data.startswith("imgwatch_"):
             await self._api.answer_callback_query(callback_query_id)
             iw_orig = cq.get("message") or {}

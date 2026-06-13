@@ -271,6 +271,18 @@ CREATE TABLE IF NOT EXISTS reminders (
     fired_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_reminders_pending ON reminders(remind_at) WHERE fired_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS todos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    chat_id INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    done INTEGER NOT NULL DEFAULT 0,
+    reminder_id INTEGER,
+    created_at INTEGER NOT NULL,
+    done_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_todos_open ON todos(user_id, done) WHERE done = 0;
 """
 
 CONFIG_TABLES = """
