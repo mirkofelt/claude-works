@@ -306,23 +306,29 @@ async def handle_command(daemon: Any, text: str, from_id: int, chat_id: int) -> 
 
     elif cmd == "/remind":
         # /remind <time> <message>
-        # time formats: +30m, +2h, +1d, HH:MM, YYYY-MM-DD HH:MM
+        # time formats: +30m, +2h, +1d, HH:MM, DD.MM.YYYY HH:MM, YYYY-MM-DD HH:MM
         if len(parts) < 3:
             await daemon._api.send_message(
                 chat_id,
                 "Usage: /remind <zeit> <nachricht>\n"
-                "Zeit: +30m · +2h · +1d · 14:30 · 2026-06-15 09:00\n"
+                "Zeit: +30m · +2h · +1d · 14:30 · 13.06.2026 15:00 · 2026-06-13 15:00\n"
                 "Beispiel: /remind +1h Anruf zurückrufen",
             )
             return
+        # Try single-token time first, then two-token (e.g. "13.06.2026 15:00")
         remind_at = _parse_remind_at(parts[1])
+        msg_start = 2
+        if remind_at is None and len(parts) >= 4:
+            remind_at = _parse_remind_at(parts[1] + " " + parts[2])
+            msg_start = 3
         if remind_at is None:
             await daemon._api.send_message(
                 chat_id,
-                f"Zeitformat nicht erkannt: {parts[1]!r}\nBeispiele: +30m, +2h, 14:30, 2026-06-15 09:00",
+                f"Zeitformat nicht erkannt: {' '.join(parts[1:3])!r}\n"
+                "Beispiele: +30m, +2h, 14:30, 13.06.2026 15:00, 2026-06-13 15:00",
             )
             return
-        message = " ".join(parts[2:])
+        message = " ".join(parts[msg_start:])
         reminder_id = await _add_reminder(daemon._conn, from_id, chat_id, remind_at, message)
         dt = datetime.fromtimestamp(remind_at, tz=_UTC.utc).strftime("%d.%m. %H:%M UTC")
         await daemon._api.send_message(chat_id, f"⏰ Erinnerung #{reminder_id} gesetzt für {dt}: {message[:60]}")
@@ -332,7 +338,7 @@ async def handle_command(daemon: Any, text: str, from_id: int, chat_id: int) -> 
         help_text = (
             "<b>Verfügbare Befehle</b>\n\n"
             "<b>Erinnerungen</b>\n"
-            "/remind +30m|HH:MM|Datum &lt;nachricht&gt; — Erinnerung setzen\n"
+            "/remind +30m|14:30|13.06.2026 15:00 &lt;nachricht&gt; — Erinnerung setzen\n"
             "/reminders — Ausstehende Erinnerungen\n"
             "/remind_cancel &lt;id&gt; — Erinnerung löschen\n\n"
             "<b>System</b>\n"

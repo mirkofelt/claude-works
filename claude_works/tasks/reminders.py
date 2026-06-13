@@ -5,9 +5,12 @@ watcher task. No LLM involved — the stored message is sent directly via
 Telegram API when the due time is reached.
 
 Datetime parsing supports:
-  - ISO 8601 / 'YYYY-MM-DD HH:MM'       →  absolute
-  - 'HH:MM'                              →  today at that time (next occurrence)
   - '+Xm', '+Xh', '+Xd'                 →  relative (minutes/hours/days from now)
+  - 'HH:MM'                              →  today at that time (next occurrence)
+  - 'DD.MM. HH:MM'                       →  German short date (current year)
+  - 'DD.MM.YYYY HH:MM'                   →  German full date+time
+  - 'DD.MM.YYYY'                         →  German date at midnight
+  - 'YYYY-MM-DD HH:MM'                   →  ISO 8601 absolute
 """
 import logging
 import re
@@ -20,12 +23,27 @@ logger = logging.getLogger(__name__)
 
 _RELATIVE_RE = re.compile(r'^\+(\d+)([mhd])$', re.IGNORECASE)
 _TIME_ONLY_RE = re.compile(r'^(\d{1,2}):(\d{2})$')
+# Matches DD.MM. (with trailing dot, no year)
+_DE_SHORT_DATE_RE = re.compile(r'^(\d{1,2})\.(\d{1,2})\.\s+(\d{1,2}):(\d{2})$')
+# Matches DD.MM.YYYY
+_DE_DATE_RE = re.compile(r'^(\d{1,2})\.(\d{1,2})\.(\d{4})$')
+# Matches DD.MM.YYYY HH:MM
+_DE_DATETIME_RE = re.compile(r'^(\d{1,2})\.(\d{1,2})\.(\d{4})\s+(\d{1,2}):(\d{2})$')
+
+# UTC+2 offset for Europe/Berlin (CEST) — approximation; ±1h on DST boundary is acceptable
+_BERLIN_OFFSET = timedelta(hours=2)
+
+
+def _berlin_to_utc_ts(naive_berlin: datetime) -> int:
+    """Convert naive Berlin-local datetime to UTC Unix timestamp."""
+    return int((naive_berlin - _BERLIN_OFFSET).replace(tzinfo=timezone.utc).timestamp())
 
 
 def parse_remind_at(dt_str: str) -> int | None:
     """Parse reminder datetime string → Unix timestamp, or None on failure."""
     dt_str = dt_str.strip()
     now = datetime.now(tz=timezone.utc)
+    berlin_now = (now + _BERLIN_OFFSET).replace(tzinfo=None)  # naive Berlin time
 
     # Relative: +30m, +2h, +1d
     m = _RELATIVE_RE.match(dt_str)
@@ -34,20 +52,48 @@ def parse_remind_at(dt_str: str) -> int | None:
         delta = {"m": timedelta(minutes=value), "h": timedelta(hours=value), "d": timedelta(days=value)}[unit]
         return int((now + delta).timestamp())
 
-    # Time only: HH:MM → today (or tomorrow if already past)
+    # Time only: HH:MM → today (or tomorrow if already past), Berlin local
     m = _TIME_ONLY_RE.match(dt_str)
     if m:
-        candidate = now.replace(hour=int(m.group(1)), minute=int(m.group(2)), second=0, microsecond=0)
-        if candidate <= now:
+        candidate = berlin_now.replace(hour=int(m.group(1)), minute=int(m.group(2)), second=0, microsecond=0)
+        if candidate <= berlin_now:
             candidate += timedelta(days=1)
-        return int(candidate.timestamp())
+        return _berlin_to_utc_ts(candidate)
 
-    # ISO-like: 'YYYY-MM-DD HH:MM' or 'YYYY-MM-DDTHH:MM'
+    # German short date: "DD.MM. HH:MM" → current year
+    m = _DE_SHORT_DATE_RE.match(dt_str)
+    if m:
+        d, mo, h, mi = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
+        try:
+            local = datetime(berlin_now.year, mo, d, h, mi)
+            if local <= berlin_now:
+                local = local.replace(year=berlin_now.year + 1)
+            return _berlin_to_utc_ts(local)
+        except ValueError:
+            return None
+
+    # German date only: "DD.MM.YYYY" → midnight Berlin
+    m = _DE_DATE_RE.match(dt_str)
+    if m:
+        d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        try:
+            return _berlin_to_utc_ts(datetime(y, mo, d, 0, 0))
+        except ValueError:
+            return None
+
+    # German full datetime: "DD.MM.YYYY HH:MM"
+    m = _DE_DATETIME_RE.match(dt_str)
+    if m:
+        d, mo, y, h, mi = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4)), int(m.group(5))
+        try:
+            return _berlin_to_utc_ts(datetime(y, mo, d, h, mi))
+        except ValueError:
+            return None
+
+    # ISO-like: 'YYYY-MM-DD HH:MM' or 'YYYY-MM-DDTHH:MM' (treated as Berlin local)
     for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
         try:
-            dt = datetime.strptime(dt_str, fmt)
-            # Treat as local time (Europe/Berlin) → simplistic UTC offset not critical for reminders
-            return int(dt.replace(tzinfo=timezone.utc).timestamp())
+            return _berlin_to_utc_ts(datetime.strptime(dt_str, fmt))
         except ValueError:
             continue
 
