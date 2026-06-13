@@ -7,9 +7,8 @@ import time
 import urllib.parse
 from typing import Any
 
-import httpx
-
 from .. import config
+from ..fetcher import fetch_url_content as _fetch_url_content
 from ..auth.users import is_admin, is_allowed, upsert_user
 from ..kanban.models import KanbanTask
 from ..mode import DaemonMode
@@ -23,7 +22,6 @@ logger = logging.getLogger(__name__)
 _parse_buttons = _tags.parse_buttons
 _URL_RE = re.compile(r'https?://[^\s<>"\']+')
 _MAX_FETCH_URLS = 3
-_MAX_FETCH_CHARS = 4000
 _TASK_MAX_CHAT_LEN = 400
 _TASK_VERB_RE = re.compile(
     r'\b(schreib|erstell|generier|entwickel|implementier|analysier|recherchier|'
@@ -56,28 +54,6 @@ def _is_task(content: str) -> bool:
         return True
     return False
 
-
-async def _fetch_url_content(url: str, proxy: str | None = None) -> str | None:
-    try:
-        client_kwargs: dict = {"timeout": 15.0, "follow_redirects": True}
-        if proxy:
-            client_kwargs["proxy"] = proxy
-        async with httpx.AsyncClient(**client_kwargs) as client:
-            resp = await client.get(url, headers={"User-Agent": "Mozilla/5.0 (compatible; claude-works/1.0)"})
-            resp.raise_for_status()
-            ct = resp.headers.get("content-type", "")
-            if "text" not in ct and "json" not in ct:
-                return None
-            text = resp.text
-        text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r'<[^>]+>', ' ', text)
-        text = re.sub(r'&(?:[a-z]+|#\d+);', ' ', text)
-        text = re.sub(r'\s+', ' ', text).strip()
-        return text[:_MAX_FETCH_CHARS] if text else None
-    except Exception as e:
-        logger.debug("URL fetch failed proxy=%s (%s): %s", proxy, url, e)
-        return None
 
 
 async def handle_message(daemon: Any, msg: dict, is_edited: bool = False) -> None:

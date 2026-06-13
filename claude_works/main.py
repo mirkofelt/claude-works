@@ -19,6 +19,7 @@ import uvicorn
 from datetime import datetime, timezone as _UTC
 
 from . import config, db
+from .fetcher import fetch_url_content as _fetch_url_content
 from .config_store import load_config as _load_db_config, save_config as _save_db_config
 from .mode import DaemonMode, ModeManager, detect_startup_mode
 from .telegram.api import TelegramAPI
@@ -94,7 +95,7 @@ _LONG_RUN_NOTICE_SECONDS = 60.0  # one-shot "still working" notice for inline ch
 _PLUGINS_DIR = _tags.PLUGINS_DIR
 _URL_RE = re.compile(r'https?://[^\s<>"\']+')
 _MAX_FETCH_URLS = 3
-_MAX_FETCH_CHARS = 4000
+
 _MAX_TOOL_OUTPUT_CHARS = 4000
 _MIN_ECHO_LINE_CHARS = 24
 _STRUCTURAL_LINE_RE = re.compile(r'^(?:[{}\[\],]+|"[\w-]+":.*)$')
@@ -147,29 +148,6 @@ def _is_task(content: str) -> bool:
     if _TASK_VERB_RE.search(stripped):
         return True
     return False
-
-
-async def _fetch_url_content(url: str, proxy: str | None = None) -> str | None:
-    try:
-        client_kwargs: dict = {"timeout": 15.0, "follow_redirects": True}
-        if proxy:
-            client_kwargs["proxy"] = proxy
-        async with httpx.AsyncClient(**client_kwargs) as client:
-            resp = await client.get(url, headers={"User-Agent": "Mozilla/5.0 (compatible; claude-works/1.0)"})
-            resp.raise_for_status()
-            ct = resp.headers.get("content-type", "")
-            if "text" not in ct and "json" not in ct:
-                return None
-            text = resp.text
-        text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r'<[^>]+>', ' ', text)
-        text = re.sub(r'&(?:[a-z]+|#\d+);', ' ', text)
-        text = re.sub(r'\s+', ' ', text).strip()
-        return text[:_MAX_FETCH_CHARS] if text else None
-    except Exception as e:
-        logger.debug("URL fetch failed proxy=%s (%s): %s", proxy, url, e)
-        return None
 
 
 class Daemon:
