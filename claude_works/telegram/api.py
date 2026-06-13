@@ -118,14 +118,17 @@ class TelegramAPI:
         parse_mode: str | None = None,
         reply_markup: dict | None = None,
         remove_keyboard: bool = False,
+        entities: list | None = None,
     ) -> dict[str, Any]:
         markup = {"inline_keyboard": []} if remove_keyboard else reply_markup
+        # entities takes precedence over parse_mode (both must not be sent together)
         return await self._call(
             "editMessageText",
             chat_id=chat_id,
             message_id=message_id,
             text=text,
-            parse_mode=parse_mode,
+            entities=entities if entities else None,
+            parse_mode=None if entities else parse_mode,
             reply_markup=markup,
         )
 

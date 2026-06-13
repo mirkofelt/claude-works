@@ -583,12 +583,14 @@ class Daemon:
                 sec_orig_msg = cq.get("message") or {}
                 sec_orig_id = sec_orig_msg.get("message_id", 0)
                 sec_orig_text = sec_orig_msg.get("text", "")
+                sec_entities = sec_orig_msg.get("entities") or None
                 if sec_orig_id and sec_orig_text:
                     try:
                         await self._api.edit_message(
                             chat_id, sec_orig_id,
                             f"{sec_orig_text}\n\n→ {reply}",
                             remove_keyboard=True,
+                            entities=sec_entities,
                         )
                     except Exception:
                         await self._api.send_message(chat_id, reply)
@@ -616,12 +618,14 @@ class Daemon:
             kb_orig_msg = cq.get("message") or {}
             kb_orig_id = kb_orig_msg.get("message_id", 0)
             kb_orig_text = kb_orig_msg.get("text", "")
+            kb_entities = kb_orig_msg.get("entities") or None
             if kb_orig_id and kb_orig_text:
                 try:
                     await self._api.edit_message(
                         chat_id, kb_orig_id,
                         f"{kb_orig_text}\n\n→ {reply}",
                         remove_keyboard=True,
+                        entities=kb_entities,
                     )
                 except Exception:
                     await self._api.send_message(chat_id, reply)
@@ -634,6 +638,7 @@ class Daemon:
         orig_msg = cq.get("message") or {}
         orig_msg_id = orig_msg.get("message_id", 0)
         orig_text = orig_msg.get("text", "")
+        orig_entities = orig_msg.get("entities") or None
         keyboard = (orig_msg.get("reply_markup") or {}).get("inline_keyboard", [])
         btn_label = data
         for row in keyboard:
@@ -648,6 +653,7 @@ class Daemon:
                     chat_id, orig_msg_id,
                     f"{orig_text}\n\n→ {btn_label}",
                     remove_keyboard=True,
+                    entities=orig_entities,
                 )
             except Exception:
                 pass
