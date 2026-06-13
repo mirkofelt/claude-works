@@ -1,8 +1,9 @@
+# syntax=docker/dockerfile:1
 FROM python:3.12-slim
 
 WORKDIR /app
 
-# System tools + gh CLI + Tor + Node.js (for claude CLI)
+# Layer 1: system tools — changes rarely, cached aggressively
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl xz-utils ca-certificates git tor netcat-openbsd \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
@@ -18,12 +19,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && npm install -g @anthropic-ai/claude-code \
     && rm -rf /var/lib/apt/lists/* /root/.npm
 
+# Layer 2: Python deps — invalidated only when requirements.txt changes
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt uv
 
-COPY . .
-
+# Layer 3: code — invalidated on code changes, NOT on prompt-only changes
+COPY --exclude=claude_works/prompts . .
 RUN chmod +x /app/entrypoint.sh
+
+# Layer 4: prompts — thin layer, only rebuilt when prompts change
+COPY claude_works/prompts/ ./claude_works/prompts/
 
 ENV PYTHONUNBUFFERED=1
 ENV CLAUDE_HOME=/data/.claude
