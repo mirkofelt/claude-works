@@ -17,6 +17,9 @@ from .github import github_api
 
 logger = logging.getLogger(__name__)
 
+_last_deploy_at: float = 0.0
+_DEPLOY_COOLDOWN = 60.0  # seconds — prevents double-deploy when cron and manual /redeploy overlap
+
 JOB_NAME = "deploy_watch"
 KB_TITLE = "deploy-watch-baseline"
 
@@ -32,7 +35,7 @@ async def deploy_watch(ctx: CronContext, state: dict) -> dict:
     data = await github_api("GET", f"/repos/{repo}/commits/{branch}", None, gh_cfg)
     sha = data.get("sha", "")
     if not sha:
-        raise RuntimeError(f"GitHub API lieferte keinen SHA für {repo}@{branch}")
+        raise RuntimeError(f"GitHub API returned no SHA for {repo}@{branch}")
 
     baseline = state.get("baseline_sha", "")
 
@@ -41,7 +44,7 @@ async def deploy_watch(ctx: CronContext, state: dict) -> dict:
         state["baseline_sha"] = sha
         await ctx.save_state(state)
         await _update_kb_baseline(ctx.conn, sha, repo, branch)
-        await ctx.notify(f"Deploy-Watch: Baseline initialisiert auf {sha[:7]} ({repo}@{branch}).")
+        await ctx.notify(f"Deploy-watch: baseline initialised to {sha[:7]} ({repo}@{branch}).")
         return state
 
     if sha == baseline:
@@ -56,9 +59,8 @@ async def deploy_watch(ctx: CronContext, state: dict) -> dict:
     await ctx.save_state(state)
     await _update_kb_baseline(ctx.conn, sha, repo, branch)
     await ctx.notify(
-        f"🚀 Deploy-Watch: neuer Commit auf {branch}\n"
-        f"{baseline[:7]} → {sha[:7]}: {commit_msg}\n"
-        f"Redeploy wird ausgelöst."
+        f"🚀 New commit on {branch}: {baseline[:7]} → {sha[:7]}: {commit_msg}\n"
+        f"Triggering redeploy."
     )
     await _trigger_deploy()
     return state
@@ -97,13 +99,20 @@ async def sync_baseline(conn, repo: str = DEFAULT_REPO, branch: str = DEFAULT_BR
 
 async def _trigger_deploy() -> None:
     """Trigger redeploy via claude-guard — same path as the manual deploy trigger."""
+    global _last_deploy_at
     import httpx
+
+    now = time.time()
+    if now - _last_deploy_at < _DEPLOY_COOLDOWN:
+        logger.info("deploy skipped — cooldown active (%.0fs since last)", now - _last_deploy_at)
+        return
+    _last_deploy_at = now
 
     dg = config.section("system").get("claude_guard", {})
     guard_url = dg.get("url", "").rstrip("/")
     token = dg.get("token", "")
     if not guard_url or not token:
-        raise RuntimeError("claude_guard.url/.token nicht konfiguriert — Redeploy nicht möglich")
+        raise RuntimeError("claude_guard not configured — redeploy not possible")
 
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
@@ -123,9 +132,9 @@ async def _update_kb_baseline(conn, sha: str, repo: str, branch: str) -> None:
     from ..knowledge import store as kb
 
     content = (
-        f"Letzter deployter Stand: {sha} ({repo}@{branch}).\n"
-        f"Aktualisiert: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}\n"
-        f"Wird vom Deploy-Watch-Cron-Job bei jedem Redeploy automatisch aktualisiert."
+        f"Last deployed: {sha} ({repo}@{branch}).\n"
+        f"Updated: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}\n"
+        f"Auto-updated by deploy-watch cron on every redeploy."
     )
     try:
         async with conn.execute(
