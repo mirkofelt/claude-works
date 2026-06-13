@@ -339,6 +339,38 @@ async def handle_command(daemon: Any, text: str, from_id: int, chat_id: int) -> 
         await daemon._api.send_message(chat_id, f"⏰ Erinnerung #{reminder_id} gesetzt für {dt}: {message[:60]}")
         return
 
+    elif cmd in ("/redeploy", "/deploy"):
+        if not await is_admin(daemon._conn, from_id):
+            await daemon._api.send_message(chat_id, "Nur für Admins.")
+            return
+        await daemon._api.send_message(chat_id, "🚀 Redeploy gestartet…")
+        try:
+            from ..tasks.deploy_watch import _trigger_deploy
+            await _trigger_deploy()
+        except Exception as e:
+            await daemon._api.send_message(chat_id, f"⚠️ Redeploy fehlgeschlagen: {e}")
+        return
+
+    elif cmd == "/rollback":
+        if not await is_admin(daemon._conn, from_id):
+            await daemon._api.send_message(chat_id, "Nur für Admins.")
+            return
+        await daemon._api.send_message(chat_id, "⏪ Rollback gestartet…")
+        try:
+            import httpx as _httpx
+            dg = config.section("system").get("claude_guard", {})
+            guard_url = dg.get("url", "").rstrip("/")
+            token = dg.get("token", "")
+            if not guard_url or not token:
+                raise RuntimeError("claude_guard.url/.token nicht konfiguriert")
+            async with _httpx.AsyncClient(timeout=30.0) as hc:
+                r = await hc.post(f"{guard_url}/rollback?token={token}")
+            if r.status_code != 200:
+                raise RuntimeError(f"HTTP {r.status_code}: {r.text[:200]}")
+        except Exception as e:
+            await daemon._api.send_message(chat_id, f"⚠️ Rollback fehlgeschlagen: {e}")
+        return
+
     elif cmd == "/help":
         help_text = (
             "<b>Verfügbare Befehle</b>\n\n"
@@ -348,6 +380,8 @@ async def handle_command(daemon: Any, text: str, from_id: int, chat_id: int) -> 
             "/remind_cancel &lt;id&gt; — Erinnerung löschen\n\n"
             "<b>System</b>\n"
             "/status — Daemon-Status\n"
+            "/redeploy — Neuestes Image deployen\n"
+            "/rollback — Auf vorheriges Image zurück\n"
             "/repair &lt;fehler&gt; — Repair-Modus aktivieren\n"
             "/exit_repair — Repair-Modus beenden\n\n"
             "<b>Chat</b>\n"
