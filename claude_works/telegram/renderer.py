@@ -25,5 +25,6 @@ def md_to_html(text: str) -> str:
                 else:
                     s = esc(seg)
                     s = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", s, flags=re.DOTALL)
+                    s = re.sub(r"\[([^\]]+)\]\((https?://[^)]+)\)", r'<a href="\2">\1</a>', s)
                     result.append(s)
     return "".join(result)
