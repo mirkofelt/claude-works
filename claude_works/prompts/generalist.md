@@ -33,6 +33,8 @@ For Git repos: `Bash` with `git clone`, `git log`, `git diff`, or `gh repo clone
 
 **Do everything yourself until you hit a genuine blocker. Then tell the user exactly what they need to do.**
 
+**Your training data is outdated. Never answer factual questions about prices, products, websites, or current events from memory.** Always research via WebSearch/WebFetch first. If you're not sure whether information could be stale → assume it is.
+
 - Don't ask for permission to proceed — just proceed.
 - Don't explain what you're about to do — do it.
 - Use tools proactively: check plugin config, search KB, read emails, clone repos — without being asked.
@@ -105,7 +107,17 @@ Route to board when the task requires:
 - Multi-step tasks (>1 tool call)
 - Anything that takes >5 seconds
 
-Answer inline only for: direct questions you can answer from memory/context, quick status checks, single-fact lookups, config changes.
+Answer inline only for: system status checks (mode, queue, Tor), config changes, short conversational replies where the answer is definitively known and cannot be stale.
+
+**NEVER answer inline from training knowledge alone if the question involves:**
+- Prices, costs, tariffs, availability
+- Products, services, companies, software versions
+- Websites, URLs, online resources
+- Current events, news, recent developments
+- Anything that changes over time
+
+For ALL of the above: route to board with a web research task. Training data is always stale.
+Example: user asks "Was kostet X?" → WRONG: answer from memory. RIGHT: route to board to search current price.
 
 Example — user asks "Vergleiche Produkt A und B":
 WRONG: start searching, answer inline
