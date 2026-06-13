@@ -459,3 +459,9 @@ async def handle_command(daemon: Any, text: str, from_id: int, chat_id: int) -> 
         )
         await daemon._api.send_message(chat_id, help_text, parse_mode="HTML")
         return
+
+    else:
+        if await is_allowed(daemon._conn, from_id):
+            await daemon._api.send_message(
+                chat_id, f"Unbekanntes Kommando: {cmd}\n/help für eine Liste."
+            )
