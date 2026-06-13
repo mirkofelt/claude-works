@@ -11,8 +11,10 @@ from ..auth.users import is_admin, is_allowed, set_role, set_trust
 from ..auth import trust as trust_mod
 from ..knowledge import store as knowledge_store
 from ..tasks.reminders import (
-    list_reminders as _list_reminders,
+    add_reminder as _add_reminder,
     delete_reminder as _delete_reminder,
+    list_reminders as _list_reminders,
+    parse_remind_at as _parse_remind_at,
 )
 
 logger = logging.getLogger(__name__)
@@ -300,4 +302,48 @@ async def handle_command(daemon: Any, text: str, from_id: int, chat_id: int) -> 
             await daemon._api.send_message(chat_id, f"✓ Erinnerung #{reminder_id} gelöscht.")
         else:
             await daemon._api.send_message(chat_id, f"Erinnerung #{reminder_id} nicht gefunden oder bereits ausgelöst.")
+        return
+
+    elif cmd == "/remind":
+        # /remind <time> <message>
+        # time formats: +30m, +2h, +1d, HH:MM, YYYY-MM-DD HH:MM
+        if len(parts) < 3:
+            await daemon._api.send_message(
+                chat_id,
+                "Usage: /remind <zeit> <nachricht>\n"
+                "Zeit: +30m · +2h · +1d · 14:30 · 2026-06-15 09:00\n"
+                "Beispiel: /remind +1h Anruf zurückrufen",
+            )
+            return
+        remind_at = _parse_remind_at(parts[1])
+        if remind_at is None:
+            await daemon._api.send_message(
+                chat_id,
+                f"Zeitformat nicht erkannt: {parts[1]!r}\nBeispiele: +30m, +2h, 14:30, 2026-06-15 09:00",
+            )
+            return
+        message = " ".join(parts[2:])
+        reminder_id = await _add_reminder(daemon._conn, from_id, chat_id, remind_at, message)
+        dt = datetime.fromtimestamp(remind_at, tz=_UTC.utc).strftime("%d.%m. %H:%M UTC")
+        await daemon._api.send_message(chat_id, f"⏰ Erinnerung #{reminder_id} gesetzt für {dt}: {message[:60]}")
+        return
+
+    elif cmd == "/help":
+        help_text = (
+            "<b>Verfügbare Befehle</b>\n\n"
+            "<b>Erinnerungen</b>\n"
+            "/remind +30m|HH:MM|Datum &lt;nachricht&gt; — Erinnerung setzen\n"
+            "/reminders — Ausstehende Erinnerungen\n"
+            "/remind_cancel &lt;id&gt; — Erinnerung löschen\n\n"
+            "<b>System</b>\n"
+            "/status — Daemon-Status\n"
+            "/repair &lt;fehler&gt; — Repair-Modus aktivieren\n"
+            "/exit_repair — Repair-Modus beenden\n\n"
+            "<b>Chat</b>\n"
+            "/mention on|off — Nur auf @Mentions reagieren\n\n"
+            "<b>Admin</b>\n"
+            "/auth /block /trust /mute /unmute /muted\n"
+            "/approve /deny /reload_config /reload_persona"
+        )
+        await daemon._api.send_message(chat_id, help_text, parse_mode="HTML")
         return
