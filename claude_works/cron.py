@@ -36,6 +36,7 @@ class CronContext:
     job_cfg: dict
     notify: Callable[[str], Awaitable[None]]          # message → all admins
     save_state: Callable[[dict], Awaitable[None]]     # persist state mid-run
+    notify_rich: Callable[..., Awaitable[None]] = None  # message with parse_mode + reply_markup
 
 
 @dataclass
@@ -52,9 +53,11 @@ class CronManager:
         conn: aiosqlite.Connection,
         notify: Callable[[str], Awaitable[None]],
         is_running: Callable[[], bool],
+        notify_rich: Callable[..., Awaitable[None]] | None = None,
     ) -> None:
         self._conn = conn
         self._notify = notify
+        self._notify_rich = notify_rich
         self._is_running = is_running
         self._jobs: dict[str, CronJob] = {}
 
@@ -173,6 +176,7 @@ class CronManager:
             job_cfg=self._job_cfg(job.name),
             notify=self._notify,
             save_state=lambda s, _n=job.name: self._save_state(_n, s),
+            notify_rich=self._notify_rich,
         )
         try:
             new_state = await job.handler(ctx, state)

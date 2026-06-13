@@ -611,6 +611,65 @@ class Daemon:
                 await self._api.send_message(chat_id, reply)
             return
 
+        if data.startswith("imgwatch_"):
+            await self._api.answer_callback_query(callback_query_id)
+            iw_orig = cq.get("message") or {}
+            iw_orig_id = iw_orig.get("message_id", 0)
+            iw_orig_text = iw_orig.get("text", "")
+            iw_entities = iw_orig.get("entities") or None
+            action, _, short = data.partition(":")
+            action = action.removeprefix("imgwatch_")
+
+            if action == "deploy":
+                from .tasks.deploy_watch import _trigger_deploy
+                iw_reply = f"🚀 Redeploy gestartet ({short})."
+                try:
+                    await _trigger_deploy()
+                except Exception as e:
+                    iw_reply = f"⚠️ Redeploy fehlgeschlagen: {e}"
+            elif action in ("mute_1h", "mute_today"):
+                import json as _json
+                now = time.time()
+                if action == "mute_1h":
+                    mute_until = int(now + 3600)
+                    iw_reply = f"🔕 Image-Watch für 1h stumm ({short})."
+                else:
+                    from datetime import datetime, timezone, timedelta
+                    berlin_now = datetime.now(timezone(timedelta(hours=2)))
+                    midnight = (berlin_now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+                    mute_until = int(midnight.timestamp())
+                    iw_reply = f"🔇 Image-Watch heute stumm ({short})."
+                try:
+                    async with self._conn.execute(
+                        "SELECT state_json FROM cron_jobs WHERE name = ?", ("image_watch",)
+                    ) as _cur:
+                        _row = await _cur.fetchone()
+                    _state = _json.loads((_row["state_json"] if _row else None) or "{}")
+                    _state["mute_until"] = mute_until
+                    await self._conn.execute(
+                        "UPDATE cron_jobs SET state_json = ?, updated_at = ? WHERE name = ?",
+                        (_json.dumps(_state), int(now), "image_watch"),
+                    )
+                    await self._conn.commit()
+                except Exception as e:
+                    logger.warning("imgwatch mute state update failed: %s", e)
+            else:
+                iw_reply = f"Unbekannte Aktion: {action}"
+
+            if iw_orig_id and iw_orig_text:
+                try:
+                    await self._api.edit_message(
+                        chat_id, iw_orig_id,
+                        f"{iw_orig_text}\n\n→ {iw_reply}",
+                        remove_keyboard=True,
+                        entities=iw_entities,
+                    )
+                except Exception:
+                    await self._api.send_message(chat_id, iw_reply)
+            else:
+                await self._api.send_message(chat_id, iw_reply)
+            return
+
         await self._api.answer_callback_query(callback_query_id)
         # Resolve button label from the original message's inline keyboard
         orig_msg = cq.get("message") or {}

@@ -164,6 +164,7 @@ async def init_run_components(daemon: Any) -> None:
     from .cron import CronJob, CronManager
     from .tasks.deploy_watch import JOB_NAME as _DW_NAME, deploy_watch
     from .tasks.email_watch import JOB_NAME as _EW_NAME, email_watch
+    from .tasks.image_watch import JOB_NAME as _IW_NAME, image_watch
     from .tasks.kb_watch import JOB_NAME as _KBW_NAME, kb_watch
 
     async def _cron_notify(msg: str) -> None:
@@ -173,10 +174,18 @@ async def init_run_components(daemon: Any) -> None:
             except Exception as e:
                 logger.warning("Cron notification to admin %d failed: %s", admin_id, e)
 
+    async def _cron_notify_rich(msg: str, parse_mode: str | None = None, reply_markup: dict | None = None) -> None:
+        for admin_id in admin_ids:
+            try:
+                await daemon._api.send_message(admin_id, msg, parse_mode=parse_mode, reply_markup=reply_markup)
+            except Exception as e:
+                logger.warning("Cron rich notification to admin %d failed: %s", admin_id, e)
+
     daemon._cron = CronManager(
         conn=daemon._conn,
         notify=_cron_notify,
         is_running=lambda: daemon._running,
+        notify_rich=_cron_notify_rich,
     )
     daemon._cron.register(CronJob(
         name=_DW_NAME,
@@ -194,6 +203,12 @@ async def init_run_components(daemon: Any) -> None:
         name=_KBW_NAME,
         handler=kb_watch,
         default_interval_seconds=21600,
+        default_enabled=False,
+    ))
+    daemon._cron.register(CronJob(
+        name=_IW_NAME,
+        handler=image_watch,
+        default_interval_seconds=300,
         default_enabled=False,
     ))
     asyncio.create_task(daemon._cron.run(), name="cron-scheduler")
